@@ -14,35 +14,51 @@ import { LIFE_INCIDENT, HeartbeatThoughtPayload, emitLife, HEARTBEAT_THOUGHT_EVE
 import { HEARTBEAT_KINDS, HEARTBEAT_THRESHOLD, scoreThought, type HeartbeatCriteria } from './policy.js';
 
 // ---------------------------------------------------------------------------
-// Shape — salvaging where honest, rejecting where not. Scores clamp to 1..5
-// (a model that writes "4.5/5" still gets scored); `reason` truncates rather
-// than rejects (spec: never null, ≤ 100 chars).
+// Shape — salvaging where honest, rejecting where not. The WIRE schema stays
+// transform-free on purpose: M03's structured ladder synthesizes its `emit`
+// tool and its repair prompt from the schema's JSON-Schema form, and zod v4
+// cannot represent transforms as JSON Schema — a transform-bearing schema made
+// every thought call fail (model/bad-json) before the model ever answered. The
+// salvage rules therefore run AFTER the parse: scores clamp to 1..5 at one
+// decimal (a model that writes "4.5/5" still gets scored), `reason` truncates
+// rather than rejects (spec: never null, ≤ 100 chars), and a reply missing a
+// field or using an unknown kind still fails the schema and takes the ladder's
+// one repair.
 // ---------------------------------------------------------------------------
 
-const score1to5 = z
-  .number()
-  .transform((n) => Math.round(Math.min(5, Math.max(1, n)) * 10) / 10);
+const clampScore = (n: number): number => Math.round(Math.min(5, Math.max(1, n)) * 10) / 10;
 
 const truncate = (max: number) => (s: string): string => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
 
 export const HeartbeatThoughtSchema = z.object({
-  thought: z.string().min(1).transform(truncate(400)),
-  reason: z.string().min(1).transform(truncate(100)),
+  thought: z.string().min(1),
+  reason: z.string().min(1),
   kind: z.enum(HEARTBEAT_KINDS),
-  thread_id: z
-    .string()
-    .min(1)
-    .nullable()
-    .transform((v) => v),
+  thread_id: z.string().min(1).nullable(),
   scores: z.object({
-    relevance: score1to5,
-    information_gap: score1to5,
-    expected_impact: score1to5,
-    urgency: score1to5,
-    coherence: score1to5,
+    relevance: z.number(),
+    information_gap: z.number(),
+    expected_impact: z.number(),
+    urgency: z.number(),
+    coherence: z.number(),
   }),
 });
 export type HeartbeatThought = z.infer<typeof HeartbeatThoughtSchema>;
+
+/** Raw reply -> the thought the module scores and keeps (the salvage pass). */
+const salvage = (raw: HeartbeatThought): HeartbeatThought => ({
+  thought: truncate(400)(raw.thought),
+  reason: truncate(100)(raw.reason),
+  kind: raw.kind,
+  thread_id: raw.thread_id,
+  scores: {
+    relevance: clampScore(raw.scores.relevance),
+    information_gap: clampScore(raw.scores.information_gap),
+    expected_impact: clampScore(raw.scores.expected_impact),
+    urgency: clampScore(raw.scores.urgency),
+    coherence: clampScore(raw.scores.coherence),
+  },
+});
 
 /** The schemaName recorded on the wire + in `model.parse_failed`. */
 export const HEARTBEAT_THOUGHT_SCHEMA = 'HeartbeatThought';
@@ -154,7 +170,7 @@ export const thinkHeartbeatThought = async (
       maxTokens: deps.maxTokens,
       temperature: deps.temperature,
     });
-    const thought = res.content as HeartbeatThought; // the ladder guarantees the parse
+    const thought = salvage(res.content as HeartbeatThought); // the ladder guarantees the parse; the salvage normalizes
     const criteria: HeartbeatCriteria = {
       relevance: thought.scores.relevance,
       information_gap: thought.scores.information_gap,
