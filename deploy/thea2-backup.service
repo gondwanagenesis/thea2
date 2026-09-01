@@ -1,0 +1,19 @@
+# Thea2 disaster recovery = this pair. var/ snapshot + repo bundle (works with
+# no git remote — the repo is local-only upstream). Retention in the script.
+
+[Unit]
+Description=Thea2 — var/ snapshot + repo bundle
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=thea2
+Group=thea2
+WorkingDirectory=/opt/thea2
+ExecStart=/opt/thea2/bin/backup
+# A failed backup is LOUD (ops.md: check `systemctl list-timers thea2-backup`
+# in the weekly pass). Never blanket-retry: the next timer firing is the retry.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/backups/thea2 /opt/thea2/var

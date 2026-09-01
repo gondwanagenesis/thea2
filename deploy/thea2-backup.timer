@@ -1,0 +1,14 @@
+# Daily at 04:17 UTC — off the :00/:30 fleet-wide cron marks on purpose.
+# Thea1's 97 units had no timer of their own; this pair is Thea2's entire
+# disaster-recovery story (M20 spec: var/ snapshot + repo push).
+
+[Unit]
+Description=Thea2 — daily backup (var snapshot + repo bundle)
+
+[Timer]
+OnCalendar=*-*-* 04:17:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

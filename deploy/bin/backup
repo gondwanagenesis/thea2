@@ -1,0 +1,29 @@
+#!/bin/sh
+# Thea2 daily backup body (installed to /opt/thea2/bin/backup by install.sh).
+# Snapshot var/ (L0 events, ledger, stores, sched state) + a git bundle of the
+# repo. No remote needed — bundles are restorable with plain git.
+set -eu
+
+DEST=/var/backups/thea2
+KEEP_VAR=14
+KEEP_REPO=6
+STAMP=$(date -u +%Y%m%d-%H%M%S)
+
+mkdir -p "$DEST"
+
+cd /opt/thea2
+tar -cf - -C /opt/thea2 var | zstd -q -o "$DEST/var-$STAMP.tar.zst"
+git bundle create "$DEST/repo-$STAMP.bundle" --all 2>/dev/null
+
+# Retention: oldest falls off the cliff, never a partial set.
+ls -1t "$DEST"/var-*.tar.zst  | tail -n +$((KEEP_VAR + 1)) | xargs -r rm -f
+ls -1t "$DEST"/repo-*.bundle | tail -n +$((KEEP_REPO + 1)) | xargs -r rm -f
+
+# Optional offsite leg: if restic env is present (RESTIC_REPOSITORY +
+# RESTIC_PASSWORD_FILE), push the snapshot dir too. Absent env = local-only,
+# which is a deployment choice, not a failure.
+if [ -n "${RESTIC_REPOSITORY:-}" ]; then
+    restic backup "$DEST" --tag thea2
+fi
+
+echo "backup ok: $STAMP"

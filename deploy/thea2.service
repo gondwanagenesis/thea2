@@ -1,0 +1,49 @@
+# Thea2 — the ONE process. ADR-002: bridge + scheduler + turn pipeline live in
+# a single `thead` process; M16's in-process scheduler replaces Thea1's 97 systemd
+# units. Total Thea2 footprint: this unit + the backup service/timer.
+#
+# SECRETS: EnvironmentFile is read by PID1 (root) before the User= drop, so
+# /etc/thea2/keys.env can stay root-owned 0600. Tokens never live in this tree
+# (AGENTS rule 7). The bot token MUST be a NEW bot — never Thea1's
+# @Demigourgosbot (MIGRATION decree; enforced again in install.sh).
+
+[Unit]
+Description=Thea2 — thead (bridge + scheduler + pipeline, one process)
+Documentation=file:///opt/thea2/deploy/ops.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=thea2
+Group=thea2
+WorkingDirectory=/opt/thea2
+EnvironmentFile=/etc/thea2/keys.env
+ExecStart=/opt/thea2/bin/thead
+Restart=on-failure
+RestartSec=5s
+
+# Start only when S5★ has landed — before that bin/thead fails loudly by design
+# (no silent stubs, AGENTS rule 5). `systemctl start` before then is the operator's
+# mistake, and it says so in the journal.
+
+# Hardening: the process needs write access to var/ only (L0 events, ledger,
+# stores, sched state) and its node_modules. Everything else read-only or hidden.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/opt/thea2/var
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Logs go to the journal; the analytical record is var/events (L0), not stdout.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
