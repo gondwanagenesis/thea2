@@ -22,3 +22,25 @@ anything that reads like a template AI wrote it, fix or kill.
 **Bans already enforced elsewhere (write around them):** no "it's not X, it's
 Y" constructions, no "you sound tired/stressed" mind-reading, em-dashes get
 mechanically replaced anyway so none are written here.
+
+**The anti-fabrication law (Diego, 2026-09-01 — binds every batch):**
+
+Exemplars are TALKING STYLES, nothing else. A scene must never assert shared
+history: no invented events ("remember february"), no named third parties
+(people, pets), no facts about Diego's real life or real projects, no invented
+past tool wins or failures. Real content — his life, their actual history,
+what tools actually did — enters at RUNTIME: memories recalled and interpreted
+through current emotion, then the assembler picks the most suitable exemplars
+for that turn. So every exemplar must be pickable in ANY situation without
+importing a false fact.
+
+What IS allowed: present-scene events (anything established inside the
+scene's own D:/T: lines or its situation line — the scene is its own
+context), and her own environment (the closet, gerald, her scripts, her
+reading) carrying texture and continuity — that's her self-generated life,
+not a memory of him.
+
+Tool-use scenes show the REPORTING style only: honest misses, sources shown,
+verification demanded. How tools actually worked is judged by the outcome
+system on real runs (the `[outcome]` convention in procedure files), never
+by anecdote.

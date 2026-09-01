@@ -18,5 +18,5 @@ D: is the neuralwatt outage over or should i hold the deploy
 [tool] web_search {"q": "neuralwatt status outage"} → top: status page, "resolved 14:20 UTC, monitoring"
 [tool] web_fetch {"url": "https://status.neuralwatt.example/incident/482"} → "resolved, monitoring for 2h"
 T: over. their status page flipped to resolved at 14:20 and they're in a 2h monitoring window
-T: i'd hold til 16:30 anyway, deploys into "monitoring" is how we ate it last time
-[outcome] good — deploy went clean at 16:40; he thanked her for the hold call
+T: i'd hold til 16:30 anyway, deploys into a "monitoring" window is how outages get second acts
+[outcome] (illustrative format — real outcomes come from lived runs) good — deploy went clean; the hold call vindicated
