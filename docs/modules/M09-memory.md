@@ -1,9 +1,9 @@
 ---
 module: M09
 name: memory
-syncedTo: spec-v1 (no code yet)
+syncedTo: S3 (built — src/memory, test/memory; see "S3 build deviations" below)
 stage: S3
-depends: [M01-kernel, M02-events, M03-model, M04-embed]
+depends: [M01-kernel, M02-events, M03-model, M04-embed, M05-affect]
 ---
 # M09 — memory
 
@@ -79,15 +79,26 @@ export const writeProjections: (dir: string, episodes: Episode[], threads: Threa
 - Procedural exemplar SYNTHESIS — M08-derive (M09 stores runtime procedure records; M08 generates corpus exemplars from them).
 
 ## Acceptance criteria
-- [ ] Appraisal round-trip with MockModel: scripted valid output parses to the exact `Appraisal`; malformed JSON triggers exactly one cheap repair, then typed failure.
-- [ ] Graceful degradation: appraisal hard-failure ⇒ turn pipeline completes, `incident.parse_failed` emitted, no episode/affect/credit update (asserted at the M09 seam with a scripted failing model).
-- [ ] Unknown emotion tag ⇒ zod reject + incident, other appraisal fields discarded with it (no partial application).
-- [ ] Planted-fact recall: insert an episode, query a paraphrase, assert surfaced — with **HashEmbedder** (meaningful, not just stable); ranking order deterministic (score desc, id asc).
-- [ ] `affectAtEncoding` stamp equals the live-state Vec12 snapshot at append time (frozen-state test).
-- [ ] Store separation: planted procedure record is invisible to `episodicNominator` and vice versa (the S3 gate test).
-- [ ] Window: 30-message cap and 10k-token cap both enforced; ≥20-message eviction produces exactly one cached `[EARLIER]` line, not regenerated per turn; 4h silence (TestClock) resets to summary-only; tool-role messages never enter the window.
-- [ ] Projections: journal.md/threads.json rebuild is deterministic for the same episode set (snapshot test); write is atomic.
-- [ ] outcomePrev events land in L0 with verbatim evidence strings (replay-asserted).
+- [x] Appraisal round-trip with MockModel: scripted valid output parses to the exact `Appraisal`; malformed JSON triggers exactly one cheap repair, then typed failure.
+- [x] Graceful degradation: appraisal hard-failure ⇒ turn pipeline completes, `incident.parse_failed` emitted, no episode/affect/credit update (asserted at the M09 seam with a scripted failing model).
+- [x] Unknown emotion tag ⇒ zod reject + incident, other appraisal fields discarded with it (no partial application).
+- [x] Planted-fact recall: insert an episode, query a paraphrase, assert surfaced — with **HashEmbedder** (meaningful, not just stable); ranking order deterministic (score desc, id asc).
+- [x] `affectAtEncoding` stamp equals the live-state Vec12 snapshot at append time (frozen-state test).
+- [x] Store separation: planted procedure record is invisible to `episodicNominator` and vice versa (the S3 gate test).
+- [x] Window: 30-message cap and 10k-token cap both enforced; ≥20-message eviction produces exactly one cached `[EARLIER]` line, not regenerated per turn; 4h silence (TestClock) resets to summary-only; tool-role messages never enter the window.
+- [x] Projections: journal.md/threads.json rebuild is deterministic for the same episode set (snapshot test); write is atomic.
+- [x] outcomePrev events land in L0 with verbatim evidence strings (replay-asserted).
+
+## S3 build deviations (recorded 2026-09-01, code is the truth)
+- **`appraise` returns a typed outcome, not `Promise<Appraisal>`**: `Promise<{ ok: true; appraisal } | { ok: false; error }>` — graceful degradation as a value instead of an exception at the call site. The incident kinds are split by failure mode: `incident.parse_failed` (ladder exhausted, M03's code `model/parse-failed`) vs `incident.appraisal_failed` (transport/timeout/abort). Both carry `{ schema, code, error }` and the turn's `turnId`.
+- **The Appraisal zod schema lives in `src/memory/appraisal.ts`** (mirrors `schemas/appraisal.ts` field-for-field; the difference is that the tag is validated against M05's `EmotionTagSchema`, which the schemas mirror only documents) — `schemas/` is outside the module's lane.
+- **Extra injected deps**: `episodicNominator(store, { clock })` (the recency term needs `now`, injected for hermeticity); `openSessionWindow(dir, { model, clock, events })` — the added `events` emits `incident.window_summary_failed` when the span summarizer fails (the eviction itself still happens; the cap is non-negotiable).
+- **The session break is computed from the messages' own timestamps** (`msg.ts - last.ts >= 4h`), not the injected wall clock, so replaying a day of traffic through a TestClock reproduces the same window; the clock still stamps `savedAt`. At exactly 4h it breaks.
+- **Store facades grew the methods recall and the projections actually need**: `all/get/size/vecsFor/vecOf` on both stores (M04's index answers search without returning stored vectors, so vectors are cached in memory and batch-filled on demand), plus `draftEpisode` (appraisal → `EpisodeRecord`, taking the live Vec12 as a thunk so the stamp is frozen at encoding) and `affectEvents` (appraisal → `AffectEvent[]` for M05) and `procedureFromDelegation` (M13's `DelegationPayload` → record). `append` takes the plain `EpisodeRecord`; `Episode` is the record plus its optional cached `vec`.
+- **`openThreadIndex` is in-memory only.** `threads.json` is write-only, and ARCHITECTURE's `var/` table sanctions no extra memory file, so the fold is not persisted; it lives for the process lifetime and history rebuilds from episodes. If a restart-time thread rebuild proves necessary that is a spec change (M10's lane).
+- **Proposed constants the spec left open** (all flagged in code): `EPISODIC_MIN 3 / EPISODIC_MAX 5`, `NOMINATOR_POOL_FACTOR 4` (composite re-ranking reaches past the cosine cut), `RECENCY_HALF_LIFE_MS` = 7 days, `OUTCOME_WEIGHT = { good: 1.25, mixed: 1, bad: 0.75 }`, `SIG_EPSILON 0.01` (deviation coords below it are silence in a candidate's signature), `RENDER_ARG_CAP 240` (procedure args in `[PROCEDURAL]` renders), `APPRAISAL_MAX_TOKENS 400`, `SUMMARY_MAX_TOKENS 160`, appraisal/summarizer temperature 0.
+- **File layout**: `errors.ts` (the `memory/*` code union), `record-store.ts` (the JSONL + VectorIndex persistence both stores share — durability order row first, index self-heals or refuses `memory/index-orphan`), `threads.ts`, `recall.ts`, `projections.ts`, `window.ts`, `episodes.ts`, `procedural.ts`, `appraisal.ts`, plus the barrel. `episodes.jsonl`/`embeddings.bin` and `procedural.jsonl`/`procedural-embeddings.bin` keep the spec's file pairs; the window persists its own `window.json` (crash-safe reopen of the verbatim window + cached line + pending span).
+- **Dependency edge added (authorized)**: `depends` gains M05-affect — the appraisal schema validates tags against M05's vocabulary and `affectEvents` returns M05's `AffectEvent` type. Mirrored in `.dependency-cruiser.cjs` (`"src/memory": ["kernel", "events", "model", "embed", "affect"]`) in the same edit. No other edges.
 
 ## Test checklist
 - unit: appraisal schema round-trip + reject table; window cap math (message-count edge at exactly 30, token edge at exactly 10k); recency×importance ranking geometry (FixedEmbedder); session-break boundary (3h59m vs 4h01m).
