@@ -276,6 +276,10 @@ const repairStructured = async <T>(
     temperature: req.temperature,
     schema,
     ...(req.schemaName !== undefined ? { schemaName: req.schemaName } : {}),
+    // The repair re-ask is part of the SAME logical generation: reproducibility
+    // (same store + seed ⇒ same bytes) requires the seed to ride along, or every
+    // repaired draft would come from an unseeded call.
+    ...(req.seedHint !== undefined ? { seedHint: req.seedHint } : {}),
   };
   const second = await core(repairReq, ctx, 'prompted_json');
   note(second);
@@ -307,6 +311,9 @@ const repairToolArgs = async (
     }),
     maxTokens: req.maxTokens,
     temperature: req.temperature,
+    // Same reproducibility rule as repairStructured: the re-ask belongs to the
+    // same logical call, so the seed rides along.
+    ...(req.seedHint !== undefined ? { seedHint: req.seedHint } : {}),
   };
   const second = await core(repairReq, ctx, 'prompted_json');
   note(second);

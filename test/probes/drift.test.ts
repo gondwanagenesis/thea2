@@ -123,9 +123,8 @@ describe('runDrift — exact cosines', () => {
   });
 
   it('an unpinned driftRef uses only CANON exemplars of the dimension — derived and lived never anchor "her"', async () => {
-    // A hand-built CorpusIndex double: M07's derived/lived id rule (content-hash id)
-    // cannot be satisfied by a file on disk today (the hash depends on the id line —
-    // a known upstream M07 bug, worked around by M08's masked hashableText), so the
+    // A hand-built CorpusIndex double: derived/lived ids are masked content hashes
+    // (src/corpus/derived-id.ts), awkward to satisfy with real on-disk files, so the
     // three-source case is pinned at the seam the drift evaluator actually reads.
     const exemplar = (id: string, source: 'canon' | 'derived' | 'lived', body: string): Exemplar => ({
       id,

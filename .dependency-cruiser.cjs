@@ -70,8 +70,8 @@ module.exports = {
     {
       name: "app-not-imported-anywhere",
       severity: "error",
-      comment: "M20-app is the composition root; nothing imports it (M19-probes gets its target injected, never imported).",
-      from: { path: "^(?!src/app/)" },
+      comment: "M20-app is the composition root; no SOURCE module imports it (M19-probes gets its target injected, never imported). Tests may import it to test it.",
+      from: { path: "^(?!src/app/|test/)" },
       to: { path: "^src/app/" },
     },
     {
