@@ -205,7 +205,7 @@ export const renderLedgerBody = (data: LedgerReportData): string => {
   );
   L.push(`- consolidate alarms: ${t.consolidateAlarms}`);
   L.push(`- router guardrail warnings (model.routing_ignored): ${t.routingIgnored}`);
-  L.push(`- incidents: ${counted(t.incidents)}`);
+  L.push(t.incidents.length > 0 ? `- incidents: ${counted(t.incidents)}` : '- incidents: none');
   if (t.schedStateRead) {
     L.push(
       `- scheduler: ${t.schedJobs.length === 0 ? 'no jobs have run yet' : t.schedJobs.map(schedJobText).join('; ')}`,
