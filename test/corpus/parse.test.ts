@@ -6,7 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { DIMENSIONS } from '../../schemas/exemplar.js';
-import { analyzeFile, type SourceKind } from '../../src/corpus/parse.js';
+import { analyzeFile } from '../../src/corpus/parse.js';
+import type { SourceKind } from '../../src/corpus/types.js';
 import { DERIVED_ID_PLACEHOLDER, derivedFileId, withFileId } from '../../src/corpus/derived-id.js';
 import type { CorpusFile } from '../../src/corpus/types.js';
 
