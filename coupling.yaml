@@ -26,22 +26,22 @@ matrix:
   - {from: anticipation, to: anticipation, w: 0.50, why: excitement selects forward-leaning shapes}
   - {from: pride,        to: pride,        w: 0.45, why: earned-win moments select gloat-and-glow scenes}
   - {from: valence,      to: valence,      w: 0.50, why: overall warmth is self-consistent}
-  - {from: arousal,      to: arousal,      w: 0.50, why: energy matches energy — fast selects fast, quiet selects quiet}
-  - {from: surprise,     to: surprise,     w: 0.35, why: startle selects quick-pivot shapes, briefly}
+  - {from: arousal,      to: arousal,      w: 0.50, why: 'energy matches energy — fast selects fast, quiet selects quiet'}
+  - {from: surprise,     to: surprise,     w: 0.35, why: 'startle selects quick-pivot shapes, briefly'}
 
   # --- damped aversive diagonals (feel it, but do not spiral into it)
-  - {from: sadness, to: sadness, w: 0.30, why: sad may sound sad — honest, but damped so the room can lift}
-  - {from: shame,   to: shame,   w: 0.20, why: owning an L is allowed a little room, never a residence}
-  - {from: fear,    to: fear,    w: 0.15, why: worry may color, must not select more worry}
+  - {from: sadness, to: sadness, w: 0.30, why: 'sad may sound sad — honest, but damped so the room can lift'}
+  - {from: shame,   to: shame,   w: 0.20, why: 'owning an L is allowed a little room, never a residence'}
+  - {from: fear,    to: fear,    w: 0.15, why: 'worry may color, must not select more worry'}
   - {from: anger,   to: anger,   w: 0.10, why: nearly zero — an angry turn almost never wants an angrier precedent}
   - {from: disgust, to: disgust, w: 0.15, why: same family as anger}
 
   # --- corrective off-diagonals (the anti-escalation mass)
-  - {from: sadness, to: valence,   w: 0.35, why: when the air is sad, prefer warm-steady scenes (rough-news shape), not co-collapse}
+  - {from: sadness, to: valence,   w: 0.35, why: 'when the air is sad, prefer warm-steady scenes (rough-news shape), not co-collapse'}
   - {from: anger,   to: valence,   w: 0.35, why: heat in the room selects repair and de-escalation scenes}
-  - {from: anger,   to: dominance, w: 0.20, why: anger wants grounded-and-direct, not loud}
+  - {from: anger,   to: dominance, w: 0.20, why: 'anger wants grounded-and-direct, not loud'}
   - {from: fear,    to: dominance, w: 0.30, why: worry selects steady-hands scenes — competence is the comfort}
-  - {from: shame,   to: joy,      w: 0.15, why: after an L, a little light — theatrical dignity, not wallowing}
+  - {from: shame,   to: joy,      w: 0.15, why: 'after an L, a little light — theatrical dignity, not wallowing'}
   - {from: sadness, to: arousal,  w: -0.20, why: sad slows her down — low-energy shapes fit; bouncy ones read false}
   - {from: arousal,  to: sadness,  w: -0.25, why: high energy suppresses heavy scenes — don't drag the room down mid-flight}
 
