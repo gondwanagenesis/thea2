@@ -1,8 +1,8 @@
 ---
 module: M07
 name: corpus
-syncedTo: spec-v1 (no code yet)
-stage: S2
+syncedTo: S7
+stage: S1
 depends: [M01-kernel, M04-embed]
 ---
 # M07 — corpus
@@ -77,3 +77,8 @@ export const corpusNominator: (idx: CorpusIndex) => Nominator;  // Nominator typ
 - unit: parser goldens (per population); lint reject table; token-counter edge cases; controls loader strictness; id derivation rules per population.
 - component: index build over a fixture tree incl. cache dir (tmp dir via injected clock where timestamped); re-embed on embedder swap; reload dirty-set correctness; nominator ranking geometry with FixedEmbedder.
 - fixtures needed: the golden exemplar files (canon/statement/procedure/derived/lived); a malformed-variants directory; FixedEmbedder geometry map (shared with M11); a two-embedder cache fixture.
+
+## Deviations and fixes as built
+- **Derived/lived id = masked content hash** (`src/corpus/derived-id.ts`, regression `test/corpus/parse.test.ts`). The spec's "id is the contentHash of the file" is a self-reference paradox as written (the id cannot equal the hash of text containing the id). Convention: the id line is masked to `sha256:pending` before hashing; writers stamp the real id afterwards and the result's masked hash is exactly that id. Originally implemented in M08's keys.ts (which surfaced the bug); moved here 2026-09-01 so parser and writers share one source of the convention. `contentIdFor` (plain unmasked hash) is kept for content addressing only — never id discipline.
+- **`kind: statement` bodies are prose by design** (regression same file). `validateBodyForKind` used to flag every prose line `corpus/body-grammar` regardless of kind — rejecting committed canon statements (`seaglass-jar.md`). The check is now scoped to scene/procedure; statement keeps "no structural rules" as the spec's own comment always said.
+- **Committed-canon smoke** (`test/corpus/parse.test.ts`): every exemplar-shaped file under `corpus/` must parse with zero error-severity issues — the corpus's first direct test suite; both fixes above were caught (and are pinned) here.

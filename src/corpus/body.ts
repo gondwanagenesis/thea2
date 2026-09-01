@@ -179,14 +179,19 @@ export const validateBodyForKind = (
   const issues: LintIssue[] = [...parsed.problems];
   const file = opts.file;
 
-  for (const prose of parsed.proseLines) {
-    issues.push({
-      code: 'corpus/body-grammar',
-      severity: 'error',
-      message: `body line ${prose.line} is not Setup:/D:/T:/[tool]/[outcome] — scenes are alternating turns, prose belongs to kind: statement`,
-      file,
-      line: prose.line,
-    });
+  // Prose lines are noise in scene/procedure bodies — but they are the POINT
+  // of kind: statement (its comment below says so; the check used to flag
+  // committed canon statements as errors). Scoped accordingly.
+  if (kind !== 'statement') {
+    for (const prose of parsed.proseLines) {
+      issues.push({
+        code: 'corpus/body-grammar',
+        severity: 'error',
+        message: `body line ${prose.line} is not Setup:/D:/T:/[tool]/[outcome] — scenes are alternating turns, prose belongs to kind: statement`,
+        file,
+        line: prose.line,
+      });
+    }
   }
 
   if (kind === 'scene') {

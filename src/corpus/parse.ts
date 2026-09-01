@@ -14,6 +14,7 @@ import {
 } from '../../schemas/exemplar.js';
 import { CorpusError } from './errors.js';
 import { parseFrontmatterText, splitExemplarFile } from './frontmatter.js';
+import { derivedFileId } from './derived-id.js';
 import { parseBody, validateBodyForKind } from './body.js';
 import { compareStrings, type CorpusFile, type LintIssue, type SourceKind } from './types.js';
 
@@ -52,14 +53,17 @@ export const canonIdFromPath = (filePath: string): string | undefined => {
 };
 
 /**
- * Derived/lived ids are the contentHash of the (newline-normalized) file text.
- * M08/M10 write LF files, so this matches the bytes they wrote.
+ * Derived/lived ids are the MASKED contentHash of the file text (derived-id.ts):
+ * the id line is replaced by a fixed placeholder before hashing, because an id
+ * can never equal the hash of text containing itself. `contentIdFor` (below)
+ * is the raw unmasked hash — kept for callers that want plain content
+ * addressing, never for id discipline.
  */
-export const contentIdFor = (raw: string): string => contentHash(raw.replace(/\r\n/g, '\n'));
-
-/** The id a file SHOULD have, per its population. Undefined when the path is unusable for that population. */
 export const expectedIdFor = (file: CorpusFile, source: SourceKind): string | undefined =>
-  source === 'canon' ? canonIdFromPath(file.path) : contentIdFor(file.raw);
+  source === 'canon' ? canonIdFromPath(file.path) : derivedFileId(file.raw);
+
+/** Plain contentHash of the newline-normalized text — NOT the id convention; see expectedIdFor. */
+export const contentIdFor = (raw: string): string => contentHash(raw.replaceAll('\r\n', '\n'));
 
 /** The dimension directory a canon file sits in (undefined when the path is not `.../canon/<dim>/<slug>.md`). */
 export const dimensionDirFor = (filePath: string): string | undefined => {
