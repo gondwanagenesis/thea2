@@ -1,7 +1,7 @@
 ---
 module: M05
 name: affect
-syncedTo: spec-v1 (no code yet)
+syncedTo: spec-v1 (implemented; see "Deviations as built" at the end)
 stage: S2
 depends: [M01-kernel, M02-events]
 ---
@@ -31,18 +31,21 @@ export const EMOTION_TAGS = new Set([...EMOTION_DELTAS, ...EMOTION_PRIMARIES, ..
 // ---- state.ts ----
 export interface AffectState {
   t: number;
+  lastContactAt: number;              // silence is t - this (the S-010 channel)
   dials: Record<Dial, number>;        // [0,1]
   primaries: Record<Primary, number>; // [0,1]
   drives: Record<Drive, number>;      // [0,1]
-  mood: Record<Dial, number>;         // slow layer
+  mood: Record<Dial | Primary, number>; // slow layer (dials + PAD + primaries)
   traces: {
-    exposure: Partial<Record<Primary | Dial, { level: number; t: number }>>;
-    opponent: Partial<Record<Primary | Dial, { b: number; t0: number }>>;
-    peaks: Partial<Record<Primary | Dial, number>>;
+    exposure: Partial<Record<AffectDim, { level: number; t: number }>>;
+    opponent: Partial<Record<AffectDim, { b: number; t0: number }>>;
+    peaks: Partial<Record<AffectDim, number>>;
     habitWindow: Array<{ tag: string; t: number }>;
   };
-  causes: Partial<Record<Primary, { text: string; i: number; t: number }>>;
+  causes: Partial<Record<Primary, { text: string; i: number; t: number; moved: number; people?: string }>>;
+  fedAt: Record<Drive, number>;       // starvation suppressed for the tick after a feed
 }
+// type AffectDim = Dial | Primary | Drive  (drives carry exposure traces too)
 
 // ---- events (the only inputs; schema-validated at the boundary) ----
 export type AffectEvent =
@@ -52,14 +55,17 @@ export type AffectEvent =
 
 export const tick: (s: AffectState, dtMs: number, rng: Rng) => AffectState;  // pure
 export const apply: (s: AffectState, ev: AffectEvent) => AffectState;        // pure
+export const applyInto: (s: AffectState, evs: readonly AffectEvent[]) => { state: AffectState; moved: Moved }; // batch form, pure
 export const weatherLine: (s: AffectState) => string;  // landmark blend + top cause, one line
 
 // ---- store.ts (the single writer) ----
 export interface AffectStore {
-  applyEvents(evs: AffectEvent[]): Promise<void>;  // validate tags -> apply -> tick to now -> persist + snapshot event
+  applyEvents(evs: AffectEvent[], opts?: { source?: UnknownTagSource }): Promise<void>;
+    // validate whole batch -> tick to now -> apply -> persist -> affect.applied
+    // (opts.source lands on the incident so M09 can say the reject came from appraisal)
   snapshot(): Promise<void>;                        // affect.snapshot event (sched job, 15m)
-  current(): AffectState;
-  weather(): string;
+  current(): AffectState;   // defensive copy; throws 'affect/not-booted' before boot lands
+  weather(): string;        // same boot contract
 }
 export const openAffectStore: (path: string, deps: { clock: Clock; rng: Rng; events: EventLog }) => AffectStore;
 ```
@@ -93,20 +99,32 @@ export const openAffectStore: (path: string, deps: { clock: Clock; rng: Rng; eve
 - Affect-driven selection scoring — M06/M11; M05 only exposes state.
 
 ## Acceptance criteria
-- [ ] **Golden replay**: a committed fixture of ~50 diary events (Thea1-real, replayed through ticker.py to record expectations) run through the TS engine matches recorded expectations at every checkpoint (values AND which dims moved).
-- [ ] Decay monotone toward baseline from any start; aversive members decay strictly slower than matched non-aversive (half-life ratio preserved).
-- [ ] Repeated tag within 30 min lands at ≤ 70% (`HABITUATION` 0.7 window rule); outside the window, full strength per exposure traces.
-- [ ] Peak ≥ `PEAK_HI` opens the refractory window; re-rise inside it is damped by exactly `REFRACTORY_DAMP`.
-- [ ] Superlinearity: i=9 vs i=3 produces a ratio > 3.3× (i^1.7 property).
-- [ ] Mutual inhibition never drives any primary below its baseline.
-- [ ] All state values bounded [0,1] for every mechanic and every random seed in the property suite.
-- [ ] **Every `EMOTION_TAG` moves at least one dimension** in `apply` (the orphan-tag regression — exhaustive loop over the vocabulary).
-- [ ] Unknown tag at the store boundary → typed reject + `incident.unknown_tag`, state byte-identical before/after.
-- [ ] `tick`/`apply` purity: same inputs → deep-equal outputs, no observable mutation of the input state.
-- [ ] Corrupt `state.json` at startup rebuilds from L0 snapshot replay and emits the recovery incident.
+- [x] **Golden replay**: a committed fixture of ~50 diary events (Thea1-real, replayed through ticker.py to record expectations) run through the TS engine matches recorded expectations at every checkpoint (values AND which dims moved).
+- [x] Decay monotone toward baseline from any start; aversive members decay strictly slower than matched non-aversive (half-life ratio preserved).
+- [x] Repeated tag within 30 min lands at ≤ 70% (`HABITUATION` 0.7 window rule); outside the window, full strength per exposure traces.
+- [x] Peak ≥ `PEAK_HI` opens the refractory window; re-rise inside it is damped by exactly `REFRACTORY_DAMP`.
+- [x] Superlinearity: i=9 vs i=3 produces a ratio > 3.3× (i^1.7 property).
+- [x] Mutual inhibition never drives any primary below its baseline.
+- [x] All state values bounded [0,1] for every mechanic and every random seed in the property suite.
+- [x] **Every `EMOTION_TAG` moves at least one dimension** in `apply` (the orphan-tag regression — exhaustive loop over the vocabulary).
+- [x] Unknown tag at the store boundary → typed reject + `incident.unknown_tag`, state byte-identical before/after.
+- [x] `tick`/`apply` purity: same inputs → deep-equal outputs, no observable mutation of the input state.
+- [x] Corrupt `state.json` at startup rebuilds from L0 snapshot replay and emits the recovery incident.
 
 ## Test checklist
 - unit: one suite per mechanic over its constants table (decay curves at half-life boundaries, habituation window edges, opponent lag onset, refractory open/close, ceiling saturation, intensity ratio, inhibition symmetry, attribution stale/clear thresholds, drive starvation rates); `weatherLine` landmark-blend table (all four regions + sigma spread); vocabulary membership vs ticker.py's own exports (golden list).
 - property: boundedness under seeded random event storms; decay/habituation/opponent invariants; purity (frozen-input structural sharing).
 - component: `AffectStore` serialization queue under interleaved callers; snapshot → corrupt → L0-replay recovery cycle; `affect.applied` event shape.
 - fixtures needed: the ~50-event golden diary fixture + recorded expectations (generated once from ticker.py, committed); ticker.py-derived vocabulary golden list; a corrupt-state.json variant.
+
+## Deviations as built
+Recorded here because the build deviated on purpose, not by drift. Everything else above is implemented as written.
+- **`EMOTION_TAGS` is the union of the three tag-KEYED tables** (`EMOTION_DELTAS` ∪ `TAG_PRIMARY_DELTAS` ∪ `TAG_DRIVE_DELTAS` keys — 75 tags), not the spec's literal `EMOTION_DELTAS ∪ EMOTION_PRIMARIES ∪ EMOTION_DRIVES`. The literal set-builder would admit 11 tags that move nothing (bare primary/drive names never enter the engine as tags), which the orphan-tag gate forbids by construction. `unspecified` is in the vocabulary as a deliberate neutral no-op and is the ONE documented exemption in the every-tag regression (proven both ways: it moves nothing, and it is the only one).
+- **Batch order is tick-to-now FIRST, then the events land at now** (the interface sketch above said apply → tick to now). A batch that just arrived must classify as contact: apply-first would tick hours of silence BEFORE the message lands, ramping longing against a turn that is happening.
+- **`applyEvents` validates the whole batch before any mutation** (reject leaves the state byte-identical and emits nothing but the incident), and takes an optional `{ source }` carried on `incident.unknown_tag` so M09 can own its rejects.
+- **Boot is eager and its origin time is captured at open.** `openAffectStore` snapshots `clock.epochMs()` before any await, so a fresh baseline starts when the store was opened, not when boot's file IO happened to land. The sync readers (`current`/`weather`) throw `affect/not-booted` if called before boot resolves — an ordering bug at the call site, loudly.
+- **State shape grew where the mechanics needed it**: `mood` covers dials + PAD + primaries; exposure/opponent/peaks are keyed by `AffectDim` (drives carry exposure so repeated feeds dull); `causes` carry `moved` (a bigger later step supersedes) and `people?`; `fedAt` + a `NEVER_MS` sentinel (±Infinity has no canonical JSON form).
+- **The `moved` deltas summary records only non-zero landings** — a push that saturates to exactly 0 at a boundary (a downward delta on a dial resting at 0) moved nothing, and claiming it would lie to the journal.
+- **`tagFeed` lands at `intensityScale(10)`** — the events carry no diary intensity, so the feed is full-strength by construction.
+- **Corruption taxonomy**: a parseable-but-wrong-shape `state.json` is corruption (not silence); a VANISHED file with snapshots on disk is also an incident (`reason: 'state file missing'`); only a genuinely first boot (no file, no snapshots) is quiet.
+- **The golden fixture is recorded from the TS engine itself**, via the committed `test/affect/fixtures/record-golden.ts` (real Thea1 journal lines → typed events, replayed twice, determinism asserted). ticker.py cannot run hermetically — it reads wall-clock and live files — so ticker parity is carried by the verbatim constants tables (asserted number-by-number in the unit suites) and the vocabulary golden list, not by invoking ticker.py at test time.

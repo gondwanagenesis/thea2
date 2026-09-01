@@ -1,0 +1,93 @@
+{
+  "comment": "Recorded-shape Telegram getUpdates payloads. Ids, names, dates and file ids are fictional; no token material. The real parse layer and FakeChannel's producer side pass one shared conformance suite over these (test/bridge/conformance.test.ts) — the same discipline as M03's MockModel conformance.",
+  "diegoId": 8123456,
+  "updates": {
+    "text_message": {
+      "update_id": 401,
+      "message": {
+        "message_id": 7001,
+        "from": { "id": 8123456, "is_bot": false, "first_name": "Diego", "username": "gondwana" },
+        "chat": { "id": 8123456, "type": "private" },
+        "date": 1788000000,
+        "text": "estás despierta? ya son las tres"
+      }
+    },
+    "edited_message": {
+      "update_id": 402,
+      "edited_message": {
+        "message_id": 7001,
+        "from": { "id": 8123456, "is_bot": false, "first_name": "Diego", "username": "gondwana" },
+        "chat": { "id": 8123456, "type": "private" },
+        "date": 1788000000,
+        "edit_date": 1788000090,
+        "text": "estás despierta? ya son las tres (editado)"
+      }
+    },
+    "reaction": {
+      "update_id": 403,
+      "message_reaction": {
+        "message_id": 7001,
+        "user": { "id": 8123456, "is_bot": false, "first_name": "Diego", "username": "gondwana" },
+        "chat": { "id": 8123456, "type": "private" },
+        "date": 1788000060,
+        "old_reaction": [],
+        "new_reaction": [{ "type": "emoji", "emoji": "🔥" }]
+      }
+    },
+    "reaction_removed": {
+      "update_id": 404,
+      "message_reaction": {
+        "message_id": 7001,
+        "user": { "id": 8123456, "is_bot": false, "first_name": "Diego", "username": "gondwana" },
+        "chat": { "id": 8123456, "type": "private" },
+        "date": 1788000300,
+        "old_reaction": [{ "type": "emoji", "emoji": "🔥" }],
+        "new_reaction": []
+      }
+    },
+    "photo_message": {
+      "update_id": 405,
+      "message": {
+        "message_id": 7002,
+        "from": { "id": 8123456, "is_bot": false, "first_name": "Diego", "username": "gondwana" },
+        "chat": { "id": 8123456, "type": "private" },
+        "date": 1788000120,
+        "photo": [{ "file_id": "AgACAgIAAxkBAAI-fakefileid", "width": 320, "height": 240 }],
+        "caption": "mira esto"
+      }
+    },
+    "channel_post": {
+      "update_id": 406,
+      "channel_post": {
+        "message_id": 300,
+        "sender_chat": { "id": -1001234567890 },
+        "chat": { "id": -1001234567890, "type": "channel", "title": "Noticias" },
+        "date": 1788000150,
+        "text": "boletín de la tarde"
+      }
+    },
+    "other_speaker": {
+      "update_id": 407,
+      "message": {
+        "message_id": 7003,
+        "from": { "id": 999000111, "is_bot": false, "first_name": "Marisol" },
+        "chat": { "id": 999000111, "type": "private" },
+        "date": 1788000180,
+        "text": "ella tampoco duerme"
+      }
+    },
+    "malformed_missing_message_fields": {
+      "update_id": 408,
+      "message": { "chat": { "id": 8123456, "type": "private" } }
+    },
+    "malformed_no_update_id": {
+      "message": {
+        "message_id": 7004,
+        "from": { "id": 8123456, "is_bot": false, "first_name": "Diego" },
+        "chat": { "id": 8123456, "type": "private" },
+        "date": 1788000210,
+        "text": "sin update_id"
+      }
+    }
+  }
+}

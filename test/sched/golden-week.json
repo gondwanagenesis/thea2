@@ -1,0 +1,2293 @@
+{
+  "comment": "Committed sched.fire sequence for one simulated week (TestClock) over weekJobs(). Expectation, not snapshot — regenerate only when the week semantics change.",
+  "startMs": 1788220800000,
+  "weekMs": 604800000,
+  "fires": [
+    {
+      "at": 1788222585278,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788224563214,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788226311165,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788227946678,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788229763541,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788231462114,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788231600000,
+      "job": "reflect",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788233308386,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788235095165,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788236797072,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788237000000,
+      "job": "ledger-report",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788238682226,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788240342003,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788242026087,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788242400000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788243788613,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788245566390,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788247376083,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788249339986,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788251018773,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788252711976,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788254639018,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788256529026,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788258275898,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788260245891,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788262011255,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788263876634,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788264000000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788265579419,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788267311061,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788269097972,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788270920208,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788272549599,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788274472119,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788276322034,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788277991641,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788279948335,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788281675443,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788283298320,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788284963133,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788285600000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788286857536,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788288488352,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788290315454,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788291986299,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788293797463,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788295641231,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788297318934,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788299166702,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788300893771,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788302737341,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788304536885,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788306461847,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788307200000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788308329904,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788310195506,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788311896164,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788313800738,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788315587989,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788317544685,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788318000000,
+      "job": "reflect",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788319208171,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788320860885,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788322508118,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788323400000,
+      "job": "ledger-report",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788324422486,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788326338991,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788328043700,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788328800000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788329732928,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788331704918,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788333548793,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788335384519,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788337221605,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788339088783,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788340874419,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788342830307,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788344522626,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788346291231,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788348248373,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788349895521,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788350400000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788351627322,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788353488522,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788355299767,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788357236126,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788359052599,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788360690979,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788362326904,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788364098907,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788365871696,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788367792262,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788369488067,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788371325684,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788372000000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788373207249,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788374852427,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788376712558,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788378419037,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788380099256,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788381948935,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788383611287,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788385512443,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788387439281,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788389142855,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788390998753,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788392664185,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788393600000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788394417308,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788396113813,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788397770057,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788399694984,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788401617456,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788403362618,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788404400000,
+      "job": "reflect",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788405126282,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788406800999,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788408635233,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788409800000,
+      "job": "ledger-report",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788410275048,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788412041190,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788413783076,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788415200000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788415646278,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788417425669,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788419367748,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788421233960,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788423195121,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788425056909,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788426966439,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788428721185,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788430523216,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788432266034,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788434197438,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788436067770,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788436800000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788437720667,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788439519425,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788441290889,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788442963956,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788444824663,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788446623902,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788448341875,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788450081135,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788452003192,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788453825125,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788455621539,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788457306303,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788458400000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788459067179,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788460803463,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788462508849,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788464234691,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788466004581,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788467652621,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788469350668,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788471011172,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788472890241,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788474541869,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788476330593,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788478288630,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788480000000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788480123783,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788481949991,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788483595556,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788485425751,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788487099735,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788488798715,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788490547822,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788490800000,
+      "job": "reflect",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788492186420,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788493942406,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788494400000,
+      "job": "derive-check",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788495796998,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788496200000,
+      "job": "ledger-report",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788497692622,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788499450907,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788501322979,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788501600000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788502991175,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788504820154,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788506715859,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788508671702,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788510415332,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788512121229,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788513954088,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788515793986,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788517509258,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788519353270,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788521042549,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788522957711,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788523200000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788524826546,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788526700214,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788528480935,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788530183348,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788531962975,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788533916975,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788535645802,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788537493877,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788539266530,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788541124315,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788542766077,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788544427311,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788544800000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788546291129,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788547917335,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788549557414,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788551211760,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788553144600,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788555062294,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788556941300,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788558900773,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788560594009,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788562291429,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788563962823,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788565854441,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788566400000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788567797730,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788569540499,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788571269066,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788573070651,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788574856789,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788576595587,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788577200000,
+      "job": "reflect",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788578368315,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788580259548,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788581954732,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788582600000,
+      "job": "ledger-report",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788583637020,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788585378470,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788587161345,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788588000000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788588857571,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788590510518,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788592180608,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788593884200,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788595694249,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788597416028,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788599178315,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788601137228,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788602976756,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788604623856,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788606387021,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788608088248,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788609600000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788610048223,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788611934678,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788613595147,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788615318968,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788617171889,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788619085380,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788621013229,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788622775499,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788624456282,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788626082845,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788627802338,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788629620623,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788631200000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788631244909,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788633107975,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788635058878,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788636684403,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788638536345,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788640223355,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788642099039,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788643864016,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788645632306,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788647585189,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788649329196,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788651191631,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788652800000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788652964090,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788654791430,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788656660041,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788658295117,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788660155582,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788661854329,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788663600000,
+      "job": "reflect",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788663780738,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788665548902,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788667313941,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788669000000,
+      "job": "ledger-report",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788669284697,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788671172322,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788672848340,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788674400000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788674548251,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788676525506,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788678444730,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788680388708,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788682159952,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788684074424,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788685875774,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788687641414,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788689505242,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788691342243,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788693075215,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788694933371,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788696000000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788696877220,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788698554501,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788700342949,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788702214391,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788704098288,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788705959529,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788707706578,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788709481859,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788711292870,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788713164191,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788715106907,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788716755354,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788717600000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788718517251,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788720209845,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788721934014,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788723613547,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788725278896,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788726933940,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788728707063,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788730332987,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788731953655,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788733802201,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788735723639,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788737628588,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788739200000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788739408759,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788741307184,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788742997587,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788744868213,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788746632809,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788748293025,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788749983887,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788750000000,
+      "job": "reflect",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788751924624,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788753640318,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788755400000,
+      "job": "ledger-report",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788755463536,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788757371309,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788759226106,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788760800000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788760960668,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788762897565,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788764777037,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788766605984,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788768320463,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788769979919,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788771848056,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788773603189,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788775366137,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788777126045,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788779020629,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788780984752,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788782400000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788782699879,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788784362235,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788785996230,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788787637162,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788789339159,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788790987687,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788792967571,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788794664784,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788796420819,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788798140950,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788800039352,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788801719832,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788803571562,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788804000000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788805269349,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788806903112,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788808762387,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788810591486,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788812510233,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788814328927,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788816296290,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788818194133,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788820120791,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788821931376,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788823890170,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788825592623,
+      "job": "heartbeat",
+      "lateMs": 0,
+      "catchUp": false
+    },
+    {
+      "at": 1788825600000,
+      "job": "affect-snapshot",
+      "lateMs": 0,
+      "catchUp": false
+    }
+  ]
+}
