@@ -1,7 +1,7 @@
 ---
 module: M10
 name: consolidate
-syncedTo: spec-v1 (no code yet)
+syncedTo: S7 (built — src/consolidate + test/consolidate; full five-gate green; see "As built" at the end)
 stage: S7
 depends: [M01-kernel, M02-events, M03-model, M04-embed, M05-affect, M07-corpus, M09-memory]
 ---
@@ -76,3 +76,15 @@ export const gravityAlarms: (metrics: {...}) => Array<'unmoored' | 'not-integrat
 - unit: credit math goldens + property suite (clamp, decay, moodGuard, slotShare matrix); seedRatio/dimensionCoverage math; alarm threshold table incl. the week-6 gate.
 - component: MockModel nightly L2 over a fixture episode week (outputs validated by M07's parser); weekly L3 path assertions; weights corrupt→replay recovery; status projection snapshot.
 - fixtures needed: a fixture week of episodes + PacketRecords + outcomePrev events; constructed Vec12 states around the moodGuard threshold; a canned drift-cosine injector for the projection.
+
+## As built (S7, landed 2026-09-01)
+
+src/consolidate: cluster.ts, credit.ts, draft.ts, errors.ts, gravity.ts, run.ts, state.ts, types.ts + corpus/nominator.ts. Suite: test/consolidate (6 files incl. helpers) + test/corpus/nominator.test.ts. All acceptance criteria above are covered; five integration fixes landed with the module, each now pinned by a named test:
+
+1. **Placeholder id gate** — `validateLived` stamps the real content id BEFORE `analyzeFile`; the gate was validating its own placeholder render, which can never satisfy id == masked hash. A declared non-placeholder id is validated as-is, so tampering still fails the gate (draft.ts).
+2. **Outcome dedupe** — the same grade reaches L0 through memory's `outcome.prev` and the bridge's own emission; `replayL0` dedupes outcome rows per turnId keep-last so the credit pass grades a turn once (run.ts).
+3. **No false PROPOSAL marker** — lived + complete provenance carries no proposal note; only genuine proposal destinations and provenance gaps are marked (run.ts `proposalReasonFor`).
+4. **Rolling window order** — `lastNPackets` is newest-first (ts, turnId desc); gravity reports over the presentation order (gravity.ts).
+5. **Repair keeps the seed** — M03's structured-ladder repair re-ask carries `seedHint`, so the same store + seed still yields the same bytes through a repaired draft (model/client.ts; reproducibility law).
+
+Deliberate deviation: lived filenames strip the `sha256:` prefix (`fileBaseName`) — `:` is an NTFS alternate-data-stream separator and breaks git-on-Windows; the full id stays in the file's `id:` line and the manifest. L3 proposals keep the full key in notes; both manifest entries carry exact ids.

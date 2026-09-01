@@ -225,7 +225,9 @@ const runCommitteeEntry = async (entry: LoopEntry, deps: LoopDeps, state: TurnSt
 
 export const runLoop: RunLoop = async (entry, deps) => {
   const cfg: LoopConfig = deps.cfg;
-  const turnId = newId(deps.clock, deps.rng);
+  // M20's pipeline pre-mints the id (the ledger links inbound→turn before the
+  // loop runs); standalone entries get a loop-minted one.
+  const turnId = entry.turnId ?? newId(deps.clock, deps.rng);
   const started = deps.clock.epochMs();
   const deadline = started + cfg.budgetMs[entry.kind];
   // One signal for the whole entry: fired at the wall-clock budget, so every
@@ -242,6 +244,7 @@ export const runLoop: RunLoop = async (entry, deps) => {
     text: situation,
     goal: entry.goal,
     channels: { character: true, procedural: true },
+    turnId,
   };
 
   const baseState: Omit<TurnState, 'tools' | 'defs' | 'packet'> = {

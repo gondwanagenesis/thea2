@@ -35,6 +35,10 @@ const MODULES = {
   "src/app": [
     "kernel", "events", "model", "embed", "affect", "coupling", "corpus",
     "memory", "assemble", "inhibit", "loop", "realize", "bridge", "sched",
+    // S5 wiring: the pipeline emits packet.record (M10's credit input) and
+    // compose builds the M19 probe target. derive/life/siblings join when
+    // their stages land (S6-S8) — see the header rule above.
+    "consolidate", "probes",
   ],
 };
 

@@ -3,7 +3,7 @@ module: M20
 name: app
 syncedTo: spec-v1 (no code yet)
 stage: S5
-depends: [M01-kernel, M02-events, M03-model, M04-embed, M05-affect, M06-coupling, M07-corpus, M09-memory, M11-assemble, M12-inhibit, M13-loop, M14-realize, M15-bridge, M16-sched]
+depends: [M01-kernel, M02-events, M03-model, M04-embed, M05-affect, M06-coupling, M07-corpus, M09-memory, M10-consolidate, M11-assemble, M12-inhibit, M13-loop, M14-realize, M15-bridge, M16-sched, M19-probes]
 ---
 # M20 — app
 

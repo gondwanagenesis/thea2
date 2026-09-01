@@ -1,0 +1,342 @@
+// M20 app — the turn pipeline. The S5 spec's seven stages, in one place:
+//
+//   1. inbound     — ledger dedupe + offset commit happen in ingest (M15); this
+//                    layer mints the turnId, enqueues, and returns immediately.
+//                    Awaiting the turn here would block Telegram polling and make
+//                    interruption impossible — the drain is single-flight instead.
+//   2-4. assemble → loop → DecisionObject (M11, M13 do the work)
+//   5. gate        — inside the loop (re-entry capped there)
+//   6. realize     — vs the channel clock; every send lands in the ledger
+//   7. afterturn   — DETACHED: appraisal, episode, affect, outcome_prev. A
+//                    failure here is an incident; stage 6's outcome is done.
+//
+// Interruption (new inbound while stage 6 is mid-plan): the in-flight send is
+// aborted, the unsent bubbles become the NEXT turn's carry-over ("she was about
+// to say"), and the interrupted turn's ledger row becomes a `defer` with a
+// future dueBy. When the carry-over turn runs, its link row re-points the
+// interrupted inbound at itself — if it replies (or goes silent), the ledger is
+// clean; if no next turn ever comes, reconcile fires LOST_REPLY, which is TRUE:
+// the message never got an answer.
+
+import { PACKET_RECORD_KIND } from '../consolidate/index.js';
+import { signature, type Baselines, type Vec12 } from '../coupling/index.js';
+import {
+  appraise,
+  draftEpisode,
+  affectEvents,
+  type EpisodeStore,
+  type ProceduralStore,
+  type SessionWindow,
+} from '../memory/index.js';
+import type { AffectStore } from '../affect/index.js';
+import { runLoop, type LoopConfig, type LoopDeps, type LoopPacket, type LoopQuery } from '../loop/index.js';
+import type { DecisionObject, ToolRegistry } from '../loop/index.js';
+import { realize } from '../realize/index.js';
+import type { Channel, InboundMsg, MessageLedger } from '../bridge/index.js';
+import type { EventLog } from '../events/index.js';
+import type { Clock, Rng } from '../kernel/index.js';
+import { fail, newId } from '../kernel/index.js';
+import type { AffectEvent } from '../affect/index.js';
+import type { Embedder } from '../embed/index.js';
+import type { AssembleDeps, Packet, TurnQuery } from '../assemble/index.js';
+import type { ModelClient } from '../model/index.js';
+import type { InhibitionGate } from '../inhibit/index.js';
+
+/** Section head for undelivered bubbles carried into the next turn's context (M20 spec §Behavior). */
+export const UNDELIVERED_HEAD = '[UNDELIVERED]';
+
+const carryBlock = (bubbles: readonly string[]): string =>
+  `\n${UNDELIVERED_HEAD}\nYou were interrupted mid-reply and these words were never sent. They are still true — re-weave them into what you say now (never paste them verbatim as a block):\n` +
+  bubbles.map((b) => `- ${b}`).join('\n') +
+  '\n';
+
+interface Carry {
+  bubbles: string[];
+  /** The interrupted turn's inbound updateId — re-linked to the turn that finally answers. */
+  fromUpdateId: number;
+  fromTurnId: string;
+}
+
+interface Queued {
+  m: InboundMsg;
+  turnId: string;
+}
+
+export interface PipelineDeps {
+  model: ModelClient;
+  gate: InhibitionGate;
+  tools: ToolRegistry;
+  channel: Channel;
+  ledger: MessageLedger;
+  affect: AffectStore;
+  baselines: Baselines;
+  episodes: EpisodeStore;
+  procedures: ProceduralStore;
+  window: SessionWindow;
+  embedder: Embedder;
+  events: EventLog;
+  clock: Clock;
+  rng: Rng;
+  /** M11's assemble, already closed over its nominators/coupling/config. */
+  assemble: (q: TurnQuery, a: Vec12, deps: AssembleDeps) => Promise<Packet>;
+  /** Fresh per turn: the weather line is read at assembly time, not at boot. */
+  assembleDeps: () => AssembleDeps;
+  loopCfg: LoopConfig;
+  allowedChatIds: readonly number[];
+  reconcileWindowMs: number;
+}
+
+export interface Pipeline {
+  /** Mint + enqueue. Returns the turnId (ingest links on it), or undefined when nothing should run (reaction-only, denied chat). */
+  inbound(m: InboundMsg): string | undefined;
+  isBusy(): boolean;
+  /** Settle the queue and every detached afterturn — shutdown and probe quiesce. */
+  drain(): Promise<void>;
+  lastDecision(): DecisionObject | null;
+}
+
+export const makePipeline = (deps: PipelineDeps): Pipeline => {
+  const queue: Queued[] = [];
+  const recentTurnIds: string[] = [];
+  const afterturns: Promise<unknown>[] = [];
+
+  let running = false;
+  let chain: Promise<void> = Promise.resolve();
+  let carry: Carry | null = null;
+  let last: DecisionObject | null = null;
+  let lastTurnId: string | null = null;
+  // The in-flight turn's abort handle, armed only once realization begins —
+  // an inbound that lands during deliberation just waits its turn.
+  let live: { abort: AbortController; armed: boolean } | null = null;
+
+  const drain = async (): Promise<void> => {
+    await chain;
+    await Promise.allSettled(afterturns);
+  };
+
+  const pump = async (): Promise<void> => {
+    for (;;) {
+      const item = queue.shift();
+      if (item === undefined) return;
+      try {
+        await runTurn(item);
+      } catch (e) {
+        // A turn that throws outside its own handling is a loud incident; the
+        // ledger keeps the inbound row so reconcile names what was lost.
+        void deps.events.emit('incident.turn_failed', { turnId: item.turnId, error: String(e) }, item.turnId);
+      }
+    }
+  };
+
+  const kick = (): void => {
+    if (running) return;
+    running = true;
+    chain = chain
+      .then(async () => {
+        try {
+          await pump();
+        } finally {
+          running = false;
+        }
+      })
+      .catch(() => {
+        running = false;
+      });
+  };
+
+  const runTurn = async (item: Queued): Promise<void> => {
+    const { m, turnId } = item;
+    const t0 = deps.clock.epochMs();
+
+    // Tick decay + persist so the weather the packet is chosen against is now,
+    // not whenever affect last moved. Empty batch: no semantic change, just time.
+    await deps.affect.applyEvents([], { source: 'other' });
+    const sig = signature(deps.affect.current(), deps.baselines);
+    const vecs = await deps.embedder.embed([m.text]);
+    const queryVec = vecs[0] ?? fail('app/turn', `embedder returned no vector for turn ${turnId}`);
+
+    // Carry-over link: this turn inherited the interrupted reply, so the
+    // interrupted inbound is answered by whatever this turn decides.
+    if (carry !== null && carry.fromUpdateId !== m.updateId) {
+      await deps.ledger.linkTurn(carry.fromUpdateId, turnId);
+    }
+    const inherited = carry;
+    carry = null; // consumed exactly once — silence after carry is an informed silence
+
+    const adapterDeps: AssembleDeps = deps.assembleDeps();
+    const adapter = async (q: LoopQuery, a: Vec12): Promise<LoopPacket> => {
+      const tq: TurnQuery = {
+        entry: q.entry ?? 'user-turn',
+        ...(q.text !== undefined ? { text: q.text } : {}),
+        ...(q.goal !== undefined ? { goal: q.goal } : {}),
+        speaker: (q.speaker as TurnQuery['speaker']) ?? m.speaker,
+        register: q.register ?? 'play', // v1: one register; work/friend split lands with the mode system
+        queryVec: q.queryVec ?? queryVec,
+        recentTurnIds: q.recentTurnIds ?? recentTurnIds,
+        ...(q.turnId !== undefined ? { turnId: q.turnId } : {}),
+      };
+      const packet = await deps.assemble(tq, a, adapterDeps);
+      const rec = packet.record();
+      // M10's credit input — the pipeline owns the emission so packet ids and
+      // decision ids can never drift (runLoop forwards entry.turnId for this).
+      void deps.events.emit(
+        PACKET_RECORD_KIND,
+        { ...rec, affectSig: Array.from(rec.affectSig) },
+        rec.turnId,
+      );
+      if (inherited !== null) {
+        return {
+          ...packet,
+          systemText: () => packet.systemText() + carryBlock(inherited.bubbles),
+        };
+      }
+      return packet;
+    };
+
+    const loopDeps: LoopDeps = {
+      model: deps.model,
+      gate: deps.gate,
+      assemble: adapter,
+      affect: sig,
+      window: deps.window,
+      tools: deps.tools,
+      events: deps.events,
+      clock: deps.clock,
+      rng: deps.rng.fork(`turn:${turnId}`),
+      cfg: deps.loopCfg,
+    };
+
+    const decision = await runLoop(
+      { kind: 'user-turn', inbound: m, turnId },
+      loopDeps,
+    );
+    last = decision;
+
+    // Decision row lands BEFORE realization: a crash mid-send still shows the plan.
+    await deps.ledger.recordDecision(turnId, {
+      turnId,
+      plan: decision.plan,
+      at: deps.clock.epochMs(),
+    });
+
+    if (decision.plan !== 'reply' || decision.bubbles.length === 0) {
+      if (decision.plan === 'defer') {
+        // The model itself deferred: clean until due, alarm after if nothing answers.
+        await deps.ledger.recordDecision(turnId, {
+          turnId,
+          plan: 'defer',
+          at: deps.clock.epochMs(),
+          dueBy: deps.clock.epochMs() + deps.reconcileWindowMs,
+        });
+      }
+      await settle(turnId, m, decision, []);
+      return;
+    }
+
+    // Stage 6. Skip when the queue already holds newer words; abort if words
+    // arrive mid-send — both are the same carry-over path.
+    const abort = new AbortController();
+    live = { abort, armed: true };
+    const stale = queue.length > 0;
+    const report = stale
+      ? { plan: decision.plan, sent: [], aborted: true, undelivered: [...decision.bubbles] }
+      : await realize(decision, sig, deps.rng.fork(`realize:${turnId}`), {
+          chatId: m.chatId,
+          channel: deps.channel,
+          clock: deps.clock,
+          signal: abort.signal,
+          recordSend: (msgId, text) => deps.ledger.recordOutbound(turnId, msgId, text),
+        });
+    live = null;
+
+    if (report.aborted && report.undelivered.length > 0) {
+      carry = { bubbles: [...report.undelivered], fromUpdateId: m.updateId, fromTurnId: turnId };
+      await deps.ledger.recordDecision(turnId, {
+        turnId,
+        plan: 'defer',
+        at: deps.clock.epochMs(),
+        dueBy: deps.clock.epochMs() + deps.reconcileWindowMs, // strictly future: clean while the carry-over turn may still land
+      });
+    }
+
+    await settle(turnId, m, decision, report.sent.map((s) => s.text));
+    void deps.events.emit(
+      'app.turn_done',
+      { turnId, plan: decision.plan, sent: report.sent.length, undelivered: report.undelivered.length, ms: deps.clock.epochMs() - t0 },
+      turnId,
+    );
+  };
+
+  /** Stage 7 bookkeeping that is NOT detached (the verbatim window), then the detached afterturn. */
+  const settle = async (turnId: string, m: InboundMsg, decision: DecisionObject, sentTexts: string[]): Promise<void> => {
+    const prevTurnId = lastTurnId;
+    lastTurnId = turnId;
+    recentTurnIds.push(turnId);
+    while (recentTurnIds.length > 10) recentTurnIds.shift();
+
+    // The window is the verbatim record — it must hold the exchange even if
+    // appraisal dies. Only delivered texts enter it; undelivered ones travel
+    // via the carry-over block instead.
+    deps.window.push({ role: 'user', content: m.text, ts: m.ts, turnId });
+    for (const text of sentTexts) {
+      deps.window.push({ role: 'assistant', content: text, ts: deps.clock.epochMs(), turnId });
+    }
+
+    const at = deps.affect.current();
+    const affectAtEncoding: readonly number[] = Array.from(signature(at, deps.baselines));
+    const task: Promise<void> = (async () => {
+      const out = await appraise(
+        {
+          userText: m.text,
+          herReply: sentTexts.length > 0 ? sentTexts.join('\n') : null,
+          plan: decision.plan,
+          prevTurnId,
+          turnId,
+        },
+        { model: deps.model, events: deps.events },
+      );
+      if (!out.ok) {
+        void deps.events.emit('incident.appraisal_failed', { turnId, error: out.error }, turnId);
+        return;
+      }
+      await deps.episodes.append(
+        draftEpisode(
+          { clock: deps.clock, rng: deps.rng, affectAt: () => affectAtEncoding },
+          { turnId, ts: deps.clock.epochMs(), appraisal: out.appraisal },
+        ),
+      );
+      const evs: AffectEvent[] = affectEvents(out.appraisal);
+      if (evs.length > 0) await deps.affect.applyEvents(evs, { source: 'appraisal' });
+    })();
+    afterturns.push(task);
+    void task.catch(() => {
+      /* handled inside; drain() allSettled's the rest */
+    });
+  };
+
+  return {
+    inbound: (m) => {
+      if (m.chatId !== undefined && !deps.allowedChatIds.includes(m.chatId)) {
+        void deps.events.emit('app.chat_denied', { chatId: m.chatId, updateId: m.updateId });
+        return undefined;
+      }
+      // A reaction is an outcome signal, never a request (M15). Recorded on L0
+      // for credit (M10/S7); it starts no turn and owes no reply.
+      if (m.reaction !== undefined && m.text === '') {
+        void deps.events.emit(
+          'memory.reaction',
+          { emoji: m.reaction.emoji, toMsgId: m.reaction.toMsgId, msgId: m.msgId, chatId: m.chatId, updateId: m.updateId, ts: m.ts },
+        );
+        return undefined;
+      }
+      const turnId = newId(deps.clock, deps.rng);
+      queue.push({ m, turnId });
+      if (live !== null && live.armed) live.abort.abort(); // interruption: she stops typing
+      kick();
+      return turnId;
+    },
+    isBusy: () => running || queue.length > 0,
+    drain,
+    lastDecision: () => last,
+  };
+};

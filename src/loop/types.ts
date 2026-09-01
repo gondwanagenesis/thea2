@@ -47,6 +47,8 @@ export interface LoopQuery {
   queryVec?: Float32Array | undefined;
   recentTurnIds?: string[] | undefined;
   channels?: { character: boolean; procedural: boolean } | undefined;
+  /** Forwarded from the entry so the adapter can stamp TurnQuery/PacketRecord with the same id the decision will carry (M10 credit matches on it). */
+  turnId?: string | undefined;
 }
 
 /** The packet surface the loop renders (M11's Packet is a strict superset). */
@@ -65,6 +67,8 @@ export interface LoopEntry {
   inbound?: InboundMsg | undefined;
   goal?: string | undefined;
   committee?: CommitteeSpec | undefined;
+  /** Caller-supplied turn id (M20's pipeline mints it at enqueue for ledger linking). The loop mints its own when absent. */
+  turnId?: string | undefined;
 }
 
 /** One tool call attempted inside the deliberation loop (schemas/decision.ts). */

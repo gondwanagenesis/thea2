@@ -131,6 +131,15 @@ export const openSessionWindow = (dir: string, deps: { model: ModelClient; clock
     });
   };
 
+  // Serialized like the affect store's write chain: two pushes landing in the
+  // same tick (user + her reply) must not race two renames onto the same file —
+  // on Windows the second rename is EPERM, not a retry.
+  let writes: Promise<void> = Promise.resolve();
+  const persistSerial = (): Promise<void> => {
+    writes = writes.then(persist, persist);
+    return writes;
+  };
+
   const tokensOf = (msgs: readonly WindowMsg[]): number =>
     msgs.reduce((acc, m) => acc + estimateTokens([m.content]), 0);
 
@@ -192,7 +201,7 @@ export const openSessionWindow = (dir: string, deps: { model: ModelClient; clock
       }
       s.msgs.push({ role: msg.role, content: msg.content, ts: msg.ts, turnId: msg.turnId });
       await evict();
-      await persist();
+      await persistSerial();
     },
 
     messages: () => {

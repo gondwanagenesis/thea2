@@ -1,0 +1,37 @@
+# Thea2 production config. Secrets NEVER live here (AGENTS rule 7) —
+# THEA2_BOT_TOKEN and THEA2_MODEL_API_KEY arrive via /etc/thea2/keys.env.
+# loadConfig rejects any secret-shaped value in this file at startup.
+#
+# sync'd with src/app/config.ts schema (M20). Unknown keys are rejected.
+models:
+  endpoint: https://api.z.ai/api/paas/v4
+  tiers:
+    main: glm-5.3-flash
+    cheap: glm-5.3-flash
+    reasoning: glm-5.3-flash
+bridge:
+  # Diego's telegram chat id — the ONLY chat the bridge answers. Fill at
+  # deploy time (install.sh prints the id of the first message the bot
+  # receives; see deploy/ops.md).
+  allowedChatIds: [0]
+affect:
+  statePath: var/affect/state.json
+  quietHours: [2, 9]
+sched:
+  statePath: var/sched/state.json
+budgets:
+  packetTokens: 6000
+  windowTokens: 10000
+  turnTokens: 24000
+inhibitionPlacement: trailing
+gravity:
+  seedWeight: 0.7
+reconcile:
+  lostReplyWindowMin: 10
+embedder:
+  # DEVIATION (recorded in M20 "As built"): kind 'fastembed' is NOT built yet —
+  # it lands at S9 and fails loud if configured now. Until then prod runs the
+  # hash embedder: same identity everywhere (corpus index + episodes + queries),
+  # weaker semantics. When S9 lands, switch the kind AND rebuild var/cache/corpus.
+  kind: hash
+  # model: BAAI/bge-small-en-v1.5   # uncomment with kind: api|fastembed at S9
