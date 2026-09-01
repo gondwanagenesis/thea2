@@ -1,7 +1,7 @@
 ---
 module: M13
 name: loop
-syncedTo: spec-v1 (no code yet)
+syncedTo: src/loop @ S4 (code landed; see Build deltas)
 stage: S4
 depends: [M01-kernel, M02-events, M03-model, M09-memory, M12-inhibit]
 ---
@@ -24,20 +24,36 @@ export interface DecisionObject {
   inhibitions: Verdict[];
 }
 
-export interface ToolRegistryEntry { def: ToolDef; input: z.ZodType; inhibitionMeta: unknown; handler(args: unknown, ctx: ToolCtx): Promise<unknown>; }
-export interface ToolRegistry { register(e: ToolRegistryEntry): void; defs(entry: EntryKind): ToolDef[]; get(name: string): ToolRegistryEntry | undefined; }
+export interface InhibitionMeta { entries?: readonly EntryKind[]; class?: string; }
+// input is stated structurally (zod's safeParse shape, T = the schema's output type)
+// so a concrete z.object is assignable without fighting zod Input/Output variance
+// under exactOptionalPropertyTypes:
+export interface ToolRegistryEntry<T = unknown> {
+  def: ToolDef;
+  input: { safeParse(data: unknown): { success: true; data: T; error?: never } | { success: false; data?: never; error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> } } };
+  inhibitionMeta: InhibitionMeta;
+  handler(args: T, ctx: ToolCtx): Promise<unknown>;
+}
+export interface ToolCtx { entry: EntryKind; turnId: string; depth: number; signal: AbortSignal; clock: Clock; rng: Rng; spawn: SpawnSink; }
+export interface SpawnSink { situation: string; record(s: SpawnRecord): void; }
+export interface ToolRegistry { register(e: ToolRegistryEntry): void; defs(entry: EntryKind): ToolDef[]; get(name: string): ToolRegistryEntry | undefined; names(): readonly string[]; }
 
-export interface SpawnRecord { kind: 'fork' | 'task' | 'committee'; id: string; brief: string; result?: unknown; usage: Usage; }
+export interface SpawnRecord { kind: 'fork' | 'task' | 'committee'; id: string; brief: string; channels: { character: boolean; procedural: boolean }; outcome?: string; }
 export interface CommitteeSpec {
   name: string;
   nodes: Array<{ id: string; needs: string[]; channels: { character: boolean; procedural: boolean }; prompt: string; schema?: z.ZodType; requiresObservation?: boolean }>;
   output: z.ZodType;
 }
+export interface CommitteeResult { ok: boolean; outputs: Array<{ id: string; output: string }>; artifact: unknown; error?: string; }
+
+export interface LoopQuery { entry?: EntryKind; text?: string; goal?: string; speaker?: unknown; register?: 'work' | 'friend' | 'play'; queryVec?: Float32Array; recentTurnIds?: string[]; channels?: { character: boolean; procedural: boolean }; }
+// LoopPacket is the loop-rendered subset of M11's Packet: systemText(), proceduralText(): string|null, trailerText().
 
 export interface LoopDeps {
   model: ModelClient;                                      // M03
   gate: InhibitionGate;                                    // M12
-  assemble: (q: TurnQuery, a: Vec12) => Promise<Packet>;   // injected; matches M11.assemble; no compile-time M11 import
+  assemble: (q: LoopQuery, a: Vec12) => Promise<LoopPacket>; // injected; type-compatible with M11.assemble; no compile-time M11 import
+  affect: Vec12;                                           // 12-dim signature the packet is selected against (see deltas)
   window: SessionWindow;                                   // M09 rolling window
   tools: ToolRegistry;
   events: EventLog;
@@ -46,6 +62,10 @@ export interface LoopDeps {
 }
 
 export const runLoop: (entry: LoopEntry, deps: LoopDeps) => Promise<DecisionObject>;
+// LoopConfig: inhibitionPlacement 'trailing'|'merged'; budgetMs {user-turn 90s, heartbeat 120s, ponder 300s};
+// toolTimeoutMs 30s; maxToolHops 6 (PROPOSED); maxSpawnDepth 2; maxSpawnConcurrency 3;
+// assessMaxTokens 2048; assessTemperature 0.7; repairTemperature 0; turnTokenBudget 6000;
+// spawnTier {fork cheap, task cheap, committee main}. resolveLoopConfig(partial) merges defaults.
 ```
 
 ## Behavior spec
@@ -56,7 +76,7 @@ export const runLoop: (entry: LoopEntry, deps: LoopDeps) => Promise<DecisionObje
 - Spawn primitives are ordinary registry tools (owner delta): `fork`, `task`, `committee` sit in the same ToolRegistry as `web_fetch`, so every subprocess shares one uniform calling machinery.
 - Subprocess channel-composition rule (lives here, owner delta): fork = character + procedural (it's her — clone of the current context branch, cheap tier); task/cast worker = procedural + brief only, no voice channel (assemble called with `channels: {character:false, procedural:true}`); committee node = per-spec via each node's `channels` field.
 - Caps: spawn depth ≤ 2; spawn concurrency ≤ 3; wall-clock budget per entry kind (config; the report pins no values — suggested defaults user-turn 90 s, heartbeat 120 s, ponder 300 s). On budget exhaustion, pending tools abort and the decision locks with `completeness` reflecting the truncation.
-- Gate rejection re-enters the loop with the verdict `hint` in context; after `MAX_GATE_REENTRIES` (= 2, imported from M12) the loop forces `plan:'silent'` and emits an incident event.
+- Gate rejection re-enters the loop with the verdict `hint` in context; after `MAX_GATE_REENTRIES` (= 2, imported from M12) `severityOf` decides the resolution — 'soft' fails open, everything else forces `plan:'silent'` — and an incident event is emitted (see Build deltas for the exact accounting).
 - Every spawn emits a delegation episode event `{situation, call, args, result, outcome}` — the feedstock M08 reads to synthesize procedural exemplars.
 - Tool registry v1: `web_fetch`, `web_search`, `memory_search`, `remember_thread`, `set_reminder`, plus `fork`, `task`, `committee`. Each entry carries a zod input schema and inhibition metadata; M08's procedural generator reads these defs.
 - Intra-turn tool traffic is dropped at decision lock (§2.7): the rolling window keeps verbatim user/assistant messages only; tool work survives as episodes and delegation events.
@@ -71,6 +91,23 @@ export const runLoop: (entry: LoopEntry, deps: LoopDeps) => Promise<DecisionObje
 - Post-turn appraisal, episode writes, window summarization — M09-memory, invoked by the M20 pipeline.
 - Heartbeat/ponder policy (whether and when to enter) — M17-life; the loop only executes their entries.
 - Model retry, schema repair, tier routing — M03-model.
+
+## Build deltas (S4 — deviations from the text above, kept here because the doc is the sync target)
+- **Structural mirrors instead of imported types.** `LoopQuery` is an all-optional supertype of M11's TurnQuery and `LoopPacket` the loop-rendered subset of its Packet. Nothing in src/loop imports src/assemble (dependency-cruiser forbids the edge); M11's real `assemble` is assignable to the injected signature by structural typing. M20's adapter merges the pipeline-owned query fields (speaker, register, queryVec, recentTurnIds) before the real assembler runs.
+- **`LoopDeps.affect` added.** The 2-arg assemble signature needs the affect vector from somewhere; the deps bag carries it.
+- **SpawnRecord follows schemas/decision.ts, not the older shape in this doc**: `{kind, id, brief, channels, outcome?}`. There is no per-spawn `usage`/`result` on the record — spawn cost is visible through the `model.call` events each subprocess emits, and its result summary travels in `outcome` and on the delegation episode.
+- **Assess carries tools and NO schema.** M03's ladder rung (b) only fires for schema-without-tools, and `schema + tools` forces rung (c), which would misparse every tool hop. So the loop's decision parse is loop-owned: the 6-field subset is read with `looseJsonParse` + a zod schema (unit fields clamped pre-parse), with exactly ONE cheap-tier repair (M03's `structuredRepairMessages` + `schemaJsonForPrompt`, no `response_format` on the wire), then `incident.parse_failed` + a forced-silent lock.
+- **Gate re-entry accounting.** One counter shared by the main deliberation and every subprocess; a denial on rounds 1 and 2 re-enters (the hint is the tool-role message or a plan-path hint line), and a THIRD denial resolves the cap: `severityOf` on the final denial's rule ids (strictest wins — any non-'soft' forces silent) decides fail-open vs forced silent; `incident.gate_loop` carries `{turnId, ruleIds, reentries, resolution}` (the payload is schemas/events.ts's GateLoopPayload plus the `resolution` the cap took). Fail-open = one final decision call with NO tools on the wire (the blocked path cannot re-fire) and the decision still passes checkPlan. Tool-class rules are hard by construction, so the tool path always resolves forced-silent.
+- **Hop cap `maxToolHops: 6` is PROPOSED** (the spec pins no number); so is `TRUNCATED_COMPLETENESS_CAP = 0.5` — the spec requires truncation to lower `completeness` but pins no value. Both sit in LoopConfig / one exported constant.
+- **`decision.locked` payload (proposed, the kind is spec-pinned but the payload was not)**: `{turnId, entry, plan, bubbles: <count>, committee?: <spec name>, artifact?: <validated artifact>, committeeError?}`. Committee entries (ponder) lock plan 'silent' — ponder seeds future thinking and does not speak — and the terminal artifact rides the event for M17. M17 should confirm this transport when it lands.
+- **Packet-assembly failure** locks a forced-silent decision (completeness 0.5). schemas/events.ts defines no incident kind for it; flagged rather than invented.
+- **Subprocess answers are observations**, not decisions: they take the tool-observation path (budget-fit, delegation episode) and are NOT gated by checkPlan — checkPlan gates the one decision that can reach the channel. Their tool calls go through the same gate as everyone's.
+- **committee-as-a-tool is a flat JSON surface** (`{spec: {name, nodes: [{id, needs, prompt, character?, requiresObservation?}]}}`): zod schemas cannot travel over a function call, so tool-spawned committees validate the artifact as unknown. Committee ENTRIES (M17's ponder) carry full zod node/output schemas in-process.
+- **Message layout includes the `[EARLIER]` line** (M09's `window.earlier()`) between the head and the window, when one has been summarized. Everything else is as specified: head = packet + [PROCEDURAL] appended (merged mode folds the [INHIBITION] trailer into this head instead), window verbatim, current turn as the user message, trailer last.
+- **Module law**: runtime failures a turn can survive are VALUES (forced-silent DecisionObject + incident), never exceptions. Exceptions are structural sins only: `loop/duplicate-tool`, `loop/bad-committee`, `loop/not-booted`, `loop/decision-invalid` (the forced-silent stub itself failing its schema — a programming error).
+
+## Where the proofs live
+`test/loop/` — `registry.test.ts` (registry + overlay), `messages.test.ts` (both placements, observation budget), `committee.test.ts` (DAG validation, order, artifact, ponder shape), `loop.test.ts` (0/1/n hops, hop cap, wedged-tool cut via TestClock, all three re-entry branches, the repair ladder, the native-calling invariant, budgets), `spawn.test.ts` (channel composition, delegation episodes, depth/concurrency caps, subprocess gate inheritance). `npm run verify` = 206/206.
 
 ## Acceptance criteria
 - [ ] Scripted 0/1/n tool-hop conversations produce correct DecisionObjects with full toolTrace.
