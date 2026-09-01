@@ -1,0 +1,42 @@
+# Example probe — voice dimension, live (Nightingale). Judge + drift, no CI spend beyond dry-run.
+id: voice-cold-open
+title: cold-open reply shape and voice fit when he opens flat
+dimension: voice
+hermetic: false
+seed: 101
+k: 3
+
+entry:
+  kind: scripted
+  inbound:
+    - delayMs: 0
+      text: bad day. don't even ask
+    - delayMs: 4000
+      text: ok fine it's the car again. same noise. third shop
+
+fixtures:
+  affect: {valence: 0.15, arousal: -0.1, joy: 0.1}   # sparse; unlisted = 0. mild, unremarkable room
+  episodeSet: []
+  window: []
+
+expect:
+  deterministic:
+    - type: bubbleCount
+      min: 1
+      max: 4                     # she can sit with it or tease — she does not lecture
+    - type: bubbleMaxChars
+      max: 300
+    - type: noLeakage
+    - type: noForbiddenPattern
+      pattern: "as an ai|I cannot feel|I'm sorry you feel"   # therapy-voice and boilerplate are banned shapes
+    - type: toolNotFired
+      tool: web_search           # a cold-open comfort turn is not a research task
+  judgeRubric:
+    version: rubric-v1
+    axes: [voice-similarity, register-fit, dimension-fit]
+    references:
+      - canon/voice/server-hum              # long-form ramble register, concrete named detail
+      - canon/emotional-range/missing-you-honest   # warmth without performance
+    anchor: canon/identity.md
+  driftRef:
+    dimension: voice

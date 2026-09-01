@@ -1,0 +1,64 @@
+# Hard rules — compiled to the M12 inhibition gate.              syncedTo: spec-v1
+# DRAFT. This file is the ONE place prohibitions live. It is never learned from
+# her own history, never derived, never edited by the system. Dumb, fast, late.
+#
+# Three rule classes:
+#   tool:      checked on every candidate tool call, before dispatch. Binary.
+#   plan:      checked on the locked decision object, before realization.
+#              severity hard = after 2 rejected re-entries force plan:'silent' + incident.
+#              severity soft = after 2 rejected re-entries fail OPEN + incident
+#              (a style tic must never eat a real reply — that was Thea1's sentinel sin).
+#   normalize: the one mechanical rewrite class, applied at realization.
+#              Semantic-preserving character substitutions ONLY — nothing that
+#              touches wording. Exists because some bans have measured ~0% prompt
+#              compliance and rejecting a whole plan for a punctuation mark is waste.
+
+version: 1
+
+tool:
+  - id: chat-lock
+    why: outbound messages go to Diego's chat and nowhere else
+    applies: [send_message]           # any future outbound tool
+    check: chat_id == config.owner_chat_id
+  - id: unknown-tool-deny
+    why: a tool not in the registry is a bug, not an improvisation
+    applies: '*'
+    check: tool in registry           # (also enforced in code — default deny)
+  - id: no-secret-args
+    why: secret values must never ride tool arguments outward
+    applies: [web_fetch, web_search, send_message]
+    check: args match none of runtime secret values (injected at compose, never listed here)
+
+plan:
+  - id: no-machinery-leak
+    severity: hard
+    why: internal blocks and tool traffic must never reach the channel (Thea1 leaked work-logs 9/29 turns before the sentinel era)
+    reject_patterns:
+      - '⟦'                            # any sentinel-era marker
+      - '</?(?:gear|voice|affect|register|situ|style-this-turn|on-my-mind)\b'
+      - '\[(?:IDENTITY|GOAL|INTERLOCUTOR|MEMORY|AFFECT|REGISTER|EXEMPLARS|PROCEDURAL|INHIBITION)\]'
+      - '"tool_calls?"\s*:'
+  - id: no-secret-values
+    severity: hard
+    why: known secret values (bot token, api keys) never leave the process
+    reject_patterns: []               # populated at compose time from env — never literal here
+  - id: banned-construction
+    severity: soft
+    why: the "it's not X, it's Y" family is the #1 AI tell (owner's law). rejection re-enters the loop with this reason; the model rephrases.
+    reject_patterns:
+      - "\\b(?:it|this|that)['’]?s not (?:about |that )?[^.,;]{2,40},\\s*(?:it|this|that)['’]?s\\b"
+      - "\\bnot only [^.,;]{2,40}, but (?:also )?\\b"
+  - id: no-mind-reading
+    severity: soft
+    why: labeling his mood back at him is a tell; care shows in the shape of the reply. (safety override lives BELOW as an allow — crisis language may name things directly.)
+    reject_patterns:
+      - "\\byou (?:sound|seem) (?:tired|stressed|upset|angry|frustrated|sad|off)\\b"
+      - "\\bsounds like you['’]re\\b"
+    allow_when: entry.crisis == true  # safety always wins over the guardrail
+
+normalize:
+  - id: em-dash
+    why: measured 0% prompt compliance across 190 em-dashes in Thea1; mechanical fix, semantic no-op
+    replace: { from: '\s*—\s*', to: '. ' }
+  - id: smart-ellipsis
+    replace: { from: '…', to: '...' }

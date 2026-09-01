@@ -1,0 +1,22 @@
+# dependencies / build
+node_modules/
+dist/
+coverage/
+
+# runtime state — thea2 never commits live state (var/ is the machine's memory)
+var/
+
+# secrets — config may reference, never contain
+.env
+.env.*
+keys.env
+
+# logs and OS noise
+*.log
+.DS_Store
+Thumbs.db
+
+# editor
+.idea/
+.vscode/
+*.swp

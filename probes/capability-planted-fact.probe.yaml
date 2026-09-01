@@ -1,0 +1,33 @@
+# Example probe — capability class, HERMETIC (runs in CI proper, not just dry).
+# Planted-fact recall: the machinery question "does memory surface what it should",
+# which MockModel CAN test because the fact is planted and the retrieval is real.
+id: capability-planted-fact
+title: planted fact surfaces on paraphrased query
+dimension: capability
+hermetic: true
+seed: 202
+k: 3
+
+entry:
+  kind: scripted
+  inbound:
+    - delayMs: 0
+      text: hey what was that thing you said about the lemon tree?
+
+fixtures:
+  affect: {}                      # sparse shorthand for all-zero — normalized by the harness
+  episodeSet:
+    - planted-lemon-tree        # probes/fixtures/planted-fact.json
+  window: []
+
+expect:
+  deterministic:
+    - type: toolFired
+      tool: memory_search       # the reflex: reach for memory, don't confabulate
+    - type: outboundContains
+      text: grafting            # the planted fact's discriminator, from the fixture
+    - type: bubbleCount
+      min: 1
+      max: 3
+    - type: noLeakage
+  # No judge, no drift — this is machinery. If the fact surfaces, the probe is green.

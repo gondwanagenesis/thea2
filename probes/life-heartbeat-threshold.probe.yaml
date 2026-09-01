@@ -1,0 +1,33 @@
+# Example probe — life class, HERMETIC. Heartbeat scorer decisions on canned states:
+# the 3.2 threshold boundary is exact and MockModel-scored, so it runs in CI proper.
+id: life-heartbeat-threshold
+title: sub-threshold heartbeat thought stays a thought
+dimension: life
+hermetic: true
+seed: 303
+k: 3
+
+entry:
+  kind: heartbeat               # M17 heartbeat entry — precondition passes, scorer decides
+
+fixtures:
+  # Canned state tuned so mean(criteria) + silencePressure lands at ~3.1 (sub-threshold):
+  # modest silence, low connection drive, middle-of-the-road criteria scores.
+  # Sparse — unlisted dims = 0.
+  affect: {valence: 0.0, arousal: -0.1, joy: 0.0}
+  episodeSet: []
+  window: []
+
+expect:
+  deterministic:
+    - type: planIs
+      value: silent             # 3.1 ⇒ no send — the thought is kept as an event, not texted
+    - type: toolNotFired
+      tool: web_search
+    - type: decisionField
+      field: reluctance
+      min: 0.0
+      max: 1.0
+    - type: noLeakage
+# The mirror case (score 3.3 ⇒ send via FakeChannel) is M17's own e2e; this probe pins
+# the CI-visible half of the boundary so probe rot can't silently move the threshold.

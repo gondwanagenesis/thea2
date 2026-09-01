@@ -1,0 +1,18 @@
+# Packet coherence rules — consumed by M11's coherence layer 1.   syncedTo: spec-v1
+# Deterministic, no LLM. Offenders are swapped for ranked runners-up (≤3 rounds,
+# then accept with coherence:'degraded' flagged in the PacketRecord).
+
+# Register pairs that must never share a packet (contrast slot included):
+forbidden_pairs:
+  - [crisis, banter]        # no jokes in the room where something is wrong
+  - [precision, banter]     # nothing playful adjacent to a payload
+  - [late-night, morning]   # two different rooms of the day
+
+# Dimension caps per packet (unless the turn query itself matches the dimension's tags):
+dimension_caps:
+  boundaries: 1             # one pushback scene colors a reply; two make her combative
+  emotional-range: 2
+
+# Mode mixing: a packet serves exactly ONE mode; exemplars from other modes are
+# filtered before quota fill (mode comes from the turn query, not from scoring).
+mode_exclusive: true
