@@ -39,19 +39,22 @@ const MODULES = {
 };
 
 /** Build an `allowed`-style rule body for one module. */
-const moduleRule = ([dir, deps]) => ({
-  name: `deps-of-${dir.replace("src/", "")}`,
-  severity: "error",
-  comment:
-    `${dir} may import only: ${deps.length ? deps.join(", ") : "nothing (leaf)"}` +
-    ` — mirrors docs/modules depends frontmatter.`,
-  from: { path: `^${dir}/` },
-  to: {
-    // everything under src/ that is not this module and not in the allowed set
-    path: `^src/(?!${dir}/)`,
-    pathNot: deps.map((d) => `^src/${d}/`),
-  },
-});
+const moduleRule = ([dir, deps]) => {
+  const mod = dir.replace("src/", "");
+  return {
+    name: `deps-of-${mod}`,
+    severity: "error",
+    comment:
+      `${dir} may import only: ${deps.length ? deps.join(", ") : "nothing (leaf)"}` +
+      ` — mirrors docs/modules depends frontmatter. Intra-module imports are always fine.`,
+    from: { path: `^${dir}/` },
+    to: {
+      // everything under src/ that is not this module and not in the allowed set
+      path: `^src/(?!${mod}/)`,
+      pathNot: deps.map((d) => `^src/${d}/`),
+    },
+  };
+};
 
 module.exports = {
   forbidden: [

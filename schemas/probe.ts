@@ -18,7 +18,7 @@
 //   drift cosine drop  > 0.05    => yellow
 
 import { z } from 'zod';
-import { AffectDim } from './exemplar';
+import { AffectDim } from './exemplar.js';
 
 // ---- entry -----------------------------------------------------------------
 

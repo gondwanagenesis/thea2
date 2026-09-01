@@ -15,6 +15,7 @@
     "verify": "tsx scripts/verify-schemas.ts"
   },
   "devDependencies": {
+    "@types/node": "^26.4.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "dependency-cruiser": "^16.0.0",

@@ -14,7 +14,6 @@ import * as yaml from "js-yaml";
 
 import {
   CanonFrontmatter,
-  DIMENSIONS,
   AFFECT_DIMS,
 } from "../schemas/exemplar.ts";
 import { EventEnvelope } from "../schemas/events.ts";
