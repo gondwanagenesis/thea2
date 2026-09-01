@@ -8,10 +8,14 @@ the agent, show it.** The corpus of exemplars in [`corpus/`](corpus/) is the
 ground truth of the character; everything else in this repo exists to select,
 compile, and deliver the right slice of that corpus to the model each turn.
 
-**Current status: spec corpus complete, zero code.** The plan is to build it
-stage by stage ([ROADMAP.md](ROADMAP.md), S0–S9) with TDD as the primary
-methodology. Until S0, the tests that have been run are the ones in the master
-plan's Verification section (cross-references, schema validation, this commit).
+**Current status: S5★ landed — the system is assembled and proven end to end.**
+All 20 modules (S0–S5) are built and composed under `src/app`: a message in
+travels channel → ledger → packet (real corpus retrieval) → loop → gate →
+bubbles → episode/affect/ledger, hermetically proven by the golden-turn and
+crash-replay e2e suites. **1456 tests green**, five gates green (typecheck,
+lint, test, depcruise, verify). Remaining stages: S6–S9 (life scheduler
+wiring, siblings, derive, fastembed) per [ROADMAP.md](ROADMAP.md). Before S5
+the only tests run were the master plan's Verification checks.
 
 ## Read in this order
 

@@ -1,7 +1,7 @@
 ---
 module: M20
 name: app
-syncedTo: spec-v1 (no code yet)
+syncedTo: S5 (implemented — src/app + test/app; golden-turn + crash-replay e2e green; see "As built" at the end)
 stage: S5
 depends: [M01-kernel, M02-events, M03-model, M04-embed, M05-affect, M06-coupling, M07-corpus, M09-memory, M10-consolidate, M11-assemble, M12-inhibit, M13-loop, M14-realize, M15-bridge, M16-sched, M19-probes]
 ---
@@ -84,3 +84,18 @@ export const cli: (argv: string[]) => Promise<number>;
 - unit: config validation table; secret-shape detector (token/key-shaped strings in yaml); CLI dispatch table.
 - integration: golden-turn (the crown test, in `test/golden-turn.e2e.test.ts`); crash-replay matrix (`test/crash-replay.e2e.test.ts`); interruption carry-over; afterturn isolation; boot-order failure injection at each stage.
 - fixtures needed: a golden-turn script (MockModel decision + expected DeliveryPlan + expected episode/affect deltas); fault-injection points enumerated over the pipeline; a full hermetic config + a secret-contaminated variant.
+
+## As built (S5★, landed 2026-09-02)
+
+src/app: config.ts, compose.ts, pipeline.ts, embedder.ts, thead.ts, cli.ts, index.ts, main.ts. Suite: test/app (helpers + 5 files) — compose/hermetic boot, pipeline behavior (interruption skip + abort paths, afterturn isolation, packet.record turnId, denied chat, reaction-only), golden-turn e2e, crash-replay e2e (both crash windows), CLI. **1456 tests, five gates green.** Deviations and decisions worth knowing:
+
+1. **Embedder interim: `hash`, not `fastembed`** — kind `fastembed` composes a loud `app/not-built` failure naming S9; `thea2.config.yaml` ships `hash` with a DEVIATION comment. Rebuild var/cache/corpus when switching (embeddings are not compatible across embedders).
+2. **Canon is NOT var-redirected.** `corpus/canon` + root `coupling.yaml` resolve from process cwd — identity is not state, and a test's tmp varDir must never shadow it.
+3. **`app.boot` emissions are awaited.** Fire-and-forget emits raced the test's first read of the trail (boot looked truncated at 'stores'); each stage's emit is now part of the boot sequence, so the trail is deterministic.
+4. **`turnId` is minted once, by the pipeline.** `LoopEntry`/`LoopQuery` forward it through `runLoop` (M13 Build deltas) so `packet.record` and the decision carry the same id — M10's credit match key.
+5. **Interruption carry-over uses ONLY existing ledger laws**: the interrupted row becomes `defer` with `dueBy = now + reconcileWindowMs` (strictly future → clean while the carry turn may still land, LOST_REPLY if none ever does); the carry turn calls `ledger.linkTurn` re-pointing the interrupted inbound at itself; links are last-wins in file order. No new reconcile machinery.
+6. **Denied chats are dropped BEFORE ingest** (in thead's poll, ahead of `ingestUpdates`) — no ledger row, so no eternal alarm; the pipeline-side allowlist check stays as belt-and-braces.
+7. **SessionWindow persists are serialized** (src/memory/window.ts). Windows-law: concurrent atomic writes to the same file EPERM on rename; the unawaited `window.push` persists raced each other on Windows (affect-store pattern applied).
+8. **Probe bridge casts.** probes' Vec12/Episode mirrors are structural; `probeTarget().state()` bridges with `Array.from(signature(...))` and `as never[]` — S8 aligns the types for real.
+9. **One shared SessionWindow instance** across pipeline + System — a second open over the same dir held a divergent in-memory copy (caught in review of the first compose draft).
+10. **`resolveLoopConfig({ turnTokenBudget })` only** — `budgetMs` stays at the wall-clock defaults; the packet token budget is honored in the assemble config.

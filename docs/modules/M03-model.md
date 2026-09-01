@@ -1,7 +1,7 @@
 ---
 module: M03
 name: model
-syncedTo: spec-v1 (no code yet)
+syncedTo: S1 (implemented — src/model, test/model; the structured ladder routes through the synthetic `emit` tool rung)
 stage: S1
 depends: [M01-kernel, M02-events]
 ---

@@ -1,7 +1,7 @@
 ---
 title: Thea2 — Roadmap
-syncedTo: spec-v1 (no code yet)
-date: 2026-09-01
+syncedTo: S5 (S0–S5 landed — see docs/modules/*/ "As built"; 1456 tests, five gates green)
+date: 2026-09-02
 ---
 
 # Roadmap — build stages S0–S9

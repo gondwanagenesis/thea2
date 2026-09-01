@@ -1,7 +1,7 @@
 ---
 module: M18
 name: siblings
-syncedTo: spec-v1 (no code yet)
+syncedTo: S8 (implemented — src/siblings + test/siblings, 100 tests; ledger zero-state fix landed with the suite)
 stage: S8
 depends: [M01-kernel, M02-events, M03-model, M16-sched, M19-probes]
 ---

@@ -1,7 +1,7 @@
 ---
 module: M04
 name: embed
-syncedTo: spec-v1 (no code yet)
+syncedTo: S1 (implemented — src/embed, test/embed; fastembed deferred to S9, hash interim)
 stage: S1
 depends: [M01-kernel]
 ---

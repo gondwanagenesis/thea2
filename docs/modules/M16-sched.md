@@ -1,7 +1,7 @@
 ---
 module: M16
 name: sched
-syncedTo: spec-v1 (implemented; see "Deviations as built" at the end)
+syncedTo: S2 (implemented — src/sched, test/sched; wired into compose at S5; see "Deviations as built" at the end)
 stage: S2
 depends: [M01-kernel, M02-events]
 ---

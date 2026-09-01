@@ -1,7 +1,7 @@
 ---
 title: Thea2 — Architecture
-syncedTo: spec-v1 (no code yet)
-date: 2026-09-01
+syncedTo: S5 (S0–S5 landed — src/app composes all 20 modules; 1456 tests, five gates green)
+date: 2026-09-02
 ---
 
 # Architecture

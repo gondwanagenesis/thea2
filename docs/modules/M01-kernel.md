@@ -1,7 +1,7 @@
 ---
 module: M01
 name: kernel
-syncedTo: spec-v1 (no code yet)
+syncedTo: S0 (implemented — src/kernel, test/kernel)
 stage: S0
 depends: []
 ---

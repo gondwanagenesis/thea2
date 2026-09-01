@@ -1,7 +1,7 @@
 ---
 module: M02
 name: events
-syncedTo: spec-v1 (no code yet)
+syncedTo: S1 (implemented — src/events, test/events)
 stage: S1
 depends: [M01-kernel]
 ---

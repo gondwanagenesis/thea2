@@ -1,7 +1,7 @@
 ---
 module: M15
 name: bridge
-syncedTo: spec-v1 (no code yet)
+syncedTo: S3 (implemented — src/bridge, test/bridge; ingestUpdates + thead wire-in at S5)
 stage: S2
 depends: [M01-kernel, M02-events]
 ---

@@ -1,7 +1,7 @@
 ---
 module: M17
 name: life
-syncedTo: spec-v1 (no code yet)
+syncedTo: S6 (implemented — src/life + test/life, 120 tests; thought wire-schema fix landed with the suite)
 stage: S6
 depends: [M01-kernel, M02-events, M03-model, M05-affect, M09-memory, M13-loop, M16-sched]
 ---
