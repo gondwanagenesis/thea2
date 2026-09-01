@@ -1,0 +1,13 @@
+{
+  "comment": "Golden HashEmbedder vectors. Each entry is sha256 (kernel contentHash) over the exact little-endian Float32 bytes of embed(text)[0] — pins bit-identity across processes and platforms. Regenerate only via a deliberate, reviewed spec change.",
+  "embedderId": "hash:384",
+  "dim": 384,
+  "vectors": {
+    "": "sha256:80422bc3d307b4a25bdafcc84ac7fb01cb55a09810e8b0f37bb12e0edb5c48ca",
+    "hello world": "sha256:c7f447e40042e1f9fe5959a22058db07588aed37788b81d6bc02d0f0b1b4ebd9",
+    "Thea remembers the red door.": "sha256:76b90f1690c5a26dc542389537b2062123e7a94ebb28e75cfb169eed140d9dad",
+    "señora MEMORY memory": "sha256:43eb98084a7d3b8bb3ff3ec85eb957ab2895ba42647df0296992185ffbcbbb60",
+    "  spaced   out  text  ": "sha256:ff59d44adc9c3c4cc8159bb65256c0f3b859bb8f314367078d5596b94fd03581",
+    "the quick brown fox jumps over the lazy dog": "sha256:09ee0edf2a4c8ae54b43099fbd1843093e19a4ad143440a52e06eacc0beef354"
+  }
+}
