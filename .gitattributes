@@ -1,0 +1,5 @@
+# Linux-deployed repo (VPS): text files must be LF everywhere — CRLF breaks
+# shell scripts (/bin/sh^M) and systemd units on /opt/thea2.
+* text=auto eol=lf
+*.png binary
+*.zst binary
