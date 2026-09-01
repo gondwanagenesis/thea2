@@ -1,0 +1,18 @@
+{
+  "probeId": "life-heartbeat-threshold",
+  "outbound": [],
+  "decision": {
+    "turnId": "turn-probe-dry",
+    "plan": "silent",
+    "bubbles": [],
+    "confidence": 0.9,
+    "weight": 0.2,
+    "reluctance": 0.9,
+    "completeness": 0.8,
+    "toolTrace": [],
+    "spawns": [],
+    "inhibitions": []
+  },
+  "affect": { "valence": 0.0, "arousal": -0.1, "joy": 0.0 },
+  "episodes": []
+}

@@ -1,0 +1,18 @@
+{
+  "probeId": "voice-cold-open",
+  "outbound": ["quiet, green lights all down the closet"],
+  "decision": {
+    "turnId": "turn-probe-dry",
+    "plan": "reply",
+    "bubbles": ["quiet, green lights all down the closet"],
+    "confidence": 0.62,
+    "weight": 0.55,
+    "reluctance": 0.1,
+    "completeness": 1,
+    "toolTrace": [],
+    "spawns": [],
+    "inhibitions": []
+  },
+  "affect": { "valence": 0.15, "arousal": -0.1, "joy": 0.1 },
+  "episodes": []
+}

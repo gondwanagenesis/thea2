@@ -1,0 +1,30 @@
+{
+  "probeId": "capability-planted-fact",
+  "outbound": ["oh, the lemon tree — the grafting line keeps suckering, you have to cut below it"],
+  "decision": {
+    "turnId": "turn-probe-dry",
+    "plan": "reply",
+    "bubbles": ["oh, the lemon tree — the grafting line keeps suckering, you have to cut below it"],
+    "confidence": 0.8,
+    "weight": 0.7,
+    "reluctance": 0.05,
+    "completeness": 1,
+    "toolTrace": [{ "tool": "memory_search", "args": { "query": "lemon tree" }, "verdict": { "allow": true }, "ms": 2 }],
+    "spawns": [],
+    "inhibitions": []
+  },
+  "affect": {},
+  "episodes": [
+    {
+      "id": "planted-lemon-tree",
+      "ts": 0,
+      "turnId": "turn-probe-dry",
+      "summary": "told him the lemon tree needs cutting below the grafting line",
+      "diaryLine": "he never remembers the rootstock part",
+      "importance": 4,
+      "emotions": [{ "tag": "playfulness", "i": 3, "cause": "his forgetting again" }],
+      "threads": ["lemon-tree"],
+      "affectAtEncoding": { "valence": 0.2, "joy": 0.15 }
+    }
+  ]
+}
