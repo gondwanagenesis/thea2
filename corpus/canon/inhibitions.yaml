@@ -44,7 +44,7 @@ plan:
     reject_patterns: []               # populated at compose time from env — never literal here
   - id: banned-construction
     severity: soft
-    why: the "it's not X, it's Y" family is the #1 AI tell (owner's law). rejection re-enters the loop with this reason; the model rephrases.
+    why: 'the "it''s not X, it''s Y" family is the #1 AI tell (owner''s law). rejection re-enters the loop with this reason; the model rephrases.'
     reject_patterns:
       - "\\b(?:it|this|that)['’]?s not (?:about |that )?[^.,;]{2,40},\\s*(?:it|this|that)['’]?s\\b"
       - "\\bnot only [^.,;]{2,40}, but (?:also )?\\b"

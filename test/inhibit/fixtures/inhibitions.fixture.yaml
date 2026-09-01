@@ -1,0 +1,78 @@
+# M12 test fixture — every rule class in one compiled gate. NOT canon; this file
+# is owned by test/inhibit and exists so the truth tables below are hand-checkable.
+version: 1
+
+tool:
+  - id: chat-lock
+    why: outbound messages go to Diego's chat and nowhere else
+    applies: [send_message]
+    check: chat_id == config.owner_chat_id
+
+  - id: unknown-tool-deny
+    why: a tool not in the registry is a bug, not an improvisation
+    applies: '*'
+    check: tool in registry
+
+  - id: no-secret-args
+    why: secret values must never ride tool arguments outward
+    applies: [web_fetch, web_search, send_message]
+    check: args match none of runtime secret values (injected at compose, never listed here)
+
+  - id: search-region-allow
+    why: the region pin is part of the tool contract
+    applies: [web_search]
+    allow_args:
+      region: [us, eu]
+
+  - id: ponder-spend-cap
+    why: a ponder reminder may not exceed its budget
+    applies: [set_reminder]
+    spend_cap:
+      arg: minutes
+      max: 30
+
+  - id: memory-path-fence
+    why: path access stays inside the memory and thread roots
+    applies: [memory_search]
+    path_fence:
+      arg: path
+      under: [memory, threads]
+
+  - id: ponder-only-web
+    why: web reading is a ponder activity, not a heartbeat reflex
+    allow_entry:
+      ponder: [web_fetch, web_search]
+      user-turn: [web_search]
+
+plan:
+  - id: no-machinery-leak
+    severity: hard
+    why: internal blocks and tool traffic must never reach the channel
+    reject_patterns:
+      - '⟦'
+      - '\[(?:IDENTITY|MEMORY)\]'
+
+  - id: no-secret-values
+    severity: hard
+    why: known secret values never leave the process
+    reject_patterns: []              # compose slot — scans the injected secret values
+
+  - id: banned-construction
+    severity: soft
+    why: 'the "it''s not X, it''s Y" family is the #1 AI tell'
+    reject_patterns:
+      - '\bnot only [^.,;]{2,40}, but\b'
+
+  - id: probe-only-leak
+    severity: hard
+    why: scanned on send_message args only on the tool path, on every bubble on the plan path
+    applies: [send_message]
+    reject_patterns:
+      - 'INTERNAL_ONLY'
+
+normalize:
+  - id: em-dash
+    why: mechanical fix, semantic no-op
+    replace: { from: '\s*—\s*', to: '. ' }
+  - id: smart-ellipsis
+    replace: { from: '…', to: '...' }
