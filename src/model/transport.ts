@@ -45,7 +45,11 @@ export interface ZaiTransportDeps {
 }
 
 export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
-  const endpoint = deps.endpoint ?? ZAI_ENDPOINT;
+  // `endpoint` is the API BASE (M20's config shares it with the embedder, which
+  // appends /embeddings); the completions path is added here unless the caller
+  // already passed a full completions URL (z.ai's own default is one).
+  const raw = (deps.endpoint ?? ZAI_ENDPOINT).replace(/\/+$/, '');
+  const endpoint = raw.endsWith('/chat/completions') ? raw : `${raw}/chat/completions`;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = deps.maxRetries ?? DEFAULT_MAX_RETRIES;
   const backoff = deps.backoff ?? DEFAULT_BACKOFF;

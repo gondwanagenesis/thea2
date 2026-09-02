@@ -172,7 +172,7 @@ describe('zaiTransport — timeout and aborts (TestClock-driven)', () => {
 });
 
 describe('zaiTransport — request shape', () => {
-  it('POSTs canonical JSON with a bearer key to the endpoint', async () => {
+  it('POSTs canonical JSON with a bearer key; an API-base endpoint gets /chat/completions appended', async () => {
     let seenUrl = '';
     let seenInit: RequestInit | undefined;
     const fetchImpl = (async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -185,12 +185,29 @@ describe('zaiTransport — request shape', () => {
       clock: new TestClock(0),
       rng: makeRng('t'),
       fetchImpl,
-      endpoint: 'https://ep.example/v1/chat',
+      endpoint: 'https://ep.example/v1',
     });
     await send({ body: BODY });
-    expect(seenUrl).toBe('https://ep.example/v1/chat');
+    expect(seenUrl).toBe('https://ep.example/v1/chat/completions');
     expect((seenInit?.headers as Record<string, string>)['authorization']).toBe('Bearer secret-key');
     expect(JSON.parse(String(seenInit?.body))).toEqual(BODY);
+  });
+
+  it('a full completions URL is used verbatim (trailing slash normalized)', async () => {
+    let seenUrl = '';
+    const fetchImpl = (async (url: string | URL | Request): Promise<Response> => {
+      seenUrl = String(url);
+      return okResponse(wireOk({ content: 'x' })) as unknown as Response;
+    }) as unknown as typeof fetch;
+    const send = zaiTransport({
+      apiKey: 'k',
+      clock: new TestClock(0),
+      rng: makeRng('t'),
+      fetchImpl,
+      endpoint: 'https://ep.example/v1/chat/completions/',
+    });
+    await send({ body: BODY });
+    expect(seenUrl).toBe('https://ep.example/v1/chat/completions');
   });
 
   it('backoff delays are deterministic per Rng stream and capped', () => {
