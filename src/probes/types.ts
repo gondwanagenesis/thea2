@@ -1,16 +1,18 @@
 // M19 probes — the module's public shapes.
 //
-// LAYERING. The spec frontmatter allows M01/M02/M03/M04/M07 only, so every type
-// the probe surface names but a later module owns is mirrored here STRUCTURALLY,
-// never imported: `InboundMsg` (M15-bridge), `Episode` (M09-memory),
-// `DecisionObject` (the schemas/decision.ts reference — schemas/ are shared
-// vocabulary, not a src module), `Vec12` (M06 coupling space, M09's stamp).
-// M20's probe-harness preset hands M19 a real ProbeTarget whose values satisfy
-// these mirrors by structure — same pattern as src/corpus/embedder.ts. The
-// mirrors stay field-for-field compatible so the swap to the real types at their
-// migration stages is a no-op at this module's seams.
+// LAYERING. The spec frontmatter allows M01/M02/M03/M04/M05/M07 only, so the
+// types the probe surface names but a later module owns are mirrored here
+// STRUCTURALLY: `InboundMsg` (M15-bridge) and `Vec12` (M06 coupling space,
+// M09's stamp). Two exceptions are type/value imports sanctioned by the spec:
+// `Episode` (M09-memory, type-only — S8 alignment after the mirror drifted
+// once) and `EmotionTagSchema` (M05-affect, parse.ts — the real emotion
+// vocabulary). `DecisionObject` is the schemas/decision.ts reference —
+// schemas/ are shared vocabulary, not a src module. M20's probe-harness preset
+// hands M19 a real ProbeTarget whose values satisfy the mirrors by structure —
+// same pattern as src/corpus/embedder.ts. The mirrors stay field-for-field
+// compatible so the swap to the real types at their migration stages is a
+// no-op at this module's seams.
 
-import type { AppraisedEmotion } from '../../schemas/appraisal.js';
 import type { DecisionObject } from '../../schemas/decision.js';
 import type { ProbeBaseline } from '../../schemas/probe.js';
 import { AFFECT_DIMS, type AffectDim, type Dimension } from '../../schemas/exemplar.js';
@@ -35,19 +37,11 @@ export interface InboundMsg {
   reaction?: { emoji: string; toMsgId: number };
 }
 
-/** M09-memory `Episode`, mirrored. `affectAtEncoding` is the FULL 12-dim stamp. */
-export interface Episode {
-  id: string;
-  ts: number;
-  turnId: string;
-  summary: string;
-  diaryLine: string;
-  importance: number; // 1-10
-  emotions: AppraisedEmotion[];
-  threads: string[];
-  affectAtEncoding: Vec12;
-  vec?: Float32Array;
-}
+/** M09-memory's Episode, type-only (S8 alignment — the mirror drifted once
+ *  already). `affectAtEncoding` is the FULL 12-dim stamp; memory holds it as
+ *  number[], which is assignable to the readonly Vec12 here. */
+export type { Episode } from '../memory/index.js';
+import type { Episode } from '../memory/index.js';
 
 export type { DecisionObject };
 
@@ -170,8 +164,10 @@ export const PROBE_DIMENSIONS: readonly Dimension[] = [
   'taste',
 ] as const;
 
-/** Materializes a sparse affect signature into a full Vec12 (AFFECT_DIMS order, zeros elsewhere). */
-export const fullVec12 = (sparse: SparseAffect): Vec12 =>
+/** Materializes a sparse affect signature into a full Vec12 (AFFECT_DIMS order, zeros elsewhere).
+ *  Returns a fresh mutable number[]: M09's Episode stamp is number[], and a readonly view
+ *  must never be handed to a mutable-typed field. */
+export const fullVec12 = (sparse: SparseAffect): number[] =>
   AFFECT_DIMS_ORDER.map((d) => sparse[d] ?? 0);
 
 /** AFFECT_DIMS lives in schemas/exemplar.ts; re-exported here as the single ordering

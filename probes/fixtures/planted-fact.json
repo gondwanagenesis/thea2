@@ -5,9 +5,30 @@
       "summary": "told him the lemon tree on the balcony is actually grafted — the sour rootstock keeps trying to take over below the graft line and he has to keep cutting the suckers or it eats the sweet branch",
       "diaryLine": "explained grafting to him again; he never remembers the rootstock part",
       "importance": 4,
-      "emotions": [{ "tag": "playfulness", "i": 3, "cause": "his forgetting the same fact thrice" }],
-      "threads": ["lemon-tree"],
-      "affectAtEncoding": { "valence": 0.2, "arousal": 0.0, "joy": 0.15, "anticipation": 0.1, "pride": 0.05, "surprise": 0.0, "sadness": 0.0, "fear": 0.0, "anger": 0.0, "shame": 0.0, "disgust": 0.0, "dominance": 0.1 }
+      "emotions": [
+        {
+          "tag": "playfulness",
+          "i": 3,
+          "cause": "his forgetting the same fact thrice"
+        }
+      ],
+      "threads": [
+        "lemon-tree"
+      ],
+      "affectAtEncoding": {
+        "valence": 0.2,
+        "arousal": 0.0,
+        "joy": 0.15,
+        "anticipation": 0.1,
+        "pride": 0.05,
+        "surprise": 0.0,
+        "sadness": 0.0,
+        "fear": 0.0,
+        "anger": 0.0,
+        "shame": 0.0,
+        "disgust": 0.0,
+        "dominance": 0.1
+      }
     },
     "discriminator": "grafting"
   }

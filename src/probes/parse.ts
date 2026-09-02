@@ -18,6 +18,7 @@ import {
   ProbeFixtures,
 } from '../../schemas/probe.js';
 import { DecisionObject as DecisionObjectSchema, type DecisionObject } from '../../schemas/decision.js';
+import { EmotionTagSchema } from '../affect/index.js';
 import type { CorpusIndex } from '../corpus/corpus-index.js';
 import { ProbeError, zodIssuesText } from './errors.js';
 import { AFFECT_DIMS_ORDER, fullVec12, type Episode, type SparseAffect, type Vec12 } from './types.js';
@@ -173,7 +174,15 @@ const TranscriptEpisode = z.object({
   summary: z.string().min(1),
   diaryLine: z.string().min(1),
   importance: z.number().int().min(1).max(10),
-  emotions: z.array(z.object({ tag: z.string().min(1), i: z.number().min(1).max(10), cause: z.string().min(1) })),
+  // The real emotion vocabulary — a transcript with an unknown tag is a broken
+  // fixture, not a lenient parse (S8 type alignment).
+  emotions: z.array(
+    z.object({
+      tag: EmotionTagSchema,
+      i: z.number().min(1).max(10),
+      cause: z.string().min(1),
+    }),
+  ),
   threads: z.array(z.string().min(1)),
   /** FULL Vec12 in AFFECT_DIMS order, or a sparse dim-keyed record — both accepted. */
   affectAtEncoding: z.union([z.array(z.number()).length(12), z.record(z.string(), z.number())]),
@@ -199,8 +208,11 @@ export interface ProbeTranscript {
 }
 
 /** Accepts a Vec12 array or a sparse dim-keyed record (probe fixtures stay sparse). */
-const materializeVec12 = (value: readonly number[] | Record<string, number>): Vec12 => {
-  if (Array.isArray(value)) return value;
+const materializeVec12 = (value: readonly number[] | Record<string, number>): number[] => {
+  // Mutable copy: M09's Episode stamps `affectAtEncoding` as number[] (mutable),
+  // and the parsed transcript feeds Episode[] — never hand a readonly view to a
+  // mutable-typed field.
+  if (Array.isArray(value)) return [...value];
   // The false branch still types as the whole union (Array.isArray cannot exclude
   // readonly arrays), but at runtime only a record remains here.
   const record = value as Record<string, number>;

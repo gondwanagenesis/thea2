@@ -3,7 +3,7 @@ module: M19
 name: probes
 syncedTo: S8 (built — src/probes, test/probes; 83 tests green)
 stage: S8
-depends: [M01-kernel, M02-events, M03-model, M04-embed, M07-corpus]
+depends: [M01-kernel, M02-events, M03-model, M04-embed, M05-affect, M07-corpus]
 ---
 # M19 — probes
 

@@ -31,14 +31,14 @@ const MODULES = {
   "src/sched": ["kernel", "events"],
   "src/life": ["kernel", "events", "model", "affect", "memory", "loop", "sched"],
   "src/siblings": ["kernel", "events", "model", "sched", "probes"],
-  "src/probes": ["kernel", "events", "model", "embed", "corpus"],
+  "src/probes": ["kernel", "events", "model", "embed", "corpus", "affect"],
   "src/app": [
     "kernel", "events", "model", "embed", "affect", "coupling", "corpus",
     "memory", "assemble", "inhibit", "loop", "realize", "bridge", "sched",
     // S5 wiring: the pipeline emits packet.record (M10's credit input) and
-    // compose builds the M19 probe target. derive/life/siblings join when
-    // their stages land (S6-S8) — see the header rule above.
-    "consolidate", "probes",
+    // compose builds the M19 probe target. S6-S8 wiring landed life, siblings
+    // (routing table) and derive (the S7 CLI verbs) into compose/cli.
+    "consolidate", "probes", "life", "siblings", "derive",
   ],
 };
 

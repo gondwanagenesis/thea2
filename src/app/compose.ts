@@ -16,7 +16,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fail, makeRng, SystemClock, TestClock, type Clock, type Rng } from '../kernel/index.js';
 import { openEventLog, type EventLog } from '../events/index.js';
-import { createZaiClient, makeRouter, MockModel, TASK_CLASSES, type ModelClient, type RoutingOverride, type TaskClass, type Tier } from '../model/index.js';
+import { createZaiClient, makeRouter, MockModel, type ModelClient } from '../model/index.js';
 import { makeHashEmbedder, type Embedder } from '../embed/index.js';
 import { openAffectStore, type AffectStore } from '../affect/index.js';
 import { compileCoupling, signature, COUPLING_BASELINES, type CompiledCoupling, type Vec12 } from '../coupling/index.js';
@@ -47,7 +47,10 @@ import { compileGate, type InhibitionGate } from '../inhibit/index.js';
 import { createToolRegistry, resolveLoopConfig, type LoopConfig, type ToolRegistry } from '../loop/index.js';
 import type { FakeChannelExtras, Channel, MessageLedger, OffsetStore } from '../bridge/index.js';
 import { openMessageLedger, openOffsetStore, telegramChannel, FakeChannel } from '../bridge/index.js';
-import { startScheduler, type SchedulerHandle } from '../sched/index.js';
+import { startScheduler, type Job, type SchedulerHandle } from '../sched/index.js';
+import { heartbeatJob, ponderJob, type LifeJobDeps } from '../life/jobs.js';
+import { resolveLifeConfig } from '../life/config.js';
+import { readRoutingTable } from '../siblings/index.js';
 import type { ProbeTarget } from '../probes/index.js';
 import { makePipeline, type Pipeline } from './pipeline.js';
 import { makeEmbedder } from './embedder.js';
@@ -64,8 +67,8 @@ export interface ComposeOpts {
   channel?: Channel | undefined;
   embedder?: Embedder | undefined;
   fetchImpl?: typeof fetch | undefined;
-  /** Scheduler jobs — empty at S5; life/siblings bodies register as their stages land (S6-S8). */
-  jobs?: never[] | undefined;
+  /** Scheduler jobs — hermetic tests inject their table; a real boot wires the life jobs by default. */
+  jobs?: Job[] | undefined;
 }
 
 /** The wired system. Nothing here is optional: a composed system is a runnable system. */
@@ -88,6 +91,8 @@ export interface System {
   loopCfg: LoopConfig;
   pipeline: Pipeline;
   sched: SchedulerHandle;
+  /** The wired job table — status reports it; thead boots it. */
+  jobCount: number;
   paths: SystemPaths;
   probeTarget(): ProbeTarget;
   /** Settle in-flight turns + afterturns, stop the scheduler. Idempotent-ish: safe to call twice. */
@@ -186,7 +191,10 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
       cheap: cfg.models.tiers.cheap,
       reasoning: cfg.models.tiers.reasoning ?? cfg.models.tiers.main, // only two tiers configured: judge rides main
     };
-    const routing = readRoutingTableSafe(paths.base);
+    // M18's guarded reader: absent file = no overrides; a malformed file is a
+    // typed throw (startup failure — silently ignoring a hand edit would make
+    // the Ledger propose against a table it cannot see).
+    const routing = await readRoutingTable(path.resolve(paths.base, 'var', 'routing.json'));
     model = createZaiClient({
       apiKey: cfg.models.apiKey,
       endpoint: cfg.models.endpoint,
@@ -265,15 +273,57 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   });
   await events.emit('app.boot', { stage: 'pipeline', model: model.constructor.name });
 
-  // ---- scheduler (job table fills as stages land: S6 life, S8 siblings) --
-  const sched = startScheduler(opts.jobs ?? [], {
+  // ---- scheduler (S6: life jobs; S8 adds siblings) ------------------------
+  // The M17 conversation-active mutex — a turn in flight OR words from him in
+  // the last 10 min — is one predicate shared by the scheduler (skip firing)
+  // and the life jobs (their own precondition input).
+  const CONVERSATION_QUIET_MS = 10 * 60_000;
+  const conversationActive = (): boolean =>
+    pipeline.isBusy() ||
+    clock.epochMs() - (pipeline.lastInboundAtMs() ?? Number.NEGATIVE_INFINITY) < CONVERSATION_QUIET_MS;
+
+  // Life jobs wire by default on a real boot (opts.jobs undefined — the cli's
+  // thead path). Hermetic tests inject their own table explicitly.
+  let jobs: Job[] = opts.jobs ?? [];
+  if (opts.jobs === undefined) {
+    const stateDir = path.resolve(paths.base, 'var', 'life');
+    fs.mkdirSync(stateDir, { recursive: true });
+    const lifeDeps: LifeJobDeps = {
+      model,
+      events,
+      affect,
+      episodes,
+      cfg: resolveLifeConfig({ quietHours: cfg.affect.quietHours }),
+      interactiveMutex: conversationActive,
+      lastInboundTs: () => pipeline.lastInboundAtMs(),
+      selfEntry: (kind, goal) => pipeline.selfEntry(kind, goal),
+      stateDir,
+      vec12: () => signature(affect.current(), COUPLING_BASELINES),
+      ponderPacket: async () => {
+        const queryVec = (await embedder.embed(['what is worth thinking about now?']))[0] ?? new Float32Array(0);
+        return assemble(
+          {
+            entry: 'ponder',
+            speaker: { channel: 'telegram', person: `tg:${cfg.bridge.allowedChatIds[0] ?? 0}` },
+            register: 'play',
+            queryVec,
+            recentTurnIds: [],
+          },
+          signature(affect.current(), COUPLING_BASELINES),
+          makeAssembleDeps(),
+        );
+      },
+    };
+    jobs = [heartbeatJob(lifeDeps), ponderJob(lifeDeps)];
+  }
+  const sched = startScheduler(jobs, {
     clock,
     rng,
     events,
     statePath: paths.schedState,
-    interactiveMutex: () => pipeline.isBusy(),
+    interactiveMutex: conversationActive,
   });
-  await events.emit('app.boot', { stage: 'scheduler', jobs: opts.jobs?.length ?? 0 });
+  await events.emit('app.boot', { stage: 'scheduler', jobs: jobs.length });
 
   // ---- system ------------------------------------------------------------
   let stopped = false;
@@ -296,6 +346,7 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     loopCfg,
     pipeline,
     sched,
+    jobCount: jobs.length,
     paths,
     probeTarget: () => {
       const fake = channel as Channel & Partial<FakeChannelExtras>;
@@ -313,7 +364,7 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
         state: () => ({
           // probes' Vec12 is the readonly-number[] mirror of coupling's — same values, different array type.
           affect: Array.from(signature(affect.current(), COUPLING_BASELINES)),
-          episodes: episodes.recent(20) as never[], // probes' Episode mirror is structural (S8 aligns the types)
+          episodes: episodes.recent(20),
         }),
       };
     },
@@ -327,50 +378,4 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   };
   await events.emit('app.boot', { stage: 'bridge', channel: preset === 'prod' ? 'telegram' : 'fake' });
   return system;
-};
-
-// ---------------------------------------------------------------------------
-// var/routing.json — M18's readRoutingTable owns the guarded version; until
-// src/app may import siblings (S8), the composition reads the same file with a
-// minimal, fail-loud shape check. Absent file = no overrides.
-// ---------------------------------------------------------------------------
-
-interface RoutingEntryShim {
-  taskClass: unknown;
-  tier: unknown;
-  reason?: unknown;
-}
-
-const TIERS = ['main', 'cheap', 'reasoning'] as const;
-
-const readRoutingTableSafe = (base: string): RoutingOverride[] => {
-  const file = path.resolve(base, 'var', 'routing.json');
-  let text: string;
-  try {
-    text = readFileSync(file, 'utf8');
-  } catch {
-    return [];
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text) as unknown;
-  } catch (e) {
-    return fail('app/boot-failed', `stage gates: var/routing.json is not valid JSON: ${String(e)}`);
-  }
-  if (!Array.isArray(raw)) return fail('app/boot-failed', 'stage gates: var/routing.json must be an array');
-  const out: RoutingOverride[] = [];
-  for (const e of raw as RoutingEntryShim[]) {
-    if (typeof e.taskClass !== 'string' || !(TASK_CLASSES as readonly string[]).includes(e.taskClass)) {
-      return fail('app/boot-failed', `stage gates: var/routing.json names unknown task class '${String(e.taskClass)}'`);
-    }
-    if (typeof e.tier !== 'string' || !(TIERS as readonly string[]).includes(e.tier)) {
-      return fail('app/boot-failed', `stage gates: var/routing.json has invalid tier for '${String(e.taskClass)}'`);
-    }
-    out.push({
-      taskClass: e.taskClass as TaskClass,
-      tier: e.tier as Tier,
-      ...(typeof e.reason === 'string' ? { reason: e.reason } : {}),
-    });
-  }
-  return out;
 };

@@ -60,6 +60,10 @@ interface Carry {
 interface Queued {
   m: InboundMsg;
   turnId: string;
+  /** Entry context for self-initiated turns (M17 life); absent = a user turn. */
+  kind?: 'heartbeat' | 'ponder' | undefined;
+  /** What a self-initiated turn deliberates on — the heartbeat thought, the ponder seed. */
+  goal?: string | undefined;
 }
 
 export interface PipelineDeps {
@@ -89,6 +93,10 @@ export interface PipelineDeps {
 export interface Pipeline {
   /** Mint + enqueue. Returns the turnId (ingest links on it), or undefined when nothing should run (reaction-only, denied chat). */
   inbound(m: InboundMsg): string | undefined;
+  /** Mint + enqueue a self-initiated turn (M17 heartbeat/ponder). Returns the turnId. */
+  selfEntry(kind: 'heartbeat' | 'ponder', goal: string): string;
+  /** Epoch ms of the last real user arrival (reactions included) — the M17 conversation-active mutex input. */
+  lastInboundAtMs(): number | undefined;
   isBusy(): boolean;
   /** Settle the queue and every detached afterturn — shutdown and probe quiesce. */
   drain(): Promise<void>;
@@ -105,6 +113,7 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
   let carry: Carry | null = null;
   let last: DecisionObject | null = null;
   let lastTurnId: string | null = null;
+  let lastInboundAt: number | undefined;
   // The in-flight turn's abort handle, armed only once realization begins —
   // an inbound that lands during deliberation just waits its turn.
   let live: { abort: AbortController; armed: boolean } | null = null;
@@ -207,7 +216,12 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
     };
 
     const decision = await runLoop(
-      { kind: 'user-turn', inbound: m, turnId },
+      {
+        kind: item.kind ?? 'user-turn',
+        inbound: m,
+        turnId,
+        ...(item.goal !== undefined ? { goal: item.goal } : {}),
+      },
       loopDeps,
     );
     last = decision;
@@ -229,7 +243,7 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
           dueBy: deps.clock.epochMs() + deps.reconcileWindowMs,
         });
       }
-      await settle(turnId, m, decision, []);
+      await settle(turnId, m, decision, [], item.kind);
       return;
     }
 
@@ -259,7 +273,7 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
       });
     }
 
-    await settle(turnId, m, decision, report.sent.map((s) => s.text));
+    await settle(turnId, m, decision, report.sent.map((s) => s.text), item.kind);
     void deps.events.emit(
       'app.turn_done',
       { turnId, plan: decision.plan, sent: report.sent.length, undelivered: report.undelivered.length, ms: deps.clock.epochMs() - t0 },
@@ -267,8 +281,16 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
     );
   };
 
-  /** Stage 7 bookkeeping that is NOT detached (the verbatim window), then the detached afterturn. */
-  const settle = async (turnId: string, m: InboundMsg, decision: DecisionObject, sentTexts: string[]): Promise<void> => {
+  /** Stage 7 bookkeeping that is NOT detached (the verbatim window), then the detached afterturn.
+   *  A self-initiated turn (M17) never enters the window as a user utterance and runs no
+   *  appraisal — the goal text is hers, not something he said; ponder writes its own artifact. */
+  const settle = async (
+    turnId: string,
+    m: InboundMsg,
+    decision: DecisionObject,
+    sentTexts: string[],
+    selfKind?: 'heartbeat' | 'ponder' | undefined,
+  ): Promise<void> => {
     const prevTurnId = lastTurnId;
     lastTurnId = turnId;
     recentTurnIds.push(turnId);
@@ -277,10 +299,14 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
     // The window is the verbatim record — it must hold the exchange even if
     // appraisal dies. Only delivered texts enter it; undelivered ones travel
     // via the carry-over block instead.
-    deps.window.push({ role: 'user', content: m.text, ts: m.ts, turnId });
+    if (selfKind === undefined) {
+      deps.window.push({ role: 'user', content: m.text, ts: m.ts, turnId });
+    }
     for (const text of sentTexts) {
       deps.window.push({ role: 'assistant', content: text, ts: deps.clock.epochMs(), turnId });
     }
+
+    if (selfKind !== undefined) return;
 
     const at = deps.affect.current();
     const affectAtEncoding: readonly number[] = Array.from(signature(at, deps.baselines));
@@ -314,8 +340,29 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
     });
   };
 
+  // M17 life entries: she starts the turn herself. The synthetic InboundMsg is
+  // deliberately never ledger-recorded (no real updateId — delivery correctness
+  // is a user-arrival law); if the turn dies, incident.turn_failed is the trace.
+  const selfEntry = (kind: 'heartbeat' | 'ponder', goal: string): string => {
+    const chatId = deps.allowedChatIds[0] ?? fail('app/self-entry', 'no allowed chat for a self-initiated turn');
+    const m: InboundMsg = {
+      updateId: 0,
+      msgId: 0,
+      chatId,
+      ts: deps.clock.epochMs(),
+      text: goal,
+      // v1 is telegram-only; the speaker ref mirrors what the bridge records.
+      speaker: { channel: 'telegram', person: `tg:${chatId}` },
+    };
+    const turnId = newId(deps.clock, deps.rng);
+    queue.push({ m, turnId, kind, goal });
+    kick();
+    return turnId;
+  };
+
   return {
     inbound: (m) => {
+      lastInboundAt = deps.clock.epochMs();
       if (m.chatId !== undefined && !deps.allowedChatIds.includes(m.chatId)) {
         void deps.events.emit('app.chat_denied', { chatId: m.chatId, updateId: m.updateId });
         return undefined;
@@ -336,6 +383,8 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
       return turnId;
     },
     isBusy: () => running || queue.length > 0,
+    selfEntry,
+    lastInboundAtMs: () => lastInboundAt,
     drain,
     lastDecision: () => last,
   };

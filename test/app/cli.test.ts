@@ -3,7 +3,7 @@
 // without touching the network.
 
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cliMain, NOT_BUILT } from '../../src/app/index.js';
@@ -76,20 +76,46 @@ describe('cli', () => {
   });
 
   it('status boots prod over the local config and reports state — no network', async () => {
-    const capture = io();
-    const code = await cliMain(['status', '--config', configPath()], HERMETIC_ENV, capture);
-    expect(code).toBe(0);
-    const t = capture.text();
-    expect(t.out).toContain('corpus');
-    expect(t.out).toContain('episodes');
-    expect(t.out).toContain('tg offset');
-    expect(t.out).toContain('sched jobs    0');
+    // Same isolation as reconcile below: a prod boot anchors var/ at the
+    // process cwd, and the repo's own var/ belongs to a live thead.
+    const dir = mkdtempSync(join(tmpdir(), 'thea2-cli-install-'));
+    const cwd = process.cwd();
+    cpSync(join(cwd, 'corpus'), join(dir, 'corpus'), { recursive: true });
+    const coupling = join(cwd, 'coupling.yaml');
+    if (existsSync(coupling)) cpSync(coupling, join(dir, 'coupling.yaml'));
+    process.chdir(dir);
+    try {
+      const capture = io();
+      const code = await cliMain(['status', '--config', configPath()], HERMETIC_ENV, capture);
+      expect(code).toBe(0);
+      const t = capture.text();
+      expect(t.out).toContain('corpus');
+      expect(t.out).toContain('episodes');
+      expect(t.out).toContain('tg offset');
+      expect(t.out).toContain('sched jobs    2'); // S6: heartbeat + ponder wire on every real boot
+    } finally {
+      process.chdir(cwd);
+    }
   });
 
   it('reconcile over a fresh install is clean', async () => {
-    const capture = io();
-    const code = await cliMain(['reconcile', '--config', configPath()], HERMETIC_ENV, capture);
-    expect(code).toBe(0);
-    expect(capture.text().out).toContain('reconcile: clean');
+    // Isolation: compose anchors var/ AND corpus/ at the process cwd (the
+    // documented S5 canon deviation), so run against a throwaway cwd with the
+    // canon copied in — never the repo's own var/ledger, which a live thead
+    // writes to and which may legitimately hold a LOST_REPLY.
+    const dir = mkdtempSync(join(tmpdir(), 'thea2-cli-install-'));
+    const cwd = process.cwd();
+    cpSync(join(cwd, 'corpus'), join(dir, 'corpus'), { recursive: true });
+    const coupling = join(cwd, 'coupling.yaml');
+    if (existsSync(coupling)) cpSync(coupling, join(dir, 'coupling.yaml'));
+    process.chdir(dir);
+    try {
+      const capture = io();
+      const code = await cliMain(['reconcile', '--config', configPath()], HERMETIC_ENV, capture);
+      expect(code).toBe(0);
+      expect(capture.text().out).toContain('reconcile: clean');
+    } finally {
+      process.chdir(cwd);
+    }
   });
 });

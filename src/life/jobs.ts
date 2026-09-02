@@ -1,0 +1,493 @@
+// M17 life — the M16 job bodies: heartbeat and ponder. Thin compositions over
+// the pure policy (policy.ts) and the two model surfaces (thought.ts,
+// ponder.ts): gather state → ask the policy → make the one model call → land
+// the outcome as events + persisted counters + (ponder) an episode. Every
+// fire/no-fire decision lands a `life.*` event — "why didn't she text today"
+// must always have an answer in the log. A job body never throws out of run():
+// every runtime failure becomes `incident.life_failed` and a state-preserving
+// return (M09's appraisal law: runtime failures a turn can survive are values).
+//
+// State lives in {stateDir}/heartbeat.json and {stateDir}/ponder.json, written
+// through the kernel's atomic write (temp+rename — two concurrent writes to one
+// path throw EPERM on Windows, so each body awaits its own single write per
+// run). State is loaded at FIRE time, not boot, so a TestClock day rollover is
+// just the next fire reading a new date. A missing or corrupt file is a zero
+// state, never a crash.
+//
+// Deliberate non-duplications (the thought call and the committee own their
+// events): thinkHeartbeatThought already emits `life.heartbeat.thought` (its
+// payload's `passed` field IS the fired/not-fired bit) and its own
+// `incident.life_failed` on a parse or transport failure — the job adds the
+// `life.heartbeat.pre` verdict and the selfEntry, not a second copy.
+
+import * as fsp from 'node:fs/promises';
+import * as path from 'node:path';
+import { atomicWriteJson, newId } from '../kernel/index.js';
+import type { AffectStore } from '../affect/index.js';
+import type { EventLog } from '../events/index.js';
+import type { EpisodeStore } from '../memory/index.js';
+import type { ModelClient } from '../model/index.js';
+import type { CommitteeResult, LoopPacket, Vec12 } from '../loop/index.js';
+import { runCommittee } from '../loop/index.js';
+import type { Job, JobCtx } from '../sched/index.js';
+import {
+  HEARTBEAT_PRE_EVENT,
+  HeartbeatPrePayload,
+  LIFE_INCIDENT,
+  LifeIncidentPayload,
+  PONDER_ARTIFACT_EVENT,
+  PONDER_GATE_EVENT,
+  PONDER_SEED_EVENT,
+  PONDER_SKIPPED_EVENT,
+  PonderArtifactPayload,
+  PonderGatePayload,
+  PonderSeedPayload,
+  PonderSkippedPayload,
+  emitLife,
+} from './events.js';
+import type { LifeConfig } from './config.js';
+import {
+  HEARTBEAT_THRESHOLD,
+  PONDER_ABOUTS,
+  allowedAbouts,
+  balanceAvoid,
+  heartbeatPrecondition,
+  ponderGate,
+  ponderScore,
+  silencePressure,
+  utcHourOfDay,
+  type PonderAbout,
+} from './policy.js';
+import {
+  GROUNDING_NONE,
+  PONDER_COMMITTEE_NAME,
+  PonderArtifactSchema,
+  ponderCommittee,
+  ponderContextBlock,
+  ponderGroundQuery,
+  ponderSeedSchemaFor,
+  type GroundingObservation,
+} from './ponder.js';
+import { thinkHeartbeatThought, type HeartbeatThoughtContext } from './thought.js';
+
+/** The deps M20 wires. The model/events/stores are shared with the turn path. */
+export interface LifeJobDeps {
+  model: ModelClient;
+  events: EventLog;
+  /** Read-only: jobs call current()/weather() and never mutate the store. */
+  affect: AffectStore;
+  episodes: EpisodeStore;
+  cfg: LifeConfig;
+  /** True = skip this interactive firing (conversation active / turn in flight). */
+  interactiveMutex: () => boolean;
+  /** Epoch ms of Diego's last inbound message, or undefined if none. */
+  lastInboundTs: () => number | undefined;
+  /** Enqueue a self-initiated turn; returns its turnId. Fire-and-forget: the pipeline owns realization. */
+  selfEntry: (kind: 'heartbeat' | 'ponder', goal: string) => string;
+  /** Directory for the jobs' persisted state (files var/life/*.json). */
+  stateDir: string;
+  /**
+   * Current coupling signature — the Vec12 the committee env needs. The type is
+   * the loop's structural mirror (Float64Array, length 12): dependency-cruiser
+   * forbids src/life → src/coupling, and the CommitteeEnv consumes the loop's
+   * own Vec12, so the mirror is the honest edge.
+   */
+  vec12: () => Vec12;
+  /** A minimal LoopPacket for the ponder committee env (compose closes over the real assembler — async, so the provider is). */
+  ponderPacket: () => Promise<LoopPacket>;
+}
+
+const HOUR = 3_600_000;
+/** The "alone with your thoughts" silence when he has never messaged: 72h saturates the pressure's time term. */
+const NEVER_SILENCE_H = 72;
+/** The "never pondered" age of the last artifact, in hours. */
+const NEVER_ARTIFACT_H = 999;
+/** The balance rule's window: the last 5 seeds. */
+const MAX_ABOUT_HISTORY = 5;
+
+const asErrorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** The one loud failure shape — emitted, never rethrown, and itself allowed to fail quietly (M02 cries to stderr). */
+const incident = async (events: EventLog, job: string, stage: string, error: string): Promise<void> => {
+  try {
+    await events.emit(LIFE_INCIDENT, { job, stage, error } satisfies LifeIncidentPayload);
+  } catch {
+    // L0 unwritable: the outcome stays a quiet return either way.
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Heartbeat
+// ---------------------------------------------------------------------------
+
+export interface HeartbeatJobState {
+  version: 1;
+  /** UTC date the sentToday census belongs to (YYYY-MM-DD). */
+  date: string;
+  sentToday: number;
+  lastSentTs?: number | undefined;
+  unanswered: number;
+  lastUnansweredTs?: number | undefined;
+}
+
+const readHeartbeatState = async (filePath: string, today: string): Promise<HeartbeatJobState> => {
+  const fresh = (): HeartbeatJobState => ({ version: 1, date: today, sentToday: 0, unanswered: 0 });
+  let text: string;
+  try {
+    text = await fsp.readFile(filePath, 'utf8');
+  } catch {
+    return fresh(); // missing = a first boot, not an error
+  }
+  try {
+    const raw = JSON.parse(text) as unknown;
+    if (typeof raw !== 'object' || raw === null) return fresh();
+    const o = raw as Record<string, unknown>;
+    const int = (v: unknown): number | undefined =>
+      typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : undefined;
+    const sentToday = int(o['sentToday']);
+    const unanswered = int(o['unanswered']);
+    if (sentToday === undefined || unanswered === undefined || typeof o['date'] !== 'string') return fresh();
+    const ts = (v: unknown): number | undefined =>
+      typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+    const lastSentTs = ts(o['lastSentTs']);
+    const lastUnansweredTs = ts(o['lastUnansweredTs']);
+    return {
+      version: 1,
+      date: o['date'],
+      sentToday,
+      unanswered,
+      ...(lastSentTs !== undefined ? { lastSentTs } : {}),
+      ...(lastUnansweredTs !== undefined ? { lastUnansweredTs } : {}),
+    };
+  } catch {
+    return fresh(); // corrupt = zero state, never a crash
+  }
+};
+
+const heartbeatGoal = (t: { thought: string; reason: string; kind: string }): string =>
+  `[heartbeat:${t.kind}] ${t.thought} — ${t.reason}`;
+
+const runHeartbeat = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
+  const now = ctx.clock.epochMs();
+  const today = ctx.clock.now().toISOString().slice(0, 10);
+  const statePath = path.join(deps.stateDir, 'heartbeat.json');
+
+  let state = await readHeartbeatState(statePath, today);
+  // A new UTC day resets the daily cap.
+  if (state.date !== today) state = { ...state, date: today, sentToday: 0 };
+  // He replied since her last text — the no-reply backoff debt is paid.
+  const inbound = deps.lastInboundTs();
+  if (inbound !== undefined && state.unanswered > 0 && inbound > (state.lastSentTs ?? Number.NEGATIVE_INFINITY)) {
+    state = { ...state, unanswered: 0 };
+  }
+
+  const nowH = utcHourOfDay(now);
+  const lastUnansweredAgeH =
+    state.lastUnansweredTs !== undefined ? Math.max(0, (now - state.lastUnansweredTs) / HOUR) : 0;
+  const mutexActive = deps.interactiveMutex();
+  const pre = heartbeatPrecondition({
+    nowH,
+    quietHours: deps.cfg.quietHours,
+    sentToday: state.sentToday,
+    unanswered: state.unanswered,
+    lastUnansweredAgeH,
+    mutexActive,
+  });
+  await emitLife(ctx.events, HEARTBEAT_PRE_EVENT, HeartbeatPrePayload, {
+    nowH,
+    canText: pre.canText,
+    reason: pre.reason,
+    sentToday: state.sentToday,
+    unanswered: state.unanswered,
+    lastUnansweredAgeH,
+    mutexActive,
+  });
+  if (!pre.canText) return;
+
+  // The gate is open: build the private monologue's inputs and make the call.
+  const silenceH = inbound !== undefined ? (now - inbound) / HOUR : NEVER_SILENCE_H;
+  const affect = deps.affect.current();
+  const pressure = silencePressure(silenceH, affect.drives);
+  const recent = deps.episodes.recent(deps.cfg.contextEpisodes).map((e) => ({
+    summary: e.summary,
+    importance: e.importance,
+    ts: e.ts,
+  }));
+  const thoughtCtx: HeartbeatThoughtContext = {
+    nowH,
+    silenceH,
+    sentToday: state.sentToday,
+    unanswered: state.unanswered,
+    weather: deps.affect.weather(),
+    drives: affect.drives,
+    recent,
+    dueThreads: [], // v1: the thread index is not wired to the jobs yet
+  };
+  const outcome = await thinkHeartbeatThought(thoughtCtx, pressure, {
+    model: deps.model,
+    events: ctx.events,
+    maxTokens: deps.cfg.thoughtMaxTokens,
+    temperature: deps.cfg.thoughtTemperature,
+    tier: deps.cfg.thoughtTier,
+  });
+  // A failed thought already landed its own incident (stage 'thought'); the
+  // counters stay untouched and the slot ends quietly — not with a second copy.
+  if (!outcome.ok) return;
+
+  if (outcome.score >= HEARTBEAT_THRESHOLD) {
+    deps.selfEntry('heartbeat', heartbeatGoal(outcome.thought));
+    const next: HeartbeatJobState = {
+      version: 1,
+      date: today,
+      sentToday: state.sentToday + 1,
+      lastSentTs: now,
+      unanswered: state.unanswered + 1,
+      lastUnansweredTs: now,
+    };
+    await atomicWriteJson(statePath, next);
+  }
+  // Sub-threshold: the thought call already kept the thought as data
+  // (life.heartbeat.thought with passed:false) — nothing is sent, nothing owed.
+};
+
+export const heartbeatJob = (deps: LifeJobDeps): Job => ({
+  name: 'heartbeat',
+  cadence: { kind: 'every', ms: deps.cfg.heartbeatEveryMs, jitterPct: deps.cfg.jitterPct },
+  lane: 'interactive',
+  catchUp: 'skip', // 16 missed heartbeats must never become 16 texts
+  timeoutMs: deps.cfg.heartbeatTimeoutMs,
+  run: async (ctx) => {
+    try {
+      await runHeartbeat(deps, ctx);
+    } catch (e) {
+      await incident(ctx.events, 'heartbeat', 'run', asErrorMessage(e));
+    }
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Ponder
+// ---------------------------------------------------------------------------
+
+export interface PonderJobState {
+  version: 1;
+  /** The seed classes of the last ponder runs, newest first (balance-rule window). */
+  recentAbouts: PonderAbout[];
+  lastArtifactTs?: number | undefined;
+}
+
+const isPonderAbout = (v: unknown): v is PonderAbout =>
+  typeof v === 'string' && (PONDER_ABOUTS as readonly string[]).includes(v);
+
+const readPonderState = async (filePath: string): Promise<PonderJobState> => {
+  const fresh = (): PonderJobState => ({ version: 1, recentAbouts: [] });
+  let text: string;
+  try {
+    text = await fsp.readFile(filePath, 'utf8');
+  } catch {
+    return fresh();
+  }
+  try {
+    const raw = JSON.parse(text) as unknown;
+    if (typeof raw !== 'object' || raw === null) return fresh();
+    const o = raw as Record<string, unknown>;
+    const abouts = Array.isArray(o['recentAbouts']) ? o['recentAbouts'].filter(isPonderAbout) : [];
+    const lastArtifactTs = typeof o['lastArtifactTs'] === 'number' && Number.isFinite(o['lastArtifactTs'])
+      ? o['lastArtifactTs']
+      : undefined;
+    return {
+      version: 1,
+      recentAbouts: abouts.slice(0, MAX_ABOUT_HISTORY),
+      ...(lastArtifactTs !== undefined ? { lastArtifactTs } : {}),
+    };
+  } catch {
+    return fresh();
+  }
+};
+
+/** saliency 0..1 → the episode's 1..10 importance, clamped at both rails. */
+const importanceOf = (saliency: number): number => Math.max(1, Math.min(10, Math.round(saliency * 10)));
+
+interface PonderSeed {
+  thought: string;
+  about: PonderAbout;
+  topic: string;
+  uncertainty: string;
+  saliency: number;
+}
+
+/**
+ * The seed node's validated output, re-read for the balance history and the
+ * seed event. runCommittee already checked it against the same schema, so this
+ * is a recovery of typed data, not a second verdict; undefined falls back to the
+ * artifact's own about/topic/saliency.
+ */
+const seedFrom = (result: CommitteeResult, abouts: readonly PonderAbout[]): PonderSeed | undefined => {
+  const raw = result.outputs.find((o) => o.id === 'seed');
+  if (raw === undefined) return undefined;
+  try {
+    const parsed = ponderSeedSchemaFor(abouts).safeParse(JSON.parse(raw.output) as unknown);
+    return parsed.success ? (parsed.data as PonderSeed) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const runPonder = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
+  const now = ctx.clock.epochMs();
+  const statePath = path.join(deps.stateDir, 'ponder.json');
+  const state = await readPonderState(statePath);
+
+  // The gate is a mood computed from state — pure, no model call in it.
+  const affect = deps.affect.current();
+  const novelty = affect.drives['novelty'];
+  const arousal = affect.dials['arousal'];
+  const hoursSinceArtifact =
+    state.lastArtifactTs !== undefined ? (now - state.lastArtifactTs) / HOUR : NEVER_ARTIFACT_H;
+  const features = { novelty, arousal, hoursSinceArtifact };
+  const pass = ponderGate(features);
+  await emitLife(ctx.events, PONDER_GATE_EVENT, PonderGatePayload, {
+    score: ponderScore(features),
+    pass,
+    novelty,
+    arousal,
+    hoursSinceArtifact,
+  });
+  if (!pass) return;
+
+  // Balance rule as structure: the seed schema is BUILT from the allowed
+  // classes, so a violating seed dies at validation, not at persuasion.
+  const avoid = balanceAvoid(state.recentAbouts);
+  const abouts = allowedAbouts(state.recentAbouts);
+  const recent = deps.episodes.recent(deps.cfg.contextEpisodes).map((e) => ({
+    summary: e.summary,
+    importance: e.importance,
+  }));
+
+  // No web tools exist in v1 (rule 5: absent capability = absent registration):
+  // her own episodes ARE the grounding source — verbatim extracts, never a
+  // paraphrase, with no cites to claim. An empty life gets the honest nothing.
+  const query = ponderGroundQuery(recent);
+  const grounding: GroundingObservation =
+    recent.length === 0
+      ? GROUNDING_NONE(query)
+      : {
+          source: 'none',
+          query,
+          evidence: recent.map((e) => `- [importance ${e.importance}] ${e.summary}`).join('\n'),
+          cites: [],
+        };
+  const spec = ponderCommittee({
+    context: ponderContextBlock(recent, affect, deps.affect.weather()),
+    abouts,
+    avoid,
+    grounding,
+  });
+  const turnId = newId(ctx.clock, ctx.rng);
+
+  let result: CommitteeResult;
+  try {
+    result = await runCommittee(spec, {
+      name: PONDER_COMMITTEE_NAME,
+      model: deps.model,
+      packet: await deps.ponderPacket(),
+      query: { entry: 'ponder', channels: { character: true, procedural: true } },
+      affect: deps.vec12(),
+      turnId,
+      signal: ctx.signal,
+      maxTokens: deps.cfg.committeeMaxTokens,
+      temperature: deps.cfg.committeeTemperature,
+      tier: deps.cfg.committeeTier,
+    });
+  } catch (e) {
+    await incident(ctx.events, 'ponder', 'committee', asErrorMessage(e));
+    return;
+  }
+  if (!result.ok) {
+    await incident(ctx.events, 'ponder', 'committee', result.error ?? 'ponder committee failed without an error');
+    return;
+  }
+
+  const artifact = PonderArtifactSchema.safeParse(result.artifact);
+  if (!artifact.success) {
+    // Unreachable while runCommittee re-validates spec.output; kept so a bad
+    // landing is an incident, never a half-written state.
+    const detail = artifact.error.issues.map((i) => `${i.path.map(String).join('.')}: ${i.message}`).join('; ');
+    await incident(ctx.events, 'ponder', 'artifact', `the ponder artifact failed its schema: ${detail}`);
+    return;
+  }
+
+  const seed = seedFrom(result, abouts);
+  const about = seed?.about ?? artifact.data.about;
+  const topic = seed?.topic ?? artifact.data.topic;
+  const saliency = seed?.saliency ?? artifact.data.saliency;
+  await emitLife(
+    ctx.events,
+    PONDER_SEED_EVENT,
+    PonderSeedPayload,
+    { about, topic, saliency, avoided: avoid },
+    turnId,
+  );
+
+  // The seed counts for the balance rule even when the ponder is dropped as
+  // thin — the rule is about what she chewed on, not what she kept.
+  const recentAbouts = [about, ...state.recentAbouts].slice(0, MAX_ABOUT_HISTORY);
+  if (artifact.data.artifact === 'nothing') {
+    await atomicWriteJson(statePath, {
+      version: 1,
+      recentAbouts,
+      ...(state.lastArtifactTs !== undefined ? { lastArtifactTs: state.lastArtifactTs } : {}),
+    });
+    // Dropping a thin ponder is a good outcome: no episode, and the gate stays
+    // warm (lastArtifactTs untouched).
+    await emitLife(ctx.events, PONDER_SKIPPED_EVENT, PonderSkippedPayload, { reason: 'nothing', detail: topic });
+    return;
+  }
+
+  const episodeId = newId(ctx.clock, ctx.rng);
+  await deps.episodes.append({
+    id: episodeId,
+    ts: now,
+    turnId,
+    summary: `[ponder:${artifact.data.about}] ${artifact.data.conclusion}`,
+    diaryLine:
+      `pondered ${artifact.data.topic} (${artifact.data.about}); ${artifact.data.conclusion}` +
+      (artifact.data.next === '' ? '' : ` next: ${artifact.data.next}`),
+    importance: importanceOf(artifact.data.saliency),
+    emotions: [], // no appraisal ran — a ponder is not a turn, and no emotion is invented for it
+    threads: [],
+    affectAtEncoding: Array.from(deps.vec12()),
+  });
+  await atomicWriteJson(statePath, { version: 1, recentAbouts, lastArtifactTs: now });
+  await emitLife(
+    ctx.events,
+    PONDER_ARTIFACT_EVENT,
+    PonderArtifactPayload,
+    {
+      turnId,
+      episodeId,
+      about: artifact.data.about,
+      topic: artifact.data.topic,
+      artifact: artifact.data.artifact,
+      conclusion: artifact.data.conclusion,
+      saliency: artifact.data.saliency,
+      revised: artifact.data.changed,
+    },
+    turnId,
+  );
+};
+
+export const ponderJob = (deps: LifeJobDeps): Job => ({
+  name: 'ponder',
+  cadence: { kind: 'every', ms: deps.cfg.ponderEveryMs, jitterPct: deps.cfg.jitterPct },
+  lane: 'interactive',
+  catchUp: 'skip', // pondering is a mood, not an obligation
+  timeoutMs: deps.cfg.ponderTimeoutMs,
+  run: async (ctx) => {
+    try {
+      await runPonder(deps, ctx);
+    } catch (e) {
+      await incident(ctx.events, 'ponder', 'run', asErrorMessage(e));
+    }
+  },
+});

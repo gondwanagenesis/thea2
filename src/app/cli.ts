@@ -6,10 +6,9 @@ import { emitLostReplyAlarms, type Discrepancy } from '../bridge/index.js';
 import { loadConfig } from './config.js';
 import { compose, type System } from './compose.js';
 import { startThead, type TheadHandle } from './thead.js';
+import { corpusCheckVerb, deriveVerb } from './derive-cli.js';
 
 export const NOT_BUILT: Record<string, string> = {
-  derive: 'S7',
-  'corpus:check': 'S7',
   probe: 'S8',
   import: 'S9',
 };
@@ -18,7 +17,9 @@ const USAGE = `thea2 — usage:
   thea2 thead [--config thea2.config.yaml]   run the companion process
   thea2 reconcile [--config ...]             ledger reconcile + lost-reply alarms, now
   thea2 status [--config ...]                boot and report live state
-  thea2 derive|corpus:check|probe|import     (not built yet — staged S7/S8/S9)`;
+  thea2 derive [--config ...]                spin the corpus flywheel (real model)
+  thea2 corpus:check                         hermetic derived-corpus check (no model)
+  thea2 probe|import                         (not built yet — staged S8/S9)`;
 
 export interface CliIo {
   out(s: string): void;
@@ -61,6 +62,10 @@ export const cliMain = async (
       return reconcileVerb(configPath, env, io);
     case 'status':
       return statusVerb(configPath, env, io);
+    case 'derive':
+      return deriveVerb(configPath, env, io);
+    case 'corpus:check':
+      return corpusCheckVerb(io); // hermetic: no config, no env, no model
     default:
       io.err(`unknown verb '${verb}'\n${USAGE}`);
       return 1;
@@ -103,7 +108,7 @@ const statusVerb = async (configPath: string, env: Record<string, string | undef
     io.out(`procedures    ${sys.procedures.all().length}`);
     io.out(`affect        ${sys.affect.weather()}`);
     io.out(`tg offset     ${offset.committed}`);
-    io.out(`sched jobs    0 (S5 — life/siblings land at S6/S8)`);
+    io.out(`sched jobs    ${sys.jobCount} (heartbeat, ponder)`);
     return 0;
   } finally {
     await sys.stop();

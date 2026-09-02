@@ -126,7 +126,7 @@ export const decisionOf = (over: Partial<DecisionObject> = {}): DecisionObject =
   ...over,
 });
 
-export const stamp12 = (over: Partial<Record<(typeof AFFECT_DIMS)[number], number>> = {}): Vec12 =>
+export const stamp12 = (over: Partial<Record<(typeof AFFECT_DIMS)[number], number>> = {}): number[] =>
   AFFECT_DIMS.map((d) => over[d] ?? 0);
 
 export const episodeOf = (over: Partial<Episode> = {}): Episode => ({
@@ -136,7 +136,7 @@ export const episodeOf = (over: Partial<Episode> = {}): Episode => ({
   summary: 'told him about the lemon tree graft',
   diaryLine: 'he never remembers the rootstock part',
   importance: 4,
-  emotions: [{ tag: 'playfulness', i: 3, cause: 'his forgetting again' }],
+  emotions: [{ tag: 'brat-delight', i: 3, cause: 'his forgetting again' }],
   threads: ['lemon-tree'],
   affectAtEncoding: stamp12({ valence: 0.2, joy: 0.15 }),
   ...over,

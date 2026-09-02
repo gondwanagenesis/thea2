@@ -1,7 +1,8 @@
 #!/bin/sh
 # Thea2 process entry (installed to /opt/thea2/bin/thead by install.sh).
-# Thin on purpose: the real composition root is M20's CLI (`thead` verb).
-# Fails loudly until M20 lands — that is correct behavior (no silent stubs).
+# Thin on purpose: the real composition root is M20 CLI (`thead` verb).
+# main.ts is the process entry: it self-invokes cliMain when run directly and
+# wires SIGINT/SIGTERM to a clean drain (cli.ts is a library module, no entry).
 set -eu
 cd /opt/thea2
-exec ./node_modules/.bin/tsx src/app/cli.ts thead "$@"
+exec ./node_modules/.bin/tsx src/app/main.ts thead "$@"

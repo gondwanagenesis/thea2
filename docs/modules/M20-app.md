@@ -3,7 +3,7 @@ module: M20
 name: app
 syncedTo: S5 (implemented — src/app + test/app; golden-turn + crash-replay e2e green; see "As built" at the end)
 stage: S5
-depends: [M01-kernel, M02-events, M03-model, M04-embed, M05-affect, M06-coupling, M07-corpus, M09-memory, M10-consolidate, M11-assemble, M12-inhibit, M13-loop, M14-realize, M15-bridge, M16-sched, M19-probes]
+depends: [M01-kernel, M02-events, M03-model, M04-embed, M05-affect, M06-coupling, M07-corpus, M08-derive, M09-memory, M10-consolidate, M11-assemble, M12-inhibit, M13-loop, M14-realize, M15-bridge, M16-sched, M17-life, M18-siblings, M19-probes]
 ---
 # M20 — app
 
