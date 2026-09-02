@@ -1,8 +1,8 @@
 ---
 module: M03
 name: model
-syncedTo: S1 (implemented — src/model, test/model; the structured ladder routes through the synthetic `emit` tool rung)
-stage: S1
+syncedTo: S8 (implemented — src/model, test/model; dual-protocol wire (openai + anthropic), SSE streaming on the anthropic door, structured ladder through the synthetic `emit` tool rung)
+stage: S8
 depends: [M01-kernel, M02-events]
 ---
 # M03 — model
@@ -50,6 +50,51 @@ export class MockModel implements ModelClient {
 - `seedHint` forwards as `seed` where supported; `temperature`/`maxTokens` forward verbatim.
 - MockModel: FIFO scripted responses + rule responders matched on taskClass or message regex; can script toolCalls, malformed JSON, delays, and errors; records every request; strict mode throws on an unexpected call. The real adapter's parsing layer and MockModel pass one shared conformance suite over recorded wire fixtures.
 - No streaming in v1: nothing consumes partials (bubbles are planned post-hoc by M14).
+
+## As built (S8, 2026-09-02) — the z.ai anthropic door + streaming
+Backend re-point per Diego's directive ("Z-AI GLM 5.3 flash, DO NOT USE NEURALWATT,
+use the streaming output"): `models.protocol: 'openai' | 'anthropic'` in config picks
+the wire. z.ai's OpenAI-compat door is pay-as-you-go (1113 "Insufficient balance" on
+this account); the **Anthropic-compat door** (`https://api.z.ai/api/anthropic`,
+`/v1/messages`, `x-api-key` + `anthropic-version: 2023-06-01`) is what his coding plan
+covers. Everything above the wire is protocol-blind: `buildAnthropicBody` /
+`parseAnthropicResponse` produce the same shapes the OpenAI path does.
+
+Protocol mapping (src/model/anthropic.ts):
+- `system` messages hoist to the top-level `system` string (joined `\n\n`).
+- Consecutive `role:'tool'` rows group into ONE user message of `tool_result` blocks;
+  assistant toolCalls become `tool_use` blocks.
+- Rung (a) `json_schema` does not exist on this door; the ladder's capability flags
+  keep it off, and the body builder defensively maps it to the forced-emit rung.
+- `thinking` blocks are scaffolding — dropped, never content.
+- Tool inputs arrive decoded; `malformedToolCalls` is always empty on this protocol.
+
+Streaming: the anthropic transport always sends `stream: true` and folds the SSE event
+stream (`parseAnthropicSSE`) into the same response body a non-streaming 200 gives, so
+one parser serves both. The deadline is **per-chunk idle** (each chunk must arrive
+within timeoutMs of the previous), not total — a thinking phase that keeps emitting
+never trips it; torn lines / `ping` / `[DONE]` are noise. A **total cap**
+(`streamTotalMs`, default max(timeoutMs×15, 15 min)) backs the idle deadline: a
+wedged stream that keeps dribbling keepalive bytes resets the idle race forever
+otherwise — hang live-proven (30+ min on one established socket), the cap fires
+non-retryable. A tool_use whose `input_json_delta` never parses is dropped rather
+than emitted with garbage args.
+This is model-connection streaming only: Telegram still receives finished bubbles
+(Bot API has no in-chat token streaming) — M14's typing indicator + bubble pacing
+remains the UX law.
+
+**The starvation family (live-proven, load-bearing):** GLM thinking models draw their
+reasoning trace from the SAME `max_tokens` budget as visible content. A starved call
+returns empty content / never fires the emit tool / repairs to "empty input". Every
+budget below was raised after live failures; do not lower them without a live check:
+`committeeMaxTokens` 500→2000, probe judge 512→4000, derive drafts 900→4000, derive
+judge 400→2000, consolidate generate 900→4000 + judge 300→2000, appraisal 400→2000,
+window summary 160→2000, heartbeat thought 800→2000, sibling voice passes 400→1200.
+
+Accounting note: z.ai's SSE `message_start` does not carry `input_tokens` on this
+plan, so streamed calls record `inputTokens: 0` in `model.call` usage — output
+tokens and attempts are accurate; input accounting returns with the S9 api-embedder
+work if the door starts sending it.
 
 ## Not this module's job
 - Deciding when to call or which tools exist — M13-loop owns the registry and the hops.

@@ -22,6 +22,8 @@ export interface ZaiClientDeps {
   maxRetries?: number;
   backoff?: BackoffConfig;
   capabilities?: EndpointCapabilities;
+  /** Wire protocol (default openai): 'anthropic' = z.ai coding-plan door. */
+  protocol?: 'openai' | 'anthropic';
 }
 
 export const createZaiClient = (deps: ZaiClientDeps): ModelClient =>
@@ -32,6 +34,7 @@ export const createZaiClient = (deps: ZaiClientDeps): ModelClient =>
     core: chatCore({
       router: deps.router,
       ...(deps.capabilities !== undefined ? { capabilities: deps.capabilities } : {}),
+      ...(deps.protocol !== undefined ? { protocol: deps.protocol } : {}),
       send: zaiTransport({
         apiKey: deps.apiKey,
         clock: deps.clock,
@@ -41,6 +44,7 @@ export const createZaiClient = (deps: ZaiClientDeps): ModelClient =>
         ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
         ...(deps.maxRetries !== undefined ? { maxRetries: deps.maxRetries } : {}),
         ...(deps.backoff !== undefined ? { backoff: deps.backoff } : {}),
+        ...(deps.protocol !== undefined ? { protocol: deps.protocol } : {}),
       }),
     }),
   });

@@ -48,7 +48,7 @@ export const LIFE_CONFIG_DEFAULTS: LifeConfig = {
   heartbeatTimeoutMs: 5 * MIN,
   ponderTimeoutMs: 6 * MIN,
   reflectTimeoutMs: 15 * MIN,
-  thoughtMaxTokens: 800,
+  thoughtMaxTokens: 2000, // 800 was borderline: flash thinking alone can pass 700
   thoughtTemperature: 0.7,
   committeeMaxTokens: 2000,
   committeeTemperature: 0.6,

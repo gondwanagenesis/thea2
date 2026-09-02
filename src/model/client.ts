@@ -18,6 +18,7 @@ import {
 } from './json.js';
 import type { Transport } from './transport.js';
 import { TIER_TABLE } from './tiers.js';
+import { buildAnthropicBody, parseAnthropicResponse } from './anthropic.js';
 import {
   buildWireBody,
   parseWireResponse,
@@ -26,6 +27,7 @@ import {
   schemaToJsonSchema,
   type MalformedToolCall,
   type RequestRung,
+  type WireBody,
 } from './wire.js';
 import type {
   ChatContext,
@@ -69,12 +71,24 @@ export interface CoreDeps {
   router: ModelRouter;
   send: Transport;
   capabilities?: EndpointCapabilities;
+  /** Wire protocol; default openai. Anthropic swaps the body builder + parser. */
+  protocol?: 'openai' | 'anthropic';
 }
 
 export const chatCore =
   (deps: CoreDeps): CoreChat =>
   async (req, ctx, rung) => {
     const routed = deps.router.resolve(req.taskClass, req.tier);
+    if (deps.protocol === 'anthropic') {
+      const body = buildAnthropicBody({ req, model: routed.model, rung, seedSupported: false });
+      const sent = await deps.send({ body: body as unknown as WireBody, signal: ctx?.signal });
+      return {
+        model: routed.model,
+        tier: routed.tier,
+        attempts: sent.attempts,
+        ...parseAnthropicResponse(sent.response as unknown),
+      };
+    }
     const body = buildWireBody({ req, model: routed.model, rung, seedSupported: deps.capabilities?.seed === true });
     const sent = await deps.send({ body, signal: ctx?.signal });
     return { model: routed.model, tier: routed.tier, attempts: sent.attempts, ...parseWireResponse(sent.response) };

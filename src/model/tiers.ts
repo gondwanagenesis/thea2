@@ -13,6 +13,10 @@ export const ZAI_MODEL = 'glm-5.3-flash';
 /** Z.ai OpenAI-compatible chat completions endpoint. */
 export const ZAI_ENDPOINT = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
 
+/** Z.ai Anthropic-compatible endpoint — the coding-plan door (the OpenAI door
+ * is pay-as-you-go and 1113s without balance; this one the plan covers). */
+export const ANTHROPIC_ENDPOINT = 'https://api.z.ai/api/anthropic';
+
 /** tier → model id. Config (M20) may inject a different table; this is the default. */
 export const TIER_TABLE: Record<Tier, string> = {
   main: ZAI_MODEL,

@@ -211,6 +211,7 @@ const prodModel = async (cfg: Thea2Config, sys: System): Promise<ModelClient> =>
   return createZaiClient({
     apiKey: cfg.models.apiKey,
     endpoint: cfg.models.endpoint,
+    protocol: cfg.models.protocol,
     log: sys.events,
     router: makeRouter({ log: sys.events, ...(routing.length > 0 ? { routing } : {}), tiers }),
     clock: sys.clock,

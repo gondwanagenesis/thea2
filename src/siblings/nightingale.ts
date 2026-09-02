@@ -148,7 +148,9 @@ const voicePass = async (deps: SiblingDeps, c: SiblingRunCtx, verdict: GateVerdi
         { role: 'system', content: seed },
         { role: 'user', content: voicePrompt(verdict, body) },
       ],
-      maxTokens: 400,
+      // 400 starved on flash thinking (the family-wide lesson) — headroom for a
+      // two-three-sentence opening.
+      maxTokens: 1200,
       temperature: 0.8,
     },
     { ...(c.signal !== undefined ? { signal: c.signal } : {}) },

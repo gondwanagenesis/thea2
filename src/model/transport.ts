@@ -1,14 +1,24 @@
-// M03 model — the Z.ai transport: one HTTP POST with per-call timeout, typed
+// M03 model — the wire transport: one HTTP POST with per-call timeout, typed
 // error mapping, and (spec) 2 retries on transport errors and 5xx only.
+//
+// Two protocols share the send/retry machinery:
+//  - openai    (default) — chat/completions, Bearer auth, JSON in/out.
+//  - anthropic — /v1/messages (z.ai's coding-plan door), x-api-key + version
+//    header, and STREAMING: the body is sent with stream:true and the reply is
+//    consumed as SSE, because a thinking model can hold a silent non-streaming
+//    connection past every gateway timeout on the route. The deadline is per
+//    chunk (idle), not total — deltas keep it fed, a stalled stream dies.
 //
 // Every impulse that could touch the outside world goes through an injected
 // seam: fetchImpl (tests inject a fake), Clock (timeouts + backoff sleeps), and
 // Rng (backoff jitter). The api key arrives as an injected string — M20 passes
-// process.env.ZAI_API_KEY; this module never reads env itself.
+// process.env; this module never reads env itself.
 
 import type { Clock, Rng } from '../kernel/index.js';
 import { isModelError, isRetryable, modelError } from './errors.js';
+import { parseAnthropicSSE } from './anthropic.js';
 import {
+  ANTHROPIC_ENDPOINT,
   DEFAULT_BACKOFF,
   DEFAULT_MAX_RETRIES,
   DEFAULT_TIMEOUT_MS,
@@ -17,6 +27,8 @@ import {
   type BackoffConfig,
 } from './tiers.js';
 import type { WireBody, WireResponse } from './wire.js';
+
+export type WireProtocol = 'openai' | 'anthropic';
 
 export interface TransportCall {
   body: WireBody;
@@ -40,16 +52,26 @@ export interface ZaiTransportDeps {
   fetchImpl?: typeof fetch;
   endpoint?: string;
   timeoutMs?: number;
+  /** Total wall-clock cap on one streamed reply (the dribble guard). Default
+   * max(timeoutMs*15, 15 min). */
+  streamTotalMs?: number;
   maxRetries?: number;
   backoff?: BackoffConfig;
+  protocol?: WireProtocol;
 }
 
 export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
-  // `endpoint` is the API BASE (M20's config shares it with the embedder, which
-  // appends /embeddings); the completions path is added here unless the caller
-  // already passed a full completions URL (z.ai's own default is one).
-  const raw = (deps.endpoint ?? ZAI_ENDPOINT).replace(/\/+$/, '');
-  const endpoint = raw.endsWith('/chat/completions') ? raw : `${raw}/chat/completions`;
+  const anthropic = deps.protocol === 'anthropic';
+  // `endpoint` is the API BASE (M20's config shares it with the embedder); the
+  // protocol's path is added here unless the caller already passed a full URL.
+  const raw = (deps.endpoint ?? (anthropic ? ANTHROPIC_ENDPOINT : ZAI_ENDPOINT)).replace(/\/+$/, '');
+  const endpoint = anthropic
+    ? raw.endsWith('/messages')
+      ? raw
+      : `${raw.replace(/\/v\d+$/, '')}/v1/messages`
+    : raw.endsWith('/chat/completions')
+      ? raw
+      : `${raw}/chat/completions`;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = deps.maxRetries ?? DEFAULT_MAX_RETRIES;
   const backoff = deps.backoff ?? DEFAULT_BACKOFF;
@@ -81,16 +103,28 @@ export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
       else signal?.addEventListener('abort', fire, { once: true });
     });
 
+    const wireBody =
+      anthropic
+        ? { ...body, stream: true } // SSE all the way down on this protocol
+        : body;
+
     try {
       const response = await Promise.race([
         doFetch(endpoint, {
           method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            accept: 'application/json',
-            authorization: `Bearer ${deps.apiKey}`,
-          },
-          body: JSON.stringify(body),
+          headers: anthropic
+            ? {
+                'content-type': 'application/json',
+                accept: 'text/event-stream',
+                'x-api-key': deps.apiKey,
+                'anthropic-version': '2023-06-01',
+              }
+            : {
+                'content-type': 'application/json',
+                accept: 'application/json',
+                authorization: `Bearer ${deps.apiKey}`,
+              },
+          body: JSON.stringify(wireBody),
           signal: wire.signal,
         }),
         timer,
@@ -112,12 +146,15 @@ export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
         );
       }
 
-      const text = await response.text();
-      try {
-        return JSON.parse(text) as WireResponse;
-      } catch (e) {
-        throw modelError('model/bad-json', `response body is not JSON: ${truncate(text)}`, { cause: e });
+      if (!anthropic) {
+        const text = await response.text();
+        try {
+          return JSON.parse(text) as WireResponse;
+        } catch (e) {
+          throw modelError('model/bad-json', `response body is not JSON: ${truncate(text)}`, { cause: e });
+        }
       }
+      return (await consumeSSE(response, timerGate, wire, callerAbort)) as unknown as WireResponse;
     } catch (e) {
       if (signal?.aborted) throw modelError('model/aborted', 'chat aborted by caller signal', { cause: e });
       if (isModelError(e)) throw e;
@@ -126,6 +163,82 @@ export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
       timerGate.abort(); // release the clock waiter
       signal?.removeEventListener('abort', onCallerAbort);
     }
+  };
+
+  /**
+   * Streams the SSE body under an IDLE deadline: every chunk must arrive within
+   * timeoutMs of the last, but a long thinking phase that keeps emitting never
+   * times out. A TOTAL cap backs the idle deadline: a wedged stream that still
+   * dribbles keepalive bytes would otherwise reset the idle race forever (this
+   * hang was live-proven — 30+ min on one established socket). Test fakes
+   * without a stream body degrade to response.text().
+   */
+  const consumeSSE = async (
+    response: Response,
+    outerGate: AbortController,
+    wire: AbortController,
+    callerAbort: Promise<never>,
+  ): Promise<unknown> => {
+    const streamTotalMs = deps.streamTotalMs ?? Math.max(timeoutMs * 15, 900_000);
+    // One outer-gate listener, many timers: each armed timer swaps itself into
+    // `activeGates` so the outer abort kills whatever is pending — without
+    // accumulating a listener per streamed chunk.
+    const activeGates = new Set<AbortController>();
+    const outerKill = (): void => {
+      for (const g of activeGates) g.abort();
+    };
+    outerGate.signal.addEventListener('abort', outerKill, { once: true });
+    const armTimer = (ms: number, label: 'timeout' | 'total'): Promise<'timeout' | 'total'> => {
+      const gate = new AbortController();
+      activeGates.add(gate);
+      const t = deps.clock
+        .waitUntil(deps.clock.epochMs() + ms, gate.signal)
+        .then(
+          () => label,
+          () => new Promise<'timeout' | 'total'>(() => undefined),
+        )
+        .finally(() => {
+          activeGates.delete(gate);
+        });
+      return t;
+    };
+    const idleRace = (): Promise<'timeout'> => armTimer(timeoutMs, 'timeout') as Promise<'timeout'>;
+    const totalRace = armTimer(streamTotalMs, 'total');
+    const body = response.body;
+    if (body === null || typeof (body as { getReader?: unknown }).getReader !== 'function') {
+      const text = await Promise.race([response.text(), idleRace(), callerAbort]);
+      if (text === 'timeout') {
+        wire.abort();
+        throw modelError('model/timeout', `sse body stalled within ${timeoutMs} ms`, { retryable: true });
+      }
+      return parseAnthropicSSE(text as string);
+    }
+    const reader = (body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let sse = '';
+    try {
+      for (;;) {
+        const next = await Promise.race([reader.read(), idleRace(), totalRace, callerAbort]);
+        if (next === 'timeout') {
+          wire.abort();
+          throw modelError('model/timeout', `sse stream idle beyond ${timeoutMs} ms`, { retryable: true });
+        }
+        if (next === 'total') {
+          wire.abort();
+          // Not retryable: a 15-minute dead stream re-asked is 15 more minutes
+          // of dead — surface it and let the caller decide.
+          throw modelError('model/timeout', `sse stream exceeded the ${Math.round(streamTotalMs / 1000)}s total cap`, {
+            retryable: false,
+          });
+        }
+        if (next.done) break;
+        sse += decoder.decode(next.value, { stream: true });
+      }
+      sse += decoder.decode();
+    } finally {
+      reader.releaseLock();
+    }
+    return parseAnthropicSSE(sse);
   };
 
   return async (call) => {

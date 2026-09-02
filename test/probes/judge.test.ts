@@ -57,7 +57,10 @@ describe('runJudge — request shape and prompt contents', () => {
     expect(first?.taskClass).toBe('probe-judge');
     expect(first?.tier).toBe('reasoning');
     expect(first?.temperature).toBe(0);
-    expect(first?.maxTokens).toBe(512);
+    // Thinking models draw reasoning from the same budget as the visible answer:
+    // 512 starved the judge live on glm-5.3 (empty content → repair → parse-fail);
+    // 4000 is the headroom a dropped grade justifies.
+    expect(first?.maxTokens).toBe(4000);
     expect(first?.schemaName).toBe('probe-judge');
     expect(first?.seedHint).toBe(41); // seed + run index
     expect(model.calls[1]?.seedHint).toBe(42);

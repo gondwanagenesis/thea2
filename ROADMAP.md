@@ -1,6 +1,6 @@
 ---
 title: Thea2 — Roadmap
-syncedTo: S8 (S0–S8 landed — see docs/modules/*/ "As built"; 1485 tests, five gates green; S9 optional, not built)
+syncedTo: S8 (S0–S8 landed — see docs/modules/*/ "As built"; 1497 tests, five gates green; backend = z.ai anthropic door per Diego 2026-09-02; S9 optional, not built)
 date: 2026-09-02
 ---
 

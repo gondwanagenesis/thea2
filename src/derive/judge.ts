@@ -74,7 +74,9 @@ export const gradeDraft = async (judgeModel: ModelClient, req: GradeRequest): Pr
     ],
     schema: JudgeVerdict,
     schemaName: 'derive_judge_verdict',
-    maxTokens: 400,
+    // 400 starved live on glm-5.3 (thinking ate the budget before the verdict) —
+    // same starvation family as generateDraft above.
+    maxTokens: 2000,
     temperature: 0,
   });
   return { verdict: res.content, model: res.model };

@@ -131,8 +131,12 @@ export const ConsolidatedDraft = z.object({
 });
 export type ConsolidatedDraft = z.infer<typeof ConsolidatedDraft>;
 
-/** A scene body plus its frontmatter is well under a thousand tokens. */
-export const GENERATE_MAX_TOKENS = 900;
+/**
+ * A scene body plus its frontmatter is well under a thousand tokens — but the
+ * budget also has to carry the model's thinking trace, which draws from the
+ * same pool (the live-proven starvation; 900 produced empty drafts on glm).
+ */
+export const GENERATE_MAX_TOKENS = 4000;
 export const GENERATE_TEMPERATURE = 0;
 
 export interface GenerateRequest {
@@ -211,7 +215,7 @@ export const JudgeVerdict = z.object({
 export type JudgeVerdict = z.infer<typeof JudgeVerdict>;
 
 export const JUDGE_VERSION = 'consolidate-judge-v1';
-export const JUDGE_MAX_TOKENS = 300;
+export const JUDGE_MAX_TOKENS = 2000; // 300 starved live: thinking ate it before any verdict
 /** Minimum judge score (1-5) a draft needs to be written. */
 export const JUDGE_THRESHOLD = 4;
 

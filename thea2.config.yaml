@@ -4,13 +4,16 @@
 #
 # sync'd with src/app/config.ts schema (M20). Unknown keys are rejected.
 models:
-  # Neuralwatt (OpenAI-compatible) — 2026-09-02. Diego's z.ai keys are dead
-  # (2x insufficient balance, 1x expired); Neuralwatt is Thea1's proven backend.
-  endpoint: https://api.neuralwatt.com/v1
+  # Z.ai GLM — Diego's pinned backend, re-confirmed 2026-09-02 ("I WANT TO USE
+  # Z-AI GLM 5.3 flash! DO NOT USE NEURALWATT"). The OpenAI-compat door is
+  # pay-as-you-go and 1113s on this account; the ANTHROPIC-compat door is what
+  # his coding plan covers, so the wire protocol is anthropic + streaming SSE.
+  endpoint: https://api.z.ai/api/anthropic
+  protocol: anthropic
   tiers:
-    main: glm-5.3          # her voice — the glm family Diego pinned
-    cheap: deepseek-v4-flash # appraisals + heartbeat thoughts (fast, tools verified)
-    reasoning: glm-5.3
+    main: glm-5.3-flash     # her voice — fast tier, Diego's explicit pick
+    cheap: glm-5.3-flash    # appraisals + heartbeat thoughts (flash IS the cheap door)
+    reasoning: glm-5.3      # the judge — full model; the plan covers both
 bridge:
   # Diego's telegram chat id — the ONLY chat the bridge answers. Filled from
   # the first live getUpdates poll (2026-09-02, NEOGEO private chat).

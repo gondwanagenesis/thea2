@@ -73,7 +73,10 @@ export const generateDraft = async (
       { role: 'system', content: req.system },
       { role: 'user', content: req.user },
     ],
-    maxTokens: 900,
+    // Thinking models draw reasoning from the same budget as the visible
+    // answer: 900 starved 106/106 drafts live (empty bodies — see also the
+    // committeeMaxTokens and probe-judge starvation notes).
+    maxTokens: 4000,
     temperature: 0.9,
   };
   const res = await deps.model.chat(chatReq);

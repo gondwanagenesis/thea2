@@ -119,3 +119,22 @@ Module surface (the barrel re-exports everything below except `render.ts`, which
 - `drift.test.ts` (11) — centroid geometry exact under FixedEmbedder, canon-only filter at the index seam, multi-bubble centroid, median over runs, embed batching order.
 - `baseline.test.ts` (14) — three gate rules + boundary table, red>yellow, null-silence, suite worst-verdict, baseline load/write/versioning, disk round-trip.
 - `runner.test.ts` (13) — dry boot with strict MockModel (zero calls), deterministic rot reddens, `probes/no-transcript`, recorded targets off disk + msgId base, scripted feed on the injected clock (waitUntil dues), heartbeat feeds nothing, `probes/target-shape`, `probes/no-judge-model`, live judge+drift accounting, runAll selection + gating, and the real `probes/` directory end-to-end dry.
+
+## As built (S8, 2026-09-02) — live-run traps, paid for
+- **The allowlist wall**: the runner stamps scripted inbound with `PROBE_CHAT_ID`
+  (7000001), and the REAL pipeline `chat_denies` any chat outside
+  `bridge.allowedChatIds` (M20's composition). A live run against a composed
+  system therefore feeds a wall — turns never execute, `outbound()` reads empty,
+  the judge grades "(Thea did not reply)" at 1.00 and every deterministic count
+  reads 0. Hermetic tests never see it (their targets are fakes that bypass the
+  pipeline). Live scratch law: `cfg.bridge.allowedChatIds = [PROBE_CHAT_ID]`.
+- **k-run independence**: the runner calls the target selector once per executed
+  run, but a composed system ACCUMULATES (channel history, episodes, ledger). A
+  shared live target turned k=3 into one growing transcript — bubble counts
+  5→10→15, and by run 3 she had noticed the replays in her own memory ("you've
+  now told me that twice"). Baseline of record requires a fresh system per run
+  (the scratch pre-composes k×probes systems and pops one per call).
+- **bubbleCount 1..4 → 1..5** (`voice-cold-open`): the live healthy run is 5
+  tight bubbles (judge median 5.00, variance 0.099); the cap was calibrated to
+  the evidence, intent unchanged (she does not lecture — and 5 short ones didn't).
+- Judge `maxTokens` follows the M03 starvation family (512 → 4000, see M03).

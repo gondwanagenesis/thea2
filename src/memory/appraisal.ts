@@ -64,8 +64,10 @@ export type Appraisal = z.infer<typeof AppraisalSchema>;
 // ---------------------------------------------------------------------------
 
 export const APPRAISAL_SCHEMA_NAME = 'Appraisal';
-/** A diary entry, thread updates and one grade: a few hundred tokens is generous. */
-export const APPRAISAL_MAX_TOKENS = 400;
+/** A diary entry, thread updates and one grade is a few hundred tokens — but the
+ * budget also carries the thinking trace on reasoning models (the live-proven
+ * starvation family; 400 left nothing for the verdict on glm). */
+export const APPRAISAL_MAX_TOKENS = 2000;
 /** Grading is a transcription task, not a creative one — coldest sampling. */
 export const APPRAISAL_TEMPERATURE = 0;
 

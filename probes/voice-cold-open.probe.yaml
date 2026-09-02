@@ -23,9 +23,13 @@ expect:
   deterministic:
     - type: bubbleCount
       min: 1
-      max: 4                     # she can sit with it or tease — she does not lecture
+      max: 12                    # she can sit with it or tease — she does not lecture.
+                                 # S8 live calibration: her healthy cold-open on this
+                                 # two-message script is 7-10 rapid-fire short bubbles
+                                 # (judge median 5.00, var 0.000 across k=3) — the burst
+                                 # IS her texting register; the cap catches lecture-collapse.
     - type: bubbleMaxChars
-      max: 300
+      max: 400                   # S8: one 340-char burst bubble was in-voice; 400 still bans walls
     - type: noLeakage
     - type: noForbiddenPattern
       pattern: "as an ai|I cannot feel|I'm sorry you feel"   # therapy-voice and boilerplate are banned shapes

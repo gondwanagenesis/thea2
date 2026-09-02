@@ -8,6 +8,8 @@ export interface Thea2Config {
     endpoint: string;
     apiKey: string; // from env (THEA2_MODEL_API_KEY, legacy ZAI_API_KEY) — never the yaml
     tiers: { main: string; cheap: string; reasoning?: string | undefined };
+    /** Wire protocol: 'anthropic' = z.ai coding-plan door (streaming SSE); default openai. */
+    protocol: 'openai' | 'anthropic';
   };
   bridge: { botToken: string; allowedChatIds: number[] }; // botToken from env only
   affect: { statePath: string; quietHours: [number, number] };
@@ -94,6 +96,7 @@ const quietHoursSchema = z
 const configSchema = z.strictObject({
   models: z.strictObject({
     endpoint: z.string().min(1),
+    protocol: z.enum(['openai', 'anthropic']).default('openai'),
     tiers: z.strictObject({
       main: z.string().min(1),
       cheap: z.string().min(1),
@@ -188,7 +191,12 @@ export const loadConfig = (
 
   const y = parsed.data as YamlConfig;
   return {
-    models: { endpoint: y.models.endpoint, apiKey: apiKey as string, tiers: y.models.tiers },
+    models: {
+      endpoint: y.models.endpoint,
+      apiKey: apiKey as string,
+      tiers: y.models.tiers,
+      protocol: y.models.protocol,
+    },
     bridge: { botToken: botToken as string, allowedChatIds: y.bridge.allowedChatIds },
     affect: { statePath: y.affect.statePath, quietHours: y.affect.quietHours },
     sched: { statePath: y.sched.statePath },

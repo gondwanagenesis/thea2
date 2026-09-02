@@ -33,7 +33,9 @@ export const WINDOW_SUMMARY_SPAN = 20;
 export const SESSION_BREAK_MS = 4 * HOURS;
 
 // Summarizer call shape (cheap tier, plain text — no schema worth a ladder).
-export const SUMMARY_MAX_TOKENS = 160;
+// 160 is the visible-answer size; thinking models burn budget before any text,
+// so the call carries headroom (the live-proven starvation family).
+export const SUMMARY_MAX_TOKENS = 2000;
 export const SUMMARY_TEMPERATURE = 0;
 export const SUMMARY_TASK_CLASS = 'summarize' as const;
 

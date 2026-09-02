@@ -98,7 +98,12 @@ export const runJudge = async (
         ],
         schema,
         schemaName: 'probe-judge',
-        maxTokens: 512,
+        // Thinking models draw their reasoning from the same budget as the
+        // visible answer: 512 was eaten entirely by the thinking trace (the
+        // live-proven starvation — see also committeeMaxTokens). 2000 died once
+        // more on a live run (emit never fired, repair came back empty), so the
+        // judge carries headroom: a dropped grade costs a whole suite re-run.
+        maxTokens: 4000,
         temperature: 0,
         seedHint: deps.seed + i,
       },

@@ -133,7 +133,7 @@ describe('the Ledger report from a replayed event fixture', () => {
     const req = h.model.calls[0]!;
     expect(req.taskClass).toBe('summarize');
     expect(req.tier).toBe('cheap');
-    expect(req.maxTokens).toBe(400);
+    expect(req.maxTokens).toBe(1200);
     expect(req.temperature).toBe(0.8);
     expect(req.messages[0]?.role).toBe('system');
     expect(req.messages[0]?.content).toBe('fixture ledger seed');
