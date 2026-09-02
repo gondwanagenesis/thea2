@@ -108,7 +108,7 @@ const statusVerb = async (configPath: string, env: Record<string, string | undef
     io.out(`procedures    ${sys.procedures.all().length}`);
     io.out(`affect        ${sys.affect.weather()}`);
     io.out(`tg offset     ${offset.committed}`);
-    io.out(`sched jobs    ${sys.jobCount} (heartbeat, ponder)`);
+    io.out(`sched jobs    ${sys.jobCount} (heartbeat, ponder, reflect)`);
     return 0;
   } finally {
     await sys.stop();

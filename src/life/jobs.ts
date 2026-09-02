@@ -43,6 +43,8 @@ import {
   PonderGatePayload,
   PonderSeedPayload,
   PonderSkippedPayload,
+  REFLECTED_EVENT,
+  ReflectedPayload,
   emitLife,
 } from './events.js';
 import type { LifeConfig } from './config.js';
@@ -95,6 +97,22 @@ export interface LifeJobDeps {
   vec12: () => Vec12;
   /** A minimal LoopPacket for the ponder committee env (compose closes over the real assembler — async, so the provider is). */
   ponderPacket: () => Promise<LoopPacket>;
+  /**
+   * The M10 consolidators, closed over their deps by compose. Life only needs
+   * the verdict vocabulary of `life.reflected` — the full report stays M10's,
+   * and this module never imports consolidate (the DAG stays a DAG).
+   */
+  reflect: (kind: 'nightly' | 'weekly') => Promise<ReflectOutcome>;
+}
+
+/** The verdict vocabulary of `life.reflected`. 'absent' = the run had nothing
+ * in its window — the flywheel had nothing to chew, which is not a failure. */
+export type ReflectVerdict = 'ok' | 'failed' | 'absent';
+
+export interface ReflectOutcome {
+  verdict: ReflectVerdict;
+  /** Whether the nightly status projection (var/reports/status.md) landed. */
+  projection: 'ok' | 'failed';
 }
 
 const HOUR = 3_600_000;
@@ -488,6 +506,112 @@ export const ponderJob = (deps: LifeJobDeps): Job => ({
       await runPonder(deps, ctx);
     } catch (e) {
       await incident(ctx.events, 'ponder', 'run', asErrorMessage(e));
+    }
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Reflect — the nightly L2 consolidation (+ the weekly L3 riding one pass)
+// ---------------------------------------------------------------------------
+
+export interface ReflectJobState {
+  version: 1;
+  /** When the weekly L3 last ran (epoch ms), so one day-of-week fires it once. */
+  lastWeeklyTs?: number | undefined;
+}
+
+const readReflectState = async (filePath: string): Promise<ReflectJobState> => {
+  try {
+    const raw = JSON.parse(await fsp.readFile(filePath, 'utf8')) as unknown;
+    if (typeof raw !== 'object' || raw === null) return { version: 1 };
+    const o = raw as Record<string, unknown>;
+    return {
+      version: 1,
+      ...(typeof o['lastWeeklyTs'] === 'number' && Number.isFinite(o['lastWeeklyTs'])
+        ? { lastWeeklyTs: o['lastWeeklyTs'] }
+        : {}),
+    };
+  } catch {
+    return { version: 1 }; // corrupt = zero state, never a crash
+  }
+};
+
+/** The day's affect digest: the tags applied by `affect.applied` over the window. */
+const affectDailyDigest = async (
+  events: EventLog,
+  sinceTs: number,
+  untilTs: number,
+): Promise<ReflectedPayload['affectDaily']> => {
+  const tags: Record<string, number> = {};
+  let emotionEvents = 0;
+  for await (const e of events.replay({ kinds: ['affect.applied'], sinceTs })) {
+    emotionEvents += 1;
+    for (const tag of (e.payload as { tags?: readonly string[] }).tags ?? []) {
+      tags[tag] = (tags[tag] ?? 0) + 1;
+    }
+  }
+  const topTags = Object.entries(tags)
+    .sort((a, b) => (b[1] !== a[1] ? b[1] - a[1] : a[0] < b[0] ? -1 : 1))
+    .slice(0, 3)
+    .map(([tag]) => tag);
+  return { sinceTs, untilTs, emotionEvents, tags, topTags };
+};
+
+const runReflect = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
+  const now = ctx.clock.epochMs();
+  const statePath = path.join(deps.stateDir, 'reflect.json');
+  let state = await readReflectState(statePath);
+
+  // Nightly L2 — the credit pass, the pattern crystallizer, the status
+  // projection. The provider maps M10's report to the verdict vocabulary;
+  // a throw is a failed nightly, never a failed job.
+  let nightly: ReflectVerdict = 'failed';
+  let projection: 'ok' | 'failed' = 'failed';
+  try {
+    const outcome = await deps.reflect('nightly');
+    nightly = outcome.verdict;
+    projection = outcome.projection;
+  } catch (e) {
+    await incident(ctx.events, 'reflect', 'nightly', asErrorMessage(e));
+  }
+
+  // Weekly L3 — rides the configured day-of-week's pass, once per week even
+  // across restarts (the persisted stamp, not process memory). Day-of-week is
+  // arithmetic on the clock's epoch (day 0 was a Thursday), never a wall-clock
+  // Date — the determinism law runs inside job bodies too.
+  const DAY = HOUR * 24;
+  const dow = (Math.floor(now / DAY) + 4) % 7; // 0 = Sunday
+  const weeklyDue =
+    dow === deps.cfg.reflectWeeklyDow &&
+    (state.lastWeeklyTs === undefined || now - state.lastWeeklyTs >= 6 * DAY);
+  if (weeklyDue) {
+    try {
+      await deps.reflect('weekly');
+      state = { ...state, lastWeeklyTs: now };
+      await atomicWriteJson(statePath, state);
+    } catch (e) {
+      await incident(ctx.events, 'reflect', 'weekly', asErrorMessage(e));
+    }
+  }
+
+  await emitLife(ctx.events, REFLECTED_EVENT, ReflectedPayload, {
+    nightly,
+    statusProjection: projection,
+    affectDaily: await affectDailyDigest(ctx.events, now - DAY, now),
+  });
+};
+
+export const reflectJob = (deps: LifeJobDeps): Job => ({
+  name: 'reflect',
+  cadence: { kind: 'daily', utcMinute: deps.cfg.reflectUtcMinute },
+  lane: 'maintenance', // an obligation, not a mood: catch-up passes do run
+  catchUp: 'once',
+  timeoutMs: deps.cfg.reflectTimeoutMs,
+  run: async (ctx) => {
+    try {
+      await runReflect(deps, ctx);
+    } catch (e) {
+      await incident(ctx.events, 'reflect', 'run', asErrorMessage(e));
     }
   },
 });

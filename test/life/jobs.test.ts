@@ -28,19 +28,23 @@ import {
   PONDER_GATE_EVENT,
   PONDER_SEED_EVENT,
   PONDER_SKIPPED_EVENT,
+  REFLECTED_EVENT,
   HeartbeatPrePayload,
   HeartbeatThoughtPayload,
   PonderArtifactPayload,
   PonderGatePayload,
+  ReflectedPayload,
 } from '../../src/life/events.js';
 import { HEARTBEAT_THRESHOLD } from '../../src/life/policy.js';
 import { resolveLifeConfig, type LifeConfig } from '../../src/life/config.js';
 import {
   heartbeatJob,
   ponderJob,
+  reflectJob,
   type HeartbeatJobState,
   type LifeJobDeps,
   type PonderJobState,
+  type ReflectOutcome,
 } from '../../src/life/jobs.js';
 import {
   T0,
@@ -145,6 +149,9 @@ interface Harness {
   selfEntries: SelfEntryCall[];
   appended: EpisodeRecord[];
   packetCalls: () => number;
+  reflectCalls: Array<'nightly' | 'weekly'>;
+  setReflect: (impl: (kind: 'nightly' | 'weekly') => Promise<ReflectOutcome>) => void;
+  reflectPath: string;
 }
 
 const harness = (over: {
@@ -162,6 +169,11 @@ const harness = (over: {
   const ep = fakeEpisodes(over.episodes);
   const selfEntries: SelfEntryCall[] = [];
   let packetCalls = 0;
+  const reflectCalls: Array<'nightly' | 'weekly'> = [];
+  let reflectImpl: (kind: 'nightly' | 'weekly') => Promise<ReflectOutcome> = async () => ({
+    verdict: 'ok',
+    projection: 'ok',
+  });
   const stateDir = tmpDir();
   const deps: LifeJobDeps = {
     model,
@@ -185,6 +197,10 @@ const harness = (over: {
       packetCalls += 1;
       return fakePacket();
     },
+    reflect: async (kind) => {
+      reflectCalls.push(kind);
+      return reflectImpl(kind);
+    },
   };
   return {
     deps,
@@ -197,6 +213,11 @@ const harness = (over: {
     selfEntries,
     appended: ep.appended,
     packetCalls: () => packetCalls,
+    reflectCalls,
+    setReflect: (impl) => {
+      reflectImpl = impl;
+    },
+    reflectPath: path.join(stateDir, 'reflect.json'),
   };
 };
 
@@ -544,5 +565,87 @@ describe('ponderJob — through the committee to a landed artifact', () => {
     expect(state.recentAbouts).toEqual(['world']); // the balance history still moved
     expect('lastArtifactTs' in state).toBe(false); // the gate cools on real artifacts only
     expect(h.log.kinds()).not.toContain(PONDER_ARTIFACT_EVENT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reflectJob — the nightly M10 ride (+ the weekly L3 on its day)
+// ---------------------------------------------------------------------------
+
+describe('reflectJob — the M16 job shape', () => {
+  it('names itself reflect: daily at the cfg minute, maintenance lane, catch-up once, cfg timeout', () => {
+    const h = harness({ cfg: { reflectUtcMinute: 200, reflectTimeoutMs: 60_000 } });
+    const job = reflectJob(h.deps);
+    expect(job.name).toBe('reflect');
+    expect(job.cadence).toEqual({ kind: 'daily', utcMinute: 200 });
+    expect(job.lane).toBe('maintenance');
+    expect(job.catchUp).toBe('once');
+    expect(job.timeoutMs).toBe(60_000);
+  });
+});
+
+describe('reflectJob — the body', () => {
+  it('runs the nightly once, folds the window affect.applied tags into the digest, and lands life.reflected', async () => {
+    const h = harness();
+    h.log.rows.push({ seq: 1, ts: T0 - 2 * HOUR, kind: 'affect.applied', payload: { moved: {}, tags: ['brat-delight'] } });
+    h.log.rows.push({ seq: 2, ts: T0 - HOUR, kind: 'affect.applied', payload: { moved: {}, tags: ['brat-delight', 'tenderness'] } });
+    h.log.rows.push({ seq: 3, ts: T0 - 30 * HOUR, kind: 'affect.applied', payload: { moved: {}, tags: ['outside-window'] } });
+
+    await reflectJob(h.deps).run(jobCtx(h));
+
+    expect(h.reflectCalls).toEqual(['nightly']);
+    const reflected = h.log.of(REFLECTED_EVENT)[0]?.payload as ReflectedPayload;
+    expect(reflected.nightly).toBe('ok');
+    expect(reflected.statusProjection).toBe('ok');
+    expect(reflected.affectDaily.emotionEvents).toBe(2); // the 30h-old row is outside the window
+    expect(reflected.affectDaily.tags).toEqual({ 'brat-delight': 2, tenderness: 1 });
+    expect(reflected.affectDaily.topTags).toEqual(['brat-delight', 'tenderness']);
+  });
+
+  it('a throwing nightly lands nightly failed + the incident, and the reflected event still emits', async () => {
+    const h = harness();
+    h.setReflect(async () => {
+      throw new Error('consolidate exploded');
+    });
+
+    await reflectJob(h.deps).run(jobCtx(h));
+
+    const reflected = h.log.of(REFLECTED_EVENT)[0]?.payload as ReflectedPayload;
+    expect(reflected.nightly).toBe('failed');
+    expect(reflected.statusProjection).toBe('failed');
+    const inc = h.log.of(LIFE_INCIDENT)[0]?.payload as { job: string; stage: string; error: string };
+    expect(inc).toMatchObject({ job: 'reflect', stage: 'nightly', error: 'consolidate exploded' });
+  });
+
+  it('the weekly rides only the configured day-of-week, stamps reflect.json, and fires once per week', async () => {
+    const h = harness({ cfg: { reflectWeeklyDow: 0 } }); // Sunday
+    const dow = (Math.floor(T0 / (24 * HOUR)) + 4) % 7; // T0 is a Tuesday; 0 = Sunday
+    const toSunday = ((7 - dow) % 7) * 24 * HOUR;
+
+    await reflectJob(h.deps).run(jobCtx(h));
+    expect(h.reflectCalls).toEqual(['nightly']); // midweek: no weekly
+    expect(fs.existsSync(h.reflectPath)).toBe(false);
+
+    h.clock.advance(toSunday);
+    await reflectJob(h.deps).run(jobCtx(h));
+    expect(h.reflectCalls).toEqual(['nightly', 'nightly', 'weekly']);
+    const stamp = (await readJson(h.reflectPath)) as { lastWeeklyTs?: number };
+    expect(stamp.lastWeeklyTs).toBe(h.clock.epochMs());
+
+    h.clock.advance(HOUR); // later the same Sunday: the stamp suppresses a second weekly
+    await reflectJob(h.deps).run(jobCtx(h));
+    expect(h.reflectCalls.filter((k) => k === 'weekly')).toHaveLength(1);
+  });
+
+  it('a corrupt reflect.json is a zero state: the weekly fires, nothing throws', async () => {
+    const h = harness({ cfg: { reflectWeeklyDow: 2 } }); // T0 IS a Tuesday (dow 2)
+    await seedState(h.reflectPath, '{not json');
+    h.setReflect(async (kind) => (kind === 'weekly' ? { verdict: 'absent', projection: 'ok' } : { verdict: 'absent', projection: 'ok' }));
+
+    await reflectJob(h.deps).run(jobCtx(h));
+
+    expect(h.reflectCalls).toEqual(['nightly', 'weekly']);
+    const reflected = h.log.of(REFLECTED_EVENT)[0]?.payload as ReflectedPayload;
+    expect(reflected.nightly).toBe('absent');
   });
 });

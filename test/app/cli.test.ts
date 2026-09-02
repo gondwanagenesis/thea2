@@ -92,7 +92,7 @@ describe('cli', () => {
       expect(t.out).toContain('corpus');
       expect(t.out).toContain('episodes');
       expect(t.out).toContain('tg offset');
-      expect(t.out).toContain('sched jobs    2'); // S6: heartbeat + ponder wire on every real boot
+      expect(t.out).toContain('sched jobs    3'); // S6/S7: heartbeat + ponder + reflect wire on every real boot
     } finally {
       process.chdir(cwd);
     }

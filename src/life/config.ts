@@ -14,13 +14,19 @@ export interface LifeConfig {
   jitterPct: number;
   /** Nightly reflection fire (spec: nightly, catchUp 'once'); minutes past UTC midnight. */
   reflectUtcMinute: number;
+  /** The UTC day-of-week the weekly L3 consolidator rides the nightly pass (0 = Sunday). */
+  reflectWeeklyDow: number;
   heartbeatTimeoutMs: number;
   ponderTimeoutMs: number;
   reflectTimeoutMs: number;
-  /** The private heartbeat-thought call (cheap-tier, structured ladder). */
+  /** The private heartbeat-thought call (cheap-tier, structured ladder). Sized
+   * for reasoning models: the thinking trace draws from the same budget as the
+   * visible content, and a starved call returns empty text (live-proven). */
   thoughtMaxTokens: number;
   thoughtTemperature: number;
-  /** Committee node calls (main-tier, prompted JSON — M13 nodes are tool-less). */
+  /** Committee node calls (main-tier, prompted JSON — M13 nodes are tool-less).
+   * Same reasoning-budget caveat as thoughtMaxTokens: 500 starved glm-5.3's
+   * seed node into empty output on the first live ponder. */
   committeeMaxTokens: number;
   committeeTemperature: number;
   /** Recent episodes rendered into her private context blocks. */
@@ -38,12 +44,13 @@ export const LIFE_CONFIG_DEFAULTS: LifeConfig = {
   ponderEveryMs: 20 * MIN,
   jitterPct: 10,
   reflectUtcMinute: 180, // 03:00 UTC — inside quiet hours, matches the M16 week fixture
+  reflectWeeklyDow: 0, // Sunday — the weekly L3 rides the Sunday-night pass
   heartbeatTimeoutMs: 5 * MIN,
   ponderTimeoutMs: 6 * MIN,
   reflectTimeoutMs: 15 * MIN,
-  thoughtMaxTokens: 400,
+  thoughtMaxTokens: 800,
   thoughtTemperature: 0.7,
-  committeeMaxTokens: 500,
+  committeeMaxTokens: 2000,
   committeeTemperature: 0.6,
   contextEpisodes: 8,
   thoughtTier: 'cheap',

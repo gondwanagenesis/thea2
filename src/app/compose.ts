@@ -48,9 +48,16 @@ import { createToolRegistry, resolveLoopConfig, type LoopConfig, type ToolRegist
 import type { FakeChannelExtras, Channel, MessageLedger, OffsetStore } from '../bridge/index.js';
 import { openMessageLedger, openOffsetStore, telegramChannel, FakeChannel } from '../bridge/index.js';
 import { startScheduler, type Job, type SchedulerHandle } from '../sched/index.js';
-import { heartbeatJob, ponderJob, type LifeJobDeps } from '../life/jobs.js';
+import { heartbeatJob, ponderJob, reflectJob, type LifeJobDeps } from '../life/jobs.js';
 import { resolveLifeConfig } from '../life/config.js';
 import { readRoutingTable } from '../siblings/index.js';
+import {
+  consolidateNightly,
+  consolidateWeekly,
+  nightlyConfig,
+  WEEK_MS,
+  type ConsolidateDeps,
+} from '../consolidate/index.js';
 import type { ProbeTarget } from '../probes/index.js';
 import { makePipeline, type Pipeline } from './pipeline.js';
 import { makeEmbedder } from './embedder.js';
@@ -288,12 +295,35 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   if (opts.jobs === undefined) {
     const stateDir = path.resolve(paths.base, 'var', 'life');
     fs.mkdirSync(stateDir, { recursive: true });
+    // M10's consolidators ride the nightly reflect job: same model client
+    // (taskClass routes the tier), the composed corpus, and L0 itself as the
+    // replay. Writes land in corpus/lived + corpus/proposals + var only —
+    // the M10 prod-safety law, enforced by the paths handed in here.
+    const consolidatePaths = {
+      livedDir: path.resolve(canon, '..', 'lived'),
+      proposalsDir: path.resolve(canon, '..', 'proposals'),
+      reportsDir: v('var/reports'),
+    };
+    fs.mkdirSync(consolidatePaths.reportsDir, { recursive: true });
+    fs.mkdirSync(v('var/credit'), { recursive: true });
+    const consolidateDeps: ConsolidateDeps = {
+      model,
+      episodes,
+      corpus,
+      affectHistory: events,
+      creditPath: v('var/credit/weights.json'),
+      events,
+      clock,
+      rng: rng.fork('consolidate'),
+      cfg: nightlyConfig(consolidatePaths, Math.floor(clock.epochMs() / WEEK_MS)),
+    };
+    const lifeCfg = resolveLifeConfig({ quietHours: cfg.affect.quietHours });
     const lifeDeps: LifeJobDeps = {
       model,
       events,
       affect,
       episodes,
-      cfg: resolveLifeConfig({ quietHours: cfg.affect.quietHours }),
+      cfg: lifeCfg,
       interactiveMutex: conversationActive,
       lastInboundTs: () => pipeline.lastInboundAtMs(),
       selfEntry: (kind, goal) => pipeline.selfEntry(kind, goal),
@@ -313,8 +343,21 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
           makeAssembleDeps(),
         );
       },
+      // M10's report maps to the life verdict vocabulary here, at the seam:
+      // 'absent' when the window had no episodes, 'ok' when the run landed,
+      // and the projection rides the report's own verdict.
+      reflect: async (kind) => {
+        const run = kind === 'nightly'
+          ? consolidateNightly(consolidateDeps)
+          : consolidateWeekly({ ...consolidateDeps, cfg: { ...consolidateDeps.cfg, windowMs: WEEK_MS } });
+        const report = await run;
+        return {
+          verdict: report.episodesConsidered === 0 ? 'absent' : report.ok ? 'ok' : 'failed',
+          projection: report.ok ? 'ok' : 'failed',
+        };
+      },
     };
-    jobs = [heartbeatJob(lifeDeps), ponderJob(lifeDeps)];
+    jobs = [heartbeatJob(lifeDeps), ponderJob(lifeDeps), reflectJob(lifeDeps)];
   }
   const sched = startScheduler(jobs, {
     clock,
