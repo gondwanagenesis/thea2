@@ -1,7 +1,7 @@
 ---
 module: M17
 name: life
-syncedTo: S6 (implemented — src/life + test/life, 120 tests; thought wire-schema fix landed with the suite)
+syncedTo: S6 complete (implemented — src/life + test/life, 145 tests; the reflect job wires M10's consolidators through a compose-side provider — src/life never imports src/consolidate)
 stage: S6
 depends: [M01-kernel, M02-events, M03-model, M05-affect, M09-memory, M13-loop, M16-sched]
 ---

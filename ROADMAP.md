@@ -1,6 +1,6 @@
 ---
 title: Thea2 — Roadmap
-syncedTo: S5 (S0–S5 landed — see docs/modules/*/ "As built"; 1456 tests, five gates green)
+syncedTo: S8 (S0–S8 landed — see docs/modules/*/ "As built"; 1485 tests, five gates green; S9 optional, not built)
 date: 2026-09-02
 ---
 
@@ -30,13 +30,13 @@ M11 assemble · M13 loop · M14 realize. Gate: quota satisfaction under scarcity
 ## S5 — integration: she talks — 1 agent ▸ **MILESTONE: deployable chat companion**
 M20 app (config, composition presets, thead, CLI). Gate: **golden-turn e2e** (FakeChannel inbound → packet → scripted MockModel decision → bubbles with exact TestClock timeline → episode written → affect moved → ledger reconciles clean); **crash-replay e2e** (kill mid-turn, restart, no loss, no dupe); then one manual live smoke behind an env flag — real Telegram (new bot token, never Thea1's) + real Neuralwatt — verifying trailing-system-message handling (fallback: `inhibitionPlacement: 'merged'`).
 
-## S6 — a life — 1–2 agents
+## S6 — a life — 1–2 agents ▸ **landed** — heartbeat/ponder/reflect wired into every real boot (reflect rides M10's consolidators via a compose-side provider; live ponder gate has fired)
 M17 life + M13 spawn primitives + scheduler wiring. Gate: heartbeat threshold/backoff/cap tables (5 criteria, mean + silence pressure ≥ 3.2; 3/day; 3h doubling backoff; quiet hours); ponder committee (GATE 0.45 pure; SEED balance rule ≤ 2/5 about-diego as property test; GROUND requires a real grounding observation); delegation episodes logged; conversation-active mutex e2e.
 
-## S7 — the flywheel — 2 parallel agents
+## S7 — the flywheel — 2 parallel agents ▸ **landed** — consolidateNightly/Weekly run under the reflect job; `thea2 corpus:check` + `thea2 derive` shipped (first live derive run pending — flywheel not yet spun)
 M08 derive · M10 consolidate. Gate: manifest dirty-set/orphan unit tests; `thea2 corpus:check` green in CI over committed derived output (generated once in dev with the real model + judge); mood-bucket fan-out caps (≤ 6 variants/scene, derived:canon ≤ 8:1); consolidator outputs validate under the lived schema with encodedAffect stamps; credit updater properties (clamp [0.5, 2.0], η = 0.02, nightly decay 0.995, moodGuard, contrast-credited-on-plus-only); seed-ratio + gravity metrics in the status projection.
 
-## S8 — immune system — 2 parallel agents
+## S8 — immune system — 2 parallel agents ▸ **landed** — probes CLI + sibling routing table + deploy/ (systemd, install.sh); Nightingale baseline run pending post-deploy
 M19 probes · M18 siblings, + `deploy/` (systemd files, install.sh, backup) + ops docs. Gate: probes dry-run in CI (parse, harness boots, deterministic evaluators over recorded fixtures); one full live Nightingale run establishes `probes/baseline.json`; Ledger report from a replayed event fixture; routing guardrail (`turn` pinned) test; probe gates wired (deterministic fail = red, judge drop > 0.8 = red, drift cosine drop > 0.05 = yellow).
 
 ## S9 — optional, later
