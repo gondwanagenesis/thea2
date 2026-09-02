@@ -33,10 +33,10 @@ M20 app (config, composition presets, thead, CLI). Gate: **golden-turn e2e** (Fa
 ## S6 — a life — 1–2 agents ▸ **landed** — heartbeat/ponder/reflect wired into every real boot (reflect rides M10's consolidators via a compose-side provider; live ponder gate has fired)
 M17 life + M13 spawn primitives + scheduler wiring. Gate: heartbeat threshold/backoff/cap tables (5 criteria, mean + silence pressure ≥ 3.2; 3/day; 3h doubling backoff; quiet hours); ponder committee (GATE 0.45 pure; SEED balance rule ≤ 2/5 about-diego as property test; GROUND requires a real grounding observation); delegation episodes logged; conversation-active mutex e2e.
 
-## S7 — the flywheel — 2 parallel agents ▸ **landed** — consolidateNightly/Weekly run under the reflect job; `thea2 corpus:check` + `thea2 derive` shipped (first live derive run pending — flywheel not yet spun)
+## S7 — the flywheel — 2 parallel agents ▸ **landed** — consolidateNightly/Weekly run under the reflect job; `thea2 corpus:check` + `thea2 derive` shipped (derive re-running live on z.ai 2026-09-02 — the first run starved on the old backend: 0/106 parse-failed)
 M08 derive · M10 consolidate. Gate: manifest dirty-set/orphan unit tests; `thea2 corpus:check` green in CI over committed derived output (generated once in dev with the real model + judge); mood-bucket fan-out caps (≤ 6 variants/scene, derived:canon ≤ 8:1); consolidator outputs validate under the lived schema with encodedAffect stamps; credit updater properties (clamp [0.5, 2.0], η = 0.02, nightly decay 0.995, moodGuard, contrast-credited-on-plus-only); seed-ratio + gravity metrics in the status projection.
 
-## S8 — immune system — 2 parallel agents ▸ **landed** — probes CLI + sibling routing table + deploy/ (systemd, install.sh); Nightingale baseline run pending post-deploy
+## S8 — immune system — 2 parallel agents ▸ **landed** — probes CLI + sibling routing table + deploy/ (systemd, install.sh); Nightingale baseline **v4 of record**: det green, judge median 5.00 (var 0.02), voice drift 0.34, k=3 live on z.ai
 M19 probes · M18 siblings, + `deploy/` (systemd files, install.sh, backup) + ops docs. Gate: probes dry-run in CI (parse, harness boots, deterministic evaluators over recorded fixtures); one full live Nightingale run establishes `probes/baseline.json`; Ledger report from a replayed event fixture; routing guardrail (`turn` pinned) test; probe gates wired (deterministic fail = red, judge drop > 0.8 = red, drift cosine drop > 0.05 = yellow).
 
 ## S9 — optional, later
