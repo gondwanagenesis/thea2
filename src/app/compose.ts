@@ -189,6 +189,7 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     const routing = readRoutingTableSafe(paths.base);
     model = createZaiClient({
       apiKey: cfg.models.apiKey,
+      endpoint: cfg.models.endpoint,
       log: events,
       router: makeRouter({ log: events, ...(routing.length > 0 ? { routing } : {}), tiers }),
       clock,

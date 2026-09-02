@@ -4,16 +4,17 @@
 #
 # sync'd with src/app/config.ts schema (M20). Unknown keys are rejected.
 models:
-  endpoint: https://api.z.ai/api/paas/v4
+  # Neuralwatt (OpenAI-compatible) — 2026-09-02. Diego's z.ai keys are dead
+  # (2x insufficient balance, 1x expired); Neuralwatt is Thea1's proven backend.
+  endpoint: https://api.neuralwatt.com/v1
   tiers:
-    main: glm-5.3-flash
-    cheap: glm-5.3-flash
-    reasoning: glm-5.3-flash
+    main: glm-5.3          # her voice — the glm family Diego pinned
+    cheap: deepseek-v4-flash # appraisals + heartbeat thoughts (fast, tools verified)
+    reasoning: glm-5.3
 bridge:
-  # Diego's telegram chat id — the ONLY chat the bridge answers. Fill at
-  # deploy time (install.sh prints the id of the first message the bot
-  # receives; see deploy/ops.md).
-  allowedChatIds: [0]
+  # Diego's telegram chat id — the ONLY chat the bridge answers. Filled from
+  # the first live getUpdates poll (2026-09-02, NEOGEO private chat).
+  allowedChatIds: [6971556140]
 affect:
   statePath: var/affect/state.json
   quietHours: [2, 9]
