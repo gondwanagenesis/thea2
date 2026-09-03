@@ -10,6 +10,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { disposeMainProcessHandlers } from '../../src/app/main.js';
+import { SystemClock } from '../../src/kernel/index.js';
 
 // THEAD_LOCK_PATH resolves `var/thead.pid` against the cwd at module load, so
 // the chdir must precede the dynamic import (a static import would hoist).
@@ -72,5 +73,71 @@ describe('main — the process lock at the verb guards', () => {
     ).rejects.toMatchObject({ code: 'app/config-unreadable' });
     expect(errText()).toContain('LIVE OVERRIDE');
     expect(errText()).toContain('4242');
+  });
+});
+
+describe('main — process edge (P-CLOSE)', () => {
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  };
+
+  it('AC: sigterm-drains-once — one signal, one drain; dispose removes the only pair', async () => {
+    stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    await main(['node', 'main.ts', '--help']);
+    expect(process.listenerCount('SIGTERM')).toBe(1); // exactly one pair, not the historical duplicate
+    expect(process.listenerCount('SIGINT')).toBe(1);
+
+    process.emit!('SIGTERM', 'SIGTERM');
+    await settle();
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
+    expect(errText().split('SIGTERM — draining').length - 1).toBe(1); // one drain line
+
+    disposeMainProcessHandlers?.();
+    expect(process.listenerCount('SIGTERM')).toBe(0); // the ONLY pair is gone
+    expect(process.listenerCount('SIGINT')).toBe(0);
+    process.emit!('SIGTERM', 'SIGTERM'); // after dispose: nothing fires
+    await settle();
+    expect(exit).toHaveBeenCalledTimes(1);
+    exit?.mockRestore();
+  });
+
+  it('AC: an unhandled rejection is an incident — L0 row, then exit 1', async () => {
+    stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    // The vitest worker holds its own unhandledRejection listener — assert the
+    // DELTA, never an absolute count.
+    const before = process.listenerCount('unhandledRejection');
+    await main(['node', 'main.ts', '--help']);
+    expect(process.listenerCount('unhandledRejection')).toBe(before + 1);
+
+    process.emit!('unhandledRejection', new Error('boom at the seam'), Promise.resolve());
+    await settle();
+    // The incident lands through real fs writes before exit fires — wait for
+    // the exit itself (bounded), never a fixed sleep that a slow box races.
+    const clock = new SystemClock();
+    for (let i = 0; i < 100 && exit.mock.calls.length === 0; i++) {
+      await clock.waitUntil(clock.epochMs() + 5);
+    }
+
+    expect(exit).toHaveBeenCalledWith(1); // loud and fatal
+    expect(errText()).toContain('unhandledRejection');
+    expect(errText()).toContain('boom at the seam');
+
+    // The incident is on L0 under var/events (main's fallback log — no thead
+    // was composed in this process, so no seq fork is possible).
+    const eventsDir = path.join(root, 'var', 'events');
+    const file = fs.readdirSync(eventsDir).find((n) => n.endsWith('.jsonl'));
+    expect(file).toBeDefined();
+    const rows = fs.readFileSync(path.join(eventsDir, file!), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { kind: string; payload: { error?: string } });
+    expect(rows.filter((r) => r.kind === 'incident.unhandled_rejection').map((r) => r.payload)).toEqual([
+      { error: 'boom at the seam' },
+    ]);
+
+    disposeMainProcessHandlers?.();
+    expect(process.listenerCount('unhandledRejection')).toBe(before); // exactly the one pair, removed
+    exit?.mockRestore();
+    fs.rmSync(path.join(root, 'var'), { recursive: true, force: true });
   });
 });

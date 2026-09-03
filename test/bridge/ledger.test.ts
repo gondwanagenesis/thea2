@@ -9,18 +9,22 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { TestClock } from '../../src/kernel/clock.js';
+import { openJsonl } from '../../src/kernel/index.js';
 import { memoryLog } from './helpers.js';
 import {
   DEFAULT_RECONCILE_WINDOW_MS,
   emitLostReplyAlarms,
   openMessageLedger,
   type Discrepancy,
+  type LedgerRow,
   type MessageLedger,
 } from '../../src/bridge/index.js';
 import { msg } from './helpers.js';
 
 const T0 = 1_788_000_000_000; // the moment the inbound lands
 const T = DEFAULT_RECONCILE_WINDOW_MS;
+const HOUR = 3_600_000;
+const { existsSync, readFileSync, rmSync, writeFileSync } = fs;
 
 let dirs: string[] = [];
 const fresh = (): string => {
@@ -292,7 +296,7 @@ describe('ledger write guards (failure must be loud)', () => {
 });
 
 describe('emitLostReplyAlarms', () => {
-  it('emits bridge.lost_reply per lost inbound (with its turn) and stays silent about duplicates', async () => {
+  it('emits bridge.lost_reply per lost inbound (with its turn and escalation) and stays silent about duplicates', async () => {
     const { log, events } = memoryLog();
     const { ledger } = open(fresh());
     await ledger.recordInbound(msg({ updateId: 401 }));
@@ -304,12 +308,96 @@ describe('emitLostReplyAlarms', () => {
       { kind: 'LOST_REPLY', inbound: msg({ updateId: 402, chatId: 555 }), ageMs: T + 1, turnId: 'turn-2' },
     ]);
 
-    await emitLostReplyAlarms(log, discrepancies);
+    await emitLostReplyAlarms(log, discrepancies, ledger);
     expect(events.map((e) => e.kind)).toEqual(['bridge.lost_reply', 'bridge.lost_reply']);
     expect(events.map((e) => e.payload)).toEqual([
-      { updateId: 401, chatId: 8123456, ageMs: T + 1 },
-      { updateId: 402, chatId: 555, ageMs: T + 1, turnId: 'turn-2' },
+      { updateId: 401, chatId: 8123456, ageMs: T + 1, escalation: 'initial' },
+      { updateId: 402, chatId: 555, ageMs: T + 1, escalation: 'initial', turnId: 'turn-2' },
     ]);
     expect(events.map((e) => e.turnId)).toEqual([undefined, 'turn-2']);
+  });
+
+  it('AC: alarm fires once then escalates — once per updateId, then again only at 1h / 6h / 24h', async () => {
+    const { log, events } = memoryLog();
+    const dir = fresh();
+    const ledger = openMessageLedger(dir, { clock: new TestClock(T0) });
+    await ledger.recordInbound(msg({ updateId: 401 }));
+
+    const pass = async (at: number, l: MessageLedger = ledger): Promise<void> => {
+      await emitLostReplyAlarms(log, await l.reconcile(T0 + at), l);
+    };
+
+    await pass(T + 1); // first sight: the initial alarm
+    await pass(T + 60_000); // 1 min later, still unpaid: SILENT — once per updateId
+    await pass(T + 1 + HOUR); // past 1h: escalation 1
+    await pass(T + 1 + 6 * HOUR); // past 6h: escalation 2
+    await pass(T + 1 + 24 * HOUR); // past 24h: escalation 3
+    await pass(T + 1 + 25 * HOUR); // after the ladder is spent: silent (the doctor + ack take over)
+
+    expect(events.map((e) => (e.payload as { escalation: string }).escalation)).toEqual([
+      'initial',
+      '1h',
+      '6h',
+      '24h',
+    ]);
+    expect(events.every((e) => e.kind === 'bridge.lost_reply')).toBe(true);
+    // The escalation state survives a restart: a fresh ledger over the same dir
+    // knows 401 was already alarmed — no duplicate alarm from the fresh open.
+    const restarted = openMessageLedger(dir, { clock: new TestClock(T0) });
+    await pass(T + 1 + 24 * HOUR, restarted);
+    expect(events).toHaveLength(4);
+  });
+
+  it('AC: abandoned-loss-is-not-owed — an abandoned row terminates the invariant; owedInbound counts only non-abandoned', async () => {
+    const dir = fresh();
+    const ledger = openMessageLedger(dir, { clock: new TestClock(T0) });
+    await ledger.recordInbound(msg({ updateId: 401 }));
+    await ledger.recordInbound(msg({ updateId: 402 }));
+
+    // An operator (and, in recoverLost, the grace/moved-on paths) closes 401:
+    await ledger.abandon(401, 'operator');
+    // 402 stays open: reconcile still owes it, and only it.
+    expect(await ledger.reconcile(T0 + T + 1)).toEqual(lost(402, T + 1));
+
+    // The row is durable and typed — an operator abandon survives the restart.
+    const rows: unknown[] = [];
+    for await (const row of ledger.read()) if (row.kind === 'abandoned') rows.push(row);
+    expect(rows).toEqual([{ kind: 'abandoned', ts: T0, updateId: 401, reason: 'operator' }]);
+
+    const restarted = openMessageLedger(dir, { clock: new TestClock(T0) });
+    expect(await restarted.reconcile(T0 + T + 1)).toEqual(lost(402, T + 1)); // 401 stays closed
+    await restarted.abandon(402, 'grace');
+    expect(await restarted.reconcile(T0 + T + 1)).toEqual([]); // every loss terminates
+  });
+
+  it('AC: reconcile replays only the tail after a snapshot — and a fresh open matches a full replay', async () => {
+    const dir = fresh();
+    const first = openMessageLedger(dir, { clock: new TestClock(T0) });
+    await first.recordInbound(msg({ updateId: 401 }));
+    expect(await first.reconcile(T0 + T + 1)).toEqual(lost(401, T + 1));
+    expect(first.lastReconcileReplayedRows()).toBe(1); // the full replay (no snapshot yet)
+    expect(existsSync(path.join(dir, 'reconcile-state.json'))).toBe(true); // the fold is durable
+
+    // Three more rows land OUTSIDE the live fold — the crash window: the
+    // process died after the snapshot, the rows hit disk, a fresh open reads
+    // them as the tail.
+    const raw = openJsonl<LedgerRow>(dir, 'messages', { rotateDailyUtc: true, clock: new TestClock(T0) });
+    await raw.append({ kind: 'inbound', ts: T0 + 1000, msg: msg({ updateId: 402, ts: T0 + 1000 }) });
+    await raw.append({ kind: 'link', ts: T0 + 1000, updateId: 402, turnId: 'turn-2' });
+    await raw.append({ kind: 'outbound', ts: T0 + 1000, turnId: 'turn-2', msgId: 5002, text: 'ya voy' });
+
+    const second = openMessageLedger(dir, { clock: new TestClock(T0) });
+    const verdict = await second.reconcile(T0 + T + 2);
+    expect(verdict).toEqual(lost(401, T + 2)); // 401 still owed; the answered 402 is clean
+    expect(second.lastReconcileReplayedRows()).toBe(3); // the TAIL only — never the 4-row history
+
+    // Equivalence: with the snapshot removed, a FULL replay of the same rows
+    // gives the same verdicts (the fold loses nothing that matters).
+    const snapshotPath = path.join(dir, 'reconcile-state.json');
+    const saved = readFileSync(snapshotPath, 'utf8');
+    rmSync(snapshotPath);
+    const full = openMessageLedger(dir, { clock: new TestClock(T0) });
+    expect(await full.reconcile(T0 + T + 2)).toEqual(verdict);
+    writeFileSync(snapshotPath, saved, 'utf8'); // leave the dir as the fold wrote it
   });
 });

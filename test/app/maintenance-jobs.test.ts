@@ -13,7 +13,16 @@ import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TestClock } from '../../src/kernel/clock.js';
 import { makeRng } from '../../src/kernel/rng.js';
-import { DEFAULT_RECONCILE_WINDOW_MS, openMessageLedger, type InboundMsg } from '../../src/bridge/index.js';
+import { MockModel } from '../../src/model/index.js';
+import { openSessionWindow } from '../../src/memory/index.js';
+import {
+  DEFAULT_RECONCILE_WINDOW_MS,
+  escalationForAge,
+  escalationOutranks,
+  openMessageLedger,
+  type EscalationLevel,
+  type InboundMsg,
+} from '../../src/bridge/index.js';
 import type { Discrepancy } from '../../src/bridge/index.js';
 import type { EventEnvelope, EventLog } from '../../src/events/index.js';
 import type { JobCtx } from '../../src/sched/index.js';
@@ -26,6 +35,8 @@ import {
   runReconcile,
   type RecoverLostDeps,
 } from '../../src/app/maintenance-jobs.js';
+
+const { readFileSync } = fs;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -85,21 +96,45 @@ interface Harness extends RecoverLostDeps {
   log: RecordingLog;
   spy: PipelineSpy;
   linked: Array<{ updateId: number; turnId: string }>;
+  /** (updateId, reason) pairs the recovery handed to ledger.abandon. */
+  abandons: Array<{ updateId: number; reason: string }>;
+  /** (updateId, escalation) pairs handed to ledger.markAlarmed. */
+  alarmed: Array<{ updateId: number; escalation: string }>;
   reconcileResult: Discrepancy[];
   setBusy: (busy: boolean) => void;
+  setChatMovedOn: (v: boolean) => void;
 }
 
-/** A fake ledger whose reconcile replays `discrepancies`; linkTurn records the pair. */
-const harness = (discrepancies: Discrepancy[], over: { graceMs?: number } = {}): Harness => {
+/** A fake ledger whose reconcile replays `discrepancies`; the recovery seam records what it was told. */
+const harness = (
+  discrepancies: Discrepancy[],
+  over: { graceMs?: number; chatMovedOn?: boolean; window?: RecoverLostDeps['window'] } = {},
+): Harness => {
   const log = recordingLog();
   const spy: PipelineSpy = { inboundCalls: [], returnedTurnIds: [], busy: false };
   const linked: Array<{ updateId: number; turnId: string }> = [];
+  const abandons: Array<{ updateId: number; reason: string }> = [];
+  const alarmed: Array<{ updateId: number; escalation: string }> = [];
+  let chatMovedOn = over.chatMovedOn ?? false;
   const deps: RecoverLostDeps = {
     ledger: {
       reconcile: async () => discrepancies,
       linkTurn: async (updateId, turnId) => {
         linked.push({ updateId, turnId });
       },
+      abandon: async (updateId, reason) => {
+        abandons.push({ updateId, reason });
+      },
+      markAlarmed: async (updateId, escalation) => {
+        alarmed.push({ updateId, escalation });
+      },
+      // The real ladder's shape: due until it has actually been marked heard.
+      alarmDue: async (updateId, ageMs) => {
+        const last = [...alarmed].reverse().find((a) => a.updateId === updateId)?.escalation;
+        const level = escalationForAge(ageMs);
+        return { due: last === undefined || escalationOutranks(level, last as EscalationLevel), level };
+      },
+      chatMovedOn: async () => chatMovedOn,
     },
     events: log,
     pipeline: {
@@ -111,10 +146,21 @@ const harness = (discrepancies: Discrepancy[], over: { graceMs?: number } = {}):
       },
       isBusy: () => spy.busy,
     },
+    ...(over.window !== undefined ? { window: over.window } : {}),
     ...(over.graceMs !== undefined ? { graceMs: over.graceMs } : {}),
     rerun: new Set<number>(),
   };
-  return { ...deps, log, spy, linked, reconcileResult: discrepancies, setBusy: (b) => (spy.busy = b) };
+  return {
+    ...deps,
+    log,
+    spy,
+    linked,
+    abandons,
+    alarmed,
+    reconcileResult: discrepancies,
+    setBusy: (b) => (spy.busy = b),
+    setChatMovedOn: (v) => (chatMovedOn = v),
+  };
 };
 
 const jobCtx = (log: EventLog): JobCtx => ({
@@ -153,22 +199,69 @@ describe('reconcile recovery — rerun once per process, inside the grace window
     ]);
     expect(h.log.of('bridge.lost_reply')).toHaveLength(1); // the alarm fired too
 
-    // The same loss on the NEXT pass (5 min later, still unpaid): alarmed, never re-run.
+    // The same loss on the NEXT pass (5 min later, still unpaid): alarmed ONCE
+    // total — the escalation ladder (1h/6h/24h) owns any repeat, not every pass.
     const second = await runReconcile(h, now);
     expect(second.rerunUpdateIds).toEqual([]);
     expect(h.spy.inboundCalls).toHaveLength(1); // exactly once per process
-    expect(h.log.of('bridge.lost_reply')).toHaveLength(2); // the alarm keeps firing while it stays unpaid
+    expect(h.log.of('bridge.lost_reply')).toHaveLength(1);
+    expect(h.alarmed).toEqual([{ updateId: 401, escalation: 'initial' }]); // the ledger keeps the alarm state
   });
 
-  it('alarms but never reruns a loss older than grace', async () => {
+  it('alarms once, then terminates a loss older than grace with an abandoned row (reason grace)', async () => {
     const h = harness(lost(402, DEFAULT_RERUN_GRACE_MS + 1)); // three hours stale, one ms past grace
     const outcome = await runReconcile(h, T0 + DEFAULT_RERUN_GRACE_MS + 1);
 
     expect(outcome.rerunUpdateIds).toEqual([]);
     expect(h.spy.inboundCalls).toHaveLength(0); // answering a 3-hour-old question as if new is worse than the alarm
     expect(h.log.of('bridge.lost_reply').map((r) => r.payload)).toEqual([
-      { updateId: 402, chatId: 8123456, ageMs: DEFAULT_RERUN_GRACE_MS + 1 },
+      // 60 min + 1 ms sits past the grace AND past the 1 h rung: the one alarm fires at '1h'.
+      { updateId: 402, chatId: 8123456, ageMs: DEFAULT_RERUN_GRACE_MS + 1, escalation: '1h' },
     ]);
+    // Every loss terminates (ADR-003 through P-CLOSE CL.2): the grace path
+    // writes the terminal row, so reconcile stops owing it.
+    expect(h.abandons).toEqual([{ updateId: 402, reason: 'grace' }]);
+  });
+
+  it('AC: rerun-skips-when-conversation-moved-on — newer chat activity abandons the loss and lands its text in the window pending', async () => {
+    const pushes: Array<{ role: string; content: string; ts: number; turnId: string }> = [];
+    const h = harness(lost(405, 2 * 60_000, 'turn-moved'), {
+      chatMovedOn: true,
+      window: {
+        pushPending: async (m) => {
+          pushes.push(m);
+        },
+      },
+    });
+    const now = T0 + 2 * 60_000;
+    const outcome = await runReconcile(h, now);
+
+    expect(outcome.rerunUpdateIds).toEqual([]); // never re-run: he has moved on
+    expect(h.spy.inboundCalls).toHaveLength(0);
+    expect(h.abandons).toEqual([{ updateId: 405, reason: 'moved-on' }]);
+    // The text is NOT lost to her: it rides the window's pending span, the
+    // [EARLIER] feedstock — carried as context, never answered as if new.
+    expect(pushes).toEqual([{ role: 'user', content: '¿y la caja?', ts: T0, turnId: 'turn-moved' }]);
+    expect(h.log.of('bridge.lost_reply')).toHaveLength(1); // the one alarm still fired
+  });
+
+  it('pushPending lands the abandoned text in the REAL window pending span (the [EARLIER] feedstock)', async () => {
+    const dir = freshDir();
+    const clock = new TestClock(T0);
+    const window = openSessionWindow(path.join(dir, 'memory'), {
+      model: new MockModel({ clock }),
+      clock,
+      events: recordingLog(),
+    });
+    // Optional in the type (pre-existing fakes stay valid); the real window
+    // always provides it — a no-op here would fail the state assertion below.
+    await window.pushPending?.({ role: 'user', content: '¿y la caja?', ts: T0, turnId: 'lost-405' });
+    // It never entered the live window — the continuity span only.
+    expect(window.messages()).toEqual([]);
+    const state = JSON.parse(readFileSync(path.join(dir, 'memory', 'window.json'), 'utf8')) as {
+      pending: Array<{ role: string; content: string; ts: number; turnId: string }>;
+    };
+    expect(state.pending).toEqual([{ role: 'user', content: '¿y la caja?', ts: T0, turnId: 'lost-405' }]);
   });
 
   it('defers the rerun while the pipeline is busy and takes it on the next pass', async () => {
@@ -224,6 +317,10 @@ describe('reconcile recovery — rerun once per process, inside the grace window
           throw new Error('ledger file corrupted');
         },
         linkTurn: async () => undefined,
+        abandon: async () => undefined,
+        markAlarmed: async () => undefined,
+        alarmDue: async () => ({ due: true, level: 'initial' }),
+        chatMovedOn: async () => false,
       },
       events: log,
       pipeline: { inbound: () => 'turn-x', isBusy: () => false },

@@ -19,6 +19,7 @@ import {
   type Channel,
   type ChannelLimits,
   type InboundMsg,
+  type PollFailedEvent,
   type SendFailedEvent,
 } from './types.js';
 
@@ -37,6 +38,11 @@ const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 30_000;
 /** Telegram always states retry_after; this only covers a body that omits it. */
 const FALLBACK_RETRY_AFTER_MS = 1000;
+
+/** P-CLOSE CL.4: this many consecutive poll failures mean the bridge is down — an incident, not a retry detail. */
+export const POLL_DOWN_AFTER = 5;
+export const POLL_FAILED_EVENT = 'bridge.poll_failed';
+export const POLL_DOWN_INCIDENT = 'incident.poll_down';
 
 interface TelegramBody {
   ok?: boolean;
@@ -59,11 +65,16 @@ const HTTP_TIMEOUT_MS = 60_000;
  * One Bot API call: POST, status + bot-api `ok` mapping, typed errors. The token
  * rides the URL, so any body we did not build could echo it into an error
  * message — it is stripped before a message escapes this module.
+ *
+ * `signal` (P-CLOSE CL.4) is the caller's abort — the poll loop's stop signal —
+ * combined with the 60 s host-network backstop, so a stop cuts an in-flight
+ * request immediately instead of waiting out the socket.
  */
 const httpCall = async (
   call: { doFetch: typeof fetch; base: string; token: string },
   method: string,
   payload: Record<string, unknown>,
+  signal?: AbortSignal | undefined,
 ): Promise<TelegramBody> => {
   const redact = (text: string): string => (call.token === '' ? text : text.split(call.token).join('***'));
   let res: Response;
@@ -75,7 +86,7 @@ const httpCall = async (
       // Host-network backstop (real timers, deliberately not the injected
       // clock): a getUpdates socket that never answers would otherwise hang
       // the poll loop forever. 60 s sits far above the 25 s long-poll.
-      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      signal: signal === undefined ? AbortSignal.timeout(HTTP_TIMEOUT_MS) : AbortSignal.any([AbortSignal.timeout(HTTP_TIMEOUT_MS), signal]),
     });
   } catch (e) {
     if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
@@ -202,11 +213,16 @@ const pollUpdates = async function* (
   while (!signal.aborted) {
     try {
       const committed = await deps.committedOffset();
-      const body = await httpCall(call, 'getUpdates', {
-        ...(committed !== undefined ? { offset: committed + 1 } : {}),
-        timeout: pollTimeoutSec,
-        allowed_updates: TELEGRAM_ALLOWED_UPDATES,
-      });
+      const body = await httpCall(
+        call,
+        'getUpdates',
+        {
+          ...(committed !== undefined ? { offset: committed + 1 } : {}),
+          timeout: pollTimeoutSec,
+          allowed_updates: TELEGRAM_ALLOWED_UPDATES,
+        },
+        signal,
+      );
       failures = 0;
       const batch = Array.isArray(body.result) ? body.result : [];
       for (const raw of batch) {
@@ -227,8 +243,23 @@ const pollUpdates = async function* (
       const retryAfterMs = e instanceof BridgeError ? e.retryAfterMs : undefined;
       // Telegram demands retry_after before anything else; otherwise jittered
       // exponential off the injected stream, capped.
-      const jittered = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** Math.min(failures - 1, 6) * (0.5 + deps.rng.float()));
+      const uncapped = BACKOFF_BASE_MS * 2 ** Math.min(failures - 1, 6) * (0.5 + deps.rng.float());
+      const jittered = Math.min(BACKOFF_CAP_MS, uncapped);
       const delay = Math.max(Math.round(jittered), retryAfterMs ?? 0);
+      // P-CLOSE CL.4: poll failures are events, not just retry state — the
+      // first failure, each pass where the exponential hits the backoff cap,
+      // and an incident once the failures are clearly a pattern, not a blip.
+      if (deps.log !== undefined) {
+        if (failures === 1 || uncapped >= BACKOFF_CAP_MS) {
+          const payload: PollFailedEvent = { failures, backoffMs: delay };
+          await deps.log.emit(POLL_FAILED_EVENT, payload).catch(() => undefined);
+        }
+        if (failures === POLL_DOWN_AFTER) {
+          await deps.log
+            .emit(POLL_DOWN_INCIDENT, { failures, error: errMsg(e) })
+            .catch(() => undefined);
+        }
+      }
       // An abort during the wait rejects into .catch; the loop condition ends it.
       await deps.clock.waitUntil(deps.clock.epochMs() + delay, signal).catch(() => undefined);
     }

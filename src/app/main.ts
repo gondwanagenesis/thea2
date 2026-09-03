@@ -4,6 +4,9 @@
 // stops) instead of killing a half-said reply.
 
 import { pathToFileURL } from 'node:url';
+import * as path from 'node:path';
+import { openEventLog, type EventLog } from '../events/index.js';
+import { SystemClock } from '../kernel/index.js';
 import { cliMain } from './cli.js';
 import { acquireProcessLock, isLockHeldByOther, LockHeldError, processIsAlive, readLock, THEAD_LOCK_PATH, type LockDeps } from './lock.js';
 
@@ -24,6 +27,11 @@ export let disposeMainProcessHandlers: (() => void) | undefined;
 export const main = async (argv: string[], deps: LockDeps = { isAlive: processIsAlive }): Promise<number> => {
   let stop: (() => Promise<void>) | undefined;
   let releaseLock: (() => void) | undefined;
+  // The composed thead's L0 (P-CLOSE CL.5): the unhandled-rejection incident
+  // rides the system's own log — a SECOND opener beside it would fork the seq
+  // counter (the 2026-09-02 derive/thead lesson). Only when nothing composed
+  // here does main open a fallback log, which is then the process's only one.
+  let l0: EventLog | undefined;
   disposeMainProcessHandlers = undefined;
   const shutdown = (sig: string): void => {
     process.stderr.write(`\n${sig} — draining...\n`);
@@ -39,13 +47,24 @@ export const main = async (argv: string[], deps: LockDeps = { isAlive: processIs
       },
     );
   };
-  process.once('SIGINT', () => shutdown('SIGINT'));
-  process.once('SIGTERM', () => shutdown('SIGTERM'));
   const sigint = (): void => shutdown('SIGINT');
   const sigterm = (): void => shutdown('SIGTERM');
+  // P-CLOSE CL.5: an unhandled rejection is an incident — one L0 row, then a
+  // fatal exit. Swallowing it (the old behavior) was the wedge class: the
+  // process limps on in an unknown state, silently.
   const onUnhandledRejection = (e: unknown): void => {
-    process.stderr.write(`unhandledRejection: ${String(e)}
-`);
+    const detail = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`unhandledRejection: ${detail}\n`);
+    void (async () => {
+      try {
+        const log = l0 ?? openEventLog(path.resolve('var', 'events'), { clock: new SystemClock() });
+        await log.emit('incident.unhandled_rejection', { error: detail });
+      } catch (err) {
+        process.stderr.write(`unhandledRejection: the incident could not land on L0: ${String(err)}\n`);
+      }
+      releaseLock?.();
+      process.exit(1);
+    })();
   };
   const onUncaughtException = (e: Error): void => {
     process.stderr.write(`uncaughtException: ${String(e)}
@@ -53,8 +72,8 @@ export const main = async (argv: string[], deps: LockDeps = { isAlive: processIs
     releaseLock?.();
     process.exit(1);
   };
-  process.once('SIGINT', sigint);
-  process.once('SIGTERM', sigterm);
+  process.on('SIGINT', sigint);
+  process.on('SIGTERM', sigterm);
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
   // Process listeners survive vitest's per-file module isolation - a test
@@ -111,6 +130,7 @@ export const main = async (argv: string[], deps: LockDeps = { isAlive: processIs
     { out: (s) => process.stdout.write(s + '\n'), err: (s) => process.stderr.write(s + '\n') },
     (handle) => {
       stop = () => handle.stop();
+      l0 = handle.events; // P-CLOSE CL.5: the rejection incident rides the system's own L0
     },
   );
 };

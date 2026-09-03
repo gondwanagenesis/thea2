@@ -1,12 +1,12 @@
 ---
 title: Thea2 ops — runbook
-syncedTo: Phase 1
-date: 2026-09-02
+syncedTo: v6-W1 (2026-09-03 — P-CLOSE: doctor + ack verbs, thea2-alert OnFailure unit, stderr egress, alarm ladder)
+date: 2026-09-03
 ---
 
 # Thea2 ops — runbook
 
-One process, two systemd files, one timer. ADR-002 put the bridge, the
+One process, three systemd files, one timer. ADR-002 put the bridge, the
 scheduler, and the turn pipeline inside a single `thead` process — M16's
 in-process scheduler is what replaces Thea1's 97 units.
 
@@ -50,9 +50,10 @@ in-process scheduler is what replaces Thea1's 97 units.
 | `/opt/thea2/bin/thead` | process entry (wraps the M20 CLI) |
 | `/opt/thea2/bin/thea2` → `/usr/local/bin/thea2` | CLI verbs: `status`, `reconcile`, `corpus:check`, `derive` |
 | `/opt/thea2/bin/backup` | backup body |
-| `/etc/thea2/keys.env` | secrets, root-owned 0600, read by systemd before the privilege drop |
-| `/etc/systemd/system/thea2*.service`, `thea2-backup.timer` | the whole unit footprint |
+| `/etc/thea2/keys.env` | secrets, root-owned 0600, read by systemd before the privilege drop (`THEA2_BOT_TOKEN`, `THEA2_MODEL_API_KEY`, `THEA2_OPS_CHAT_ID` = allowedChatIds[0]) |
+| `/etc/systemd/system/thea2*.service`, `thea2-backup.timer` | the whole unit footprint — thea2, thea2-alert (OnFailure DM), thea2-backup + timer |
 | `/var/backups/thea2` | daily `var/` snapshots + git bundles (retention in `bin/backup`) |
+| `/opt/thea2/var/ledger/reconcile-state.json` | the reconcile fold snapshot (P-CLOSE CL.7) — written by thead's ledger, never by hand |
 
 Secrets discipline (AGENTS rule 7): nothing secret ever lives in the repo or
 the config file. The bot token and the model API key come from
@@ -92,15 +93,39 @@ config if it mangles it. Only after the smoke passes does the service stay up.
 
 ## 4. Operating
 
+- **Doctor first** (P-CLOSE): `thea2 doctor` is the read-only health check —
+  uptime (from the newest `app.boot{bridge}` event + the pid lock), the last
+  24 h of `incident.*` counts, open losses, and the last backup age. It opens
+  `var/` WITHOUT compose (no mkdir, no emit, no lock), so it is safe beside a
+  live thead and on a half-broken install. It writes nothing, ever.
 - **Status**: `thea2 status` (CLI verb — recent decisions, affect weather,
   sched state, last reports).
 - **Reconcile**: automatic every 5 min (scheduler job); manual `thea2
   reconcile`. `LOST_REPLY` discrepancies are alarms, not log lines — silence by
-  design is typed, silence by failure pages.
+  design is typed, silence by failure pages. The alarm ladder (P-CLOSE): a
+  loss alarms ONCE, then again only at 1 h / 6 h / 24 h (`escalation` on the
+  `bridge.lost_reply` payload); a loss that is answered-or-terminated stops.
+- **Close a loss**: `thea2 ack <updateId>` — one terminal `abandoned
+  {reason:'operator'}` row in the ledger; reconcile stops owing it. Use it
+  when a loss is stale beyond caring or already handled by hand. The other
+  two abandon reasons are automatic: `grace` (older than 60 min at reconcile)
+  and `moved-on` (the chat saw newer traffic; her window's `[EARLIER]` line
+  still carries the text).
 - **Backup check** (weekly): `systemctl list-timers thea2-backup` — the timer
-  fired within ~26h, newest snapshot exists. A failed backup unit is loud.
+  fired within ~26h, newest snapshot exists. A failed backup unit is loud;
+  `thea2 doctor` prints the snapshot age too.
 - **Restore drill** (quarterly, dry): `git clone repo.bundle work && tar -xf
   var-*.tar.zst -C work` — if that boots under `thea2 status`, DR is real.
+- **Failure egress (P-CLOSE)**: `incident.*`, `bridge.lost_reply` and
+  `sched.alarm` each mirror ONE stderr line prefixed `<3>` —
+  `journalctl -u thea2 -p err` is the operator view, no journald config needed.
+  If the thead UNIT itself dies, `thea2-alert.service` (wired by
+  `OnFailure=` in thea2.service) sends ONE Telegram DM
+  `[ops] thea2 failed: <unit>` to the ops chat via curl. Provisioning:
+  `/etc/thea2/keys.env` carries `THEA2_BOT_TOKEN` (already required) and
+  `THEA2_OPS_CHAT_ID` = config `bridge.allowedChatIds[0]`; `systemctl
+  daemon-reload` after install, and a hand-run `systemctl start
+  thea2-alert.service` is the wiring smoke — the DM arriving IS the test.
 
 ## 5. Cutover — supplanting Thea1 (EXPLICIT GO REQUIRED)
 
@@ -124,8 +149,12 @@ stops Thea1 automatically.
 
 | Symptom | First move |
 |---|---|
+| Thea2 unit failed (DM `[ops] thea2 failed: …` arrived) | `systemctl status thea2` → `journalctl -u thea2 -p err` (the `<3>` mirror carries every incident) → `thea2 doctor` → restart is safe: ledger dedupe + at-least-once means no loss, no dupes; boot reconcile re-runs the young losses |
 | Boot fails at a named stage | read the stage; config/compile failures are file fixes, not code fixes |
 | `bridge.send_failed` events | check token/network; realizer pacing makes 429 a should-never path |
-| `sched.alarm` | a job failed 3× consecutively — `journalctl -u thea2 | grep sched.fail` |
+| `bridge.poll_failed` / `incident.poll_down` | the long poll is failing (network, Telegram outage, revoked token) — first failure + each backoff-cap pass event; 5 consecutive is the incident. Check egress, then token; the poll self-heals on recovery |
+| `bridge.lost_reply` with `escalation` | a message of his went unanswered; the ladder re-fires at 1 h / 6 h / 24 h while it stays owed. Decide: let the 5-min job re-run it (only while < 60 min and the chat is quiet), answer by hand, then `thea2 ack <updateId>` to close it |
+| `incident.unhandled_rejection` + exit 1 | a bug escaped the turn paths — the incident is on L0 with the error; systemd restarts (Restart=on-failure); the boot reconcile cleans up; file the stack from the journal |
+| `sched.alarm` | a job failed 3× consecutively — `journalctl -u thea2 \| grep sched.fail` |
 | `sched.wedged` | the job is locked out until process restart (`systemctl restart thea2`) |
 | Model 5xx storm | restart is safe: ledger dedupe + at-least-once means no loss, no dupes |

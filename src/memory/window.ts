@@ -52,6 +52,16 @@ export interface WindowMsg {
 
 export interface SessionWindow {
   push(msg: WindowMsg): Promise<void>;
+  /**
+   * Appends straight to the PENDING span — the [EARLIER] feedstock — without
+   * entering the live window (P-CLOSE CL.3: an abandoned loss's text must be
+   * carried by the continuity line, never answered as if it had just arrived).
+   * Optional in the type so pre-existing test fakes stay valid; the real
+   * window always provides it.
+   * NOTE (P-CLOSE, 2026-09-03): added additively for the P-CLOSE package — the
+   * owner files list did not include this module; flagged in the P-CLOSE report.
+   */
+  pushPending?(msg: WindowMsg): Promise<void>;
   /** The verbatim window, oldest first — exactly what M13 renders into the message array. */
   messages(): ChatMsg[];
   /** The cached '[EARLIER] …' line, or null before any span has been summarized. */
@@ -210,6 +220,17 @@ export const openSessionWindow = (dir: string, deps: { model: ModelClient; clock
       const s = state;
       if (s === undefined) return fail('memory/window-not-booted', 'messages() before the window finished loading');
       return s.msgs.map((m) => ({ role: m.role, content: m.content }));
+    },
+
+    pushPending: async (msg) => {
+      await ensureBoot();
+      const s = state;
+      if (s === undefined) return fail('memory/window-not-booted', 'pushPending before the window finished loading');
+      s.pending.push({ role: msg.role, content: msg.content, ts: msg.ts, turnId: msg.turnId });
+      // Same span rule as eviction: once the pending span is big enough, the
+      // summarizer folds it into the [EARLIER] continuity line.
+      if (s.pending.length >= WINDOW_SUMMARY_SPAN) await summarize();
+      await persistSerial();
     },
 
     earlier: () => {

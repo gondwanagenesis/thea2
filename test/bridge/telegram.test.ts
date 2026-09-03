@@ -245,4 +245,58 @@ describe('telegramChannel — updates (long poll)', () => {
     expect(calls).toHaveLength(2);
     ac.abort();
   });
+
+  it('AC: stop aborts an in-flight poll — the caller signal is combined into the fetch, the loop ends clean', async () => {
+    const calls: Array<{ url: string; signal: AbortSignal | null | undefined }> = [];
+    // A server holding the long poll open: the fetch settles only when its signal aborts.
+    const hangingFetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      calls.push({ url: String(input), signal: init?.signal });
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const e = new Error('This operation was aborted');
+          e.name = 'AbortError';
+          reject(e);
+        }, { once: true });
+      });
+    }) as unknown as typeof fetch;
+    const { log, events } = memoryLog();
+    const ch = telegramChannel(channelDeps({ fetchImpl: hangingFetch, log }));
+    const ac = new AbortController();
+    const first = ch.updates(ac.signal)[Symbol.asyncIterator]().next();
+    await drain(); // the request is in flight
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.signal).toBeInstanceOf(AbortSignal); // the combined timeout+caller signal rode the fetch
+
+    ac.abort(); // thead stop
+    await expect(first).resolves.toMatchObject({ done: true }); // clean end — no throw out of the iterator
+    expect(calls).toHaveLength(1); // no further poll
+    expect(events).toHaveLength(0); // an operator stop is not a failure: no poll_failed noise
+  });
+
+  it('AC: poll failures are events — first failure, poll_down at 5 consecutive, each backoff-cap escalation', async () => {
+    const { fetchImpl, queue } = scriptedFetch();
+    for (let i = 0; i < 7; i++) queue.push(statusResponse(500, 'boom'));
+    queue.push(okUpdates([]));
+    const clock = new TestClock(T0);
+    const { log, events } = memoryLog();
+    // Jitter pinned high so the exponential crosses the 30 s cap on the 7th
+    // failure: 500 · 2⁶ · 1.5 = 48 000 uncapped ⇒ capped backoff 30 000.
+    const highJitter: Rng = { ...zeroJitter, float: () => 1 };
+    const ch = telegramChannel(channelDeps({ fetchImpl, clock, rng: highJitter, log }));
+    const ac = new AbortController();
+    const first = ch.updates(ac.signal)[Symbol.asyncIterator]().next();
+    for (let i = 0; i < 7; i++) {
+      await drain();
+      await clock.advance(30_000); // past every backoff — the next poll fires
+    }
+    await drain();
+    ac.abort(); // the empty success batch parks in the idle gap; stop there
+    await expect(first).resolves.toMatchObject({ done: true });
+
+    expect(events.map((e) => ({ kind: e.kind, payload: e.payload }))).toEqual([
+      { kind: 'bridge.poll_failed', payload: { failures: 1, backoffMs: 750 } }, // 500 · 1.5
+      { kind: 'incident.poll_down', payload: { failures: 5, error: expect.stringContaining('HTTP 500') } },
+      { kind: 'bridge.poll_failed', payload: { failures: 7, backoffMs: 30_000 } }, // the cap escalation
+    ]);
+  });
 });

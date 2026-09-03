@@ -1,0 +1,33 @@
+# Thea2 — the failure alert (P-CLOSE CL.6). A OnFailure= hook for thea2.service:
+# when the thead unit fails, PID1 runs this oneshot, which sends ONE Telegram DM
+# to the ops chat (allowedChatIds[0]) via the Bot API with plain curl — no node,
+# no repo code, nothing that can fail the way the failed unit just did.
+#
+# Provisioning (ops.md §operating): /etc/thea2/keys.env must carry THEA2_BOT_TOKEN
+# (it already does) and THEA2_OPS_CHAT_ID = config bridge.allowedChatIds[0].
+# `systemctl daemon-reload` after installing; `systemctl start thea2-alert` once
+# by hand is the wiring smoke — the DM arriving IS the test.
+
+[Unit]
+Description=Thea2 — one Telegram DM when the thead unit fails
+Documentation=file:///opt/thea2/deploy/ops.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/thea2/keys.env
+# %n = the failed unit's name; the message lands as
+# "[ops] thea2 failed: thea2.service". `-sS` (silent, still show errors) and a
+# short connect/send timeout so a dead network cannot hang PID1's job queue.
+ExecStart=/usr/bin/curl -sS --max-time 15 -o /dev/null -X POST "https://api.telegram.org/bot${THEA2_BOT_TOKEN}/sendMessage" -d chat_id=${THEA2_OPS_CHAT_ID} --data-urlencode "text=[ops] thea2 failed: %n"
+# The alert itself must never wedge the failure path: a failed DM is visible in
+# the journal (the next timer/ops pass re-checks), never retried here.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

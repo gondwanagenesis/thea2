@@ -5,10 +5,17 @@
 // never aborted, at shutdown — a half-said reply is worse than a late one.
 
 import { ingestUpdates } from '../bridge/index.js';
+import type { EventLog } from '../events/index.js';
 import type { System } from './compose.js';
 
 export interface TheadHandle {
   stop(): Promise<void>;
+  /**
+   * The system's L0 (P-CLOSE CL.5): main.ts reuses it for the
+   * unhandled-rejection incident — a second opener beside this log would fork
+   * the seq counter (the 2026-09-02 derive/thead lesson).
+   */
+  readonly events: EventLog;
 }
 
 export const startThead = (sys: System, opts: { signal?: AbortSignal | undefined } = {}): TheadHandle => {
@@ -60,5 +67,6 @@ export const startThead = (sys: System, opts: { signal?: AbortSignal | undefined
       });
       await sys.stop();
     },
+    events: sys.events,
   };
 };

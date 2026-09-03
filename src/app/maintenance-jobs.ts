@@ -4,12 +4,21 @@
 // bodies over interfaces other modules own; the one piece of policy that lives
 // HERE is lost-reply RECOVERY — what to do with a LOST_REPLY beyond alarming.
 //
-// Recovery law: a lost inbound younger than `graceMs` is re-run through the
-// pipeline exactly once per process (an in-memory set of update ids — a second
-// loss of the same message is alarmed, never looped); an older loss is alarmed
-// only (answering a question from three hours ago as if it just arrived is
-// worse than the alarm). The boot reconcile in thead.ts and the 5-min job share
-// this helper and the same set, so a boot re-run is not repeated by the job.
+// Recovery law (P-CLOSE CL.2/CL.3 — every loss terminates):
+//   younger than `graceMs`, pipeline idle, chat quiet, first sighting → the
+//     loss is re-run through the pipeline exactly once per process (an
+//     in-memory set of update ids — a second loss of the same message is
+//     alarmed, never looped);
+//   already re-run once → nothing (it stays owed; the alarm ladder escalates);
+//   ageMs ≥ graceMs → terminal `abandoned {reason:'grace'}` row (alarmed, never
+//     re-run — answering a question from three hours ago as if it just arrived
+//     is worse than the alarm);
+//   pipeline busy → deferred to the next pass (the loss may BE that turn);
+//   newer inbound/outbound on the same chat → terminal `abandoned
+//     {reason:'moved-on'}` row, and the text is pushed into the window's
+//     pending span so [EARLIER] carries it.
+// The boot reconcile in thead.ts and the 5-min job share this helper and the
+// same set, so a boot re-run is not repeated by the job.
 //
 // Failure is loud: a throwing reconcile lands `incident.reconcile_failed`, a
 // throwing snapshot lands `incident.affect_snapshot_failed`; neither ever
@@ -42,12 +51,22 @@ export interface ReplyRerunEvent {
   ageMs: number;
 }
 
+/**
+ * The window seam recovery needs (P-CLOSE CL.3): the abandoned text lands in
+ * the pending span — the [EARLIER] feedstock — never in the live window.
+ */
+export interface LostTextSink {
+  pushPending(msg: { role: 'user'; content: string; ts: number; turnId: string }): Promise<void>;
+}
+
 export interface RecoverLostDeps {
-  ledger: Pick<MessageLedger, 'reconcile' | 'linkTurn'>;
+  ledger: Pick<MessageLedger, 'reconcile' | 'linkTurn' | 'abandon' | 'markAlarmed' | 'alarmDue' | 'chatMovedOn'>;
   events: EventLog;
   /** `inbound` re-enqueues; `isBusy` defers a re-run while a turn is in flight (the loss may BE that turn). */
   pipeline: Pick<Pipeline, 'inbound' | 'isBusy'>;
-  /** Losses younger than this are re-run; default 60 min. */
+  /** Receives a moved-on loss's text so [EARLIER] can carry it (M09 window pending). */
+  window?: LostTextSink | undefined;
+  /** Losses younger than this are re-run; default 60 min (D.6-6). */
   graceMs?: number | undefined;
   /**
    * Update ids already re-run in this process. Callers that share a set
@@ -67,23 +86,48 @@ export interface RecoveryOutcome {
 const asErrorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
- * The recovery half, given a discrepancy list: alarm every LOST_REPLY (M15's
- * emitter), then re-run the young ones once. Pure over its inputs beyond the
- * pipeline enqueue and the ledger link; no clock — ages ride the discrepancy.
+ * The recovery half, given a discrepancy list and the pass's `now`: alarm every
+ * LOST_REPLY the ladder says is due (M15's emitter, ledger-backed), then
+ * re-run / terminate the young ones per the recovery law above. Pure over its
+ * inputs beyond the ledger rows and the pipeline enqueue; no clock — ages ride
+ * the discrepancy.
  */
-export const recoverLost = async (deps: RecoverLostDeps, discrepancies: readonly Discrepancy[]): Promise<number[]> => {
-  await emitLostReplyAlarms(deps.events, discrepancies);
+export const recoverLost = async (deps: RecoverLostDeps, discrepancies: readonly Discrepancy[], now: number): Promise<number[]> => {
+  await emitLostReplyAlarms(deps.events, discrepancies, deps.ledger);
   const graceMs = deps.graceMs ?? DEFAULT_RERUN_GRACE_MS;
   const rerunIds: number[] = [];
   for (const d of discrepancies) {
     if (d.kind !== 'LOST_REPLY') continue;
-    if (d.ageMs >= graceMs) continue; // too old: alarmed above, never re-run
     const updateId = d.inbound.updateId;
-    if (deps.rerun.has(updateId)) continue; // once per process
+    // Already re-run once: it stays owed — the alarm ladder (1h/6h/24h) speaks
+    // for it now, and re-running again could answer him twice.
+    if (deps.rerun.has(updateId)) continue;
+    if (d.ageMs >= graceMs) {
+      // Too old: alarmed above, never re-run — and TERMINAL (P-CLOSE CL.2):
+      // the abandon row closes the invariant so the heartbeat is never
+      // `owed`-gated by a loss that will not be answered.
+      await deps.ledger.abandon(updateId, 'grace');
+      continue;
+    }
     // A turn in flight may be the very turn reconcile is counting as lost
     // (slow model past T): re-running now would answer him twice. The next
     // pass (5 min) re-runs it if it is still owed.
     if (deps.pipeline.isBusy()) continue;
+    if (await deps.ledger.chatMovedOn(d.inbound.chatId, now - d.ageMs, updateId)) {
+      // The conversation moved on (P-CLOSE CL.3): re-running would answer a
+      // question nobody is asking anymore. The loss terminates as `moved-on`
+      // and its text still reaches her through the [EARLIER] span.
+      await deps.ledger.abandon(updateId, 'moved-on');
+      if (deps.window !== undefined && d.inbound.text !== '') {
+        await deps.window.pushPending({
+          role: 'user',
+          content: d.inbound.text,
+          ts: d.inbound.ts,
+          turnId: d.turnId ?? `lost-${updateId}`,
+        });
+      }
+      continue;
+    }
     const turnId = deps.pipeline.inbound(d.inbound);
     if (turnId === undefined) continue; // the pipeline declined (skipped/denied) — nothing to link
     deps.rerun.add(updateId);
@@ -102,7 +146,7 @@ export const recoverLost = async (deps: RecoverLostDeps, discrepancies: readonly
 export const runReconcile = async (deps: RecoverLostDeps, now: number): Promise<RecoveryOutcome> => {
   try {
     const discrepancies = await deps.ledger.reconcile(now);
-    const rerunUpdateIds = await recoverLost(deps, discrepancies);
+    const rerunUpdateIds = await recoverLost(deps, discrepancies, now);
     return { discrepancies, rerunUpdateIds };
   } catch (e) {
     try {

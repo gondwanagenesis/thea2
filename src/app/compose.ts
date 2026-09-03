@@ -14,9 +14,17 @@
 import { readFileSync } from 'node:fs';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fail, makeRng, SystemClock, TestClock, type Clock, type Rng } from '../kernel/index.js';
+import { canonicalJson, fail, makeRng, SystemClock, TestClock, type Clock, type Rng } from '../kernel/index.js';
 import { openEventLog, type EventLog } from '../events/index.js';
-import { createZaiClient, makeRouter, MockModel, type ModelClient } from '../model/index.js';
+import {
+  chatCore,
+  createModelClient,
+  makeRouter,
+  MockModel,
+  zaiTransport,
+  type ModelClient,
+  type Transport,
+} from '../model/index.js';
 import { makeHashEmbedder, type Embedder } from '../embed/index.js';
 import { openAffectStore, type AffectStore } from '../affect/index.js';
 import { setDominanceBaseline } from '../affect/vocab.js';
@@ -67,7 +75,7 @@ import type { ProbeTarget } from '../probes/index.js';
 import { makePipeline, type Pipeline } from './pipeline.js';
 import { makeEmbedder } from './embedder.js';
 import { affectSnapshotJob, reconcileJob, runReconcile, type RecoverLostDeps } from './maintenance-jobs.js';
-import type { Thea2Config } from './config.js';
+import type { Thea2Config, ResolvedDoor } from './config.js';
 
 export type ComposePreset = 'prod' | 'hermetic' | 'probe-harness';
 
@@ -140,6 +148,29 @@ const readCanon = (file: string): string => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// L0 stderr mirror (P-CLOSE CL.6): the events an operator must be able to find
+// with `journalctl -u thea2 -p err` are mirrored ONE LINE to stderr as they
+// emit. The `<3>` prefix is the syslog error priority systemd reads, so the
+// journal files them at err without any journald configuration.
+// ---------------------------------------------------------------------------
+
+const STDERR_MIRROR_RE = /^(?:incident\.|bridge\.lost_reply$|sched\.alarm$)/;
+
+export const withStderrMirror = (log: EventLog): EventLog => ({
+  emit: async (kind, payload, turnId) => {
+    if (STDERR_MIRROR_RE.test(kind)) {
+      try {
+        process.stderr.write(`<3>thea2 ${kind} ${canonicalJson(payload)}\n`);
+      } catch {
+        // stderr gone (journald restart): L0 still gets the event below.
+      }
+    }
+    return log.emit(kind, payload, turnId);
+  },
+  replay: (filter) => log.replay(filter),
+});
+
 export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', opts: ComposeOpts = {}): Promise<System> => {
   // ---- kernel ------------------------------------------------------------
   const clock = opts.clock ?? (preset === 'prod' ? new SystemClock() : new TestClock(0));
@@ -177,7 +208,10 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   }
 
   // ---- L0 event log ------------------------------------------------------
-  const events = openEventLog(paths.events, { clock });
+  // The stderr mirror rides prod only (P-CLOSE CL.6): hermetic suites emit
+  // incidents deliberately and must not spam the captured stderr.
+  const rawEvents = openEventLog(paths.events, { clock });
+  const events = preset === 'prod' ? withStderrMirror(rawEvents) : rawEvents;
   await events.emit('app.boot', { stage: 'events', preset });
 
   // ---- embedder ----------------------------------------------------------
@@ -209,7 +243,14 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   const coupling = compileCoupling(readCanon(path.resolve(canon, '..', '..', 'coupling.yaml')));
   const gate = compileGate(readCanon(path.join(canon, 'inhibitions.yaml')), {
     ownerChatId: String(cfg.bridge.allowedChatIds[0]),
-    secrets: [cfg.bridge.botToken, cfg.models.apiKey],
+    // Every door key the process holds must be gate-invisible, not just the voice key.
+    secrets: [
+      cfg.bridge.botToken,
+      cfg.models.apiKey,
+      cfg.models.doors.mind.apiKey,
+      cfg.models.doors.judge.apiKey,
+      ...(cfg.models.doors.voiceFallback !== undefined ? [cfg.models.doors.voiceFallback.apiKey] : []),
+    ],
     knownTools: tools.names(),
   });
   await events.emit('app.boot', { stage: 'gates' });
@@ -221,24 +262,44 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   } else if (preset === 'hermetic') {
     model = new MockModel({ clock });
   } else {
+    // P-DOOR: one transport per door, keyed by tier (main→voice, cheap→mind,
+    // reasoning→judge). voiceFallback ships in config for the D.6-1 swap and
+    // later packages; the tiers resolve through the router's door table.
+    const doors = cfg.models.doors;
     const tiers = {
-      main: cfg.models.tiers.main,
-      cheap: cfg.models.tiers.cheap,
-      reasoning: cfg.models.tiers.reasoning ?? cfg.models.tiers.main, // only two tiers configured: judge rides main
+      main: doors.voice.model,
+      cheap: doors.mind.model,
+      reasoning: doors.judge.model,
     };
     // M18's guarded reader: absent file = no overrides; a malformed file is a
     // typed throw (startup failure — silently ignoring a hand edit would make
     // the Ledger propose against a table it cannot see).
     const routing = await readRoutingTable(path.resolve(paths.base, 'var', 'routing.json'));
-    model = createZaiClient({
-      apiKey: cfg.models.apiKey,
-      endpoint: cfg.models.endpoint,
-      protocol: cfg.models.protocol,
+    const doorTransport = (d: ResolvedDoor, name: string): Transport =>
+      zaiTransport({
+        apiKey: d.apiKey,
+        endpoint: d.endpoint,
+        protocol: d.protocol,
+        clock,
+        rng: rng.fork(`door-${name}`),
+        ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
+      });
+    model = createModelClient({
       log: events,
-      router: makeRouter({ log: events, ...(routing.length > 0 ? { routing } : {}), tiers }),
       clock,
-      rng: rng.fork('model'),
-      ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
+      core: chatCore({
+        router: makeRouter({
+          log: events,
+          tiers,
+          doors: { voice: doors.voice, mind: doors.mind, judge: doors.judge },
+          ...(routing.length > 0 ? { routing } : {}),
+        }),
+        doors: {
+          main: { door: doors.voice, send: doorTransport(doors.voice, 'voice') },
+          cheap: { door: doors.mind, send: doorTransport(doors.mind, 'mind') },
+          reasoning: { door: doors.judge, send: doorTransport(doors.judge, 'judge') },
+        },
+      }),
     });
   }
 
@@ -342,6 +403,16 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     ledger,
     events,
     pipeline,
+    // P-CLOSE CL.3: a moved-on loss's text lands in the window's pending span
+    // (the [EARLIER] feedstock) when recovery abandons it. The capability is
+    // optional in M09's type (old fakes stay valid); the real window always
+    // provides it — absence is a boot failure, never a silent drop.
+    window: {
+      pushPending: async (m) => {
+        if (window.pushPending === undefined) return fail('app/boot-failed', 'stage pipeline: the session window lacks pushPending');
+        await window.pushPending(m);
+      },
+    },
     rerun: reconcileRerun,
   };
   if (opts.jobs === undefined) {

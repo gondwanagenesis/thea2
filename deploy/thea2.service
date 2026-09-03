@@ -1,6 +1,7 @@
 # Thea2 — the ONE process. ADR-002: bridge + scheduler + turn pipeline live in
 # a single `thead` process; M16's in-process scheduler replaces Thea1's 97 systemd
-# units. Total Thea2 footprint: this unit + the backup service/timer.
+# units. Total Thea2 footprint: this unit + the alert unit (OnFailure) + the
+# backup service/timer.
 #
 # SECRETS: EnvironmentFile is read by PID1 (root) before the User= drop, so
 # /etc/thea2/keys.env can stay root-owned 0600. Tokens never live in this tree
@@ -12,6 +13,10 @@ Description=Thea2 — thead (bridge + scheduler + pipeline, one process)
 Documentation=file:///opt/thea2/deploy/ops.md
 After=network-online.target
 Wants=network-online.target
+# P-CLOSE CL.6: a dead thead is HEARD, not discovered — one Telegram DM to the
+# ops chat the moment this unit fails (restart storms included: OnFailure fires
+# per failed start, the DM is the pager, ops.md §failure playbook the runbook).
+OnFailure=thea2-alert.service
 
 [Service]
 Type=simple
