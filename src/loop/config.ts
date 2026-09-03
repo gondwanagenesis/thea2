@@ -72,10 +72,11 @@ const THINKING_DEFAULTS: ThinkingTable = {
   // detection, not a rejected field. (glm-5.3 accepts 'disabled' — the
   // asymmetry is the door's, and M03 documents it.)
   // Judge-family: reasoning is the work.
-  // Committee nodes (ponder GATE/SEED/GROUND/ARTIFACT, spawn committees):
-  // flash starves them to empty JSON without thinking (incident.life_failed
-  // 'artifact did not return JSON: empty input', post-deploy 2026-09-03).
-  committee: { type: 'enabled', budget_tokens: THINKING_BUDGET_TOKENS },
+  // ponder-seed IS the ponder committee's class (committee.ts): reasoning is
+  // the work, 'disabled' is door-rejected on flash, and OMITTED = door default
+  // thinking on an unpadded budget = the 'artifact did not return JSON'
+  // starvation seen in prod (2026-09-03).
+  'ponder-seed': { type: 'enabled', budget_tokens: THINKING_BUDGET_TOKENS },
   appraisal: { type: 'enabled', budget_tokens: THINKING_BUDGET_TOKENS },
   consolidate: { type: 'enabled', budget_tokens: THINKING_BUDGET_TOKENS },
   derive: { type: 'enabled', budget_tokens: THINKING_BUDGET_TOKENS },
