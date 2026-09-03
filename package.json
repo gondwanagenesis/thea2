@@ -16,7 +16,7 @@
     "test:c1": "npm run test:c1a && npm run test:c1b",
     "test:c2": "vitest run test/bridge test/consolidate test/coupling test/corpus test/derive test/embed test/events test/inhibit test/kernel",
     "test:a": "npm run test:c1 && npm run test:c2",
-    "test:b": "vitest run test/life test/loop test/memory test/model test/probes test/realize test/sched test/siblings src",
+    "test:b": "vitest run test/life test/loop test/memory test/model test/probes test/realize test/sched test/siblings test/spine src",
     "test:cover": "tsx scripts/test-chunks-cover.ts",
     "depcruise": "depcruise src test",
     "verify": "tsx scripts/verify-schemas.ts",

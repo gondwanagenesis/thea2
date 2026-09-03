@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import yaml from 'js-yaml';
 import { z } from 'zod';
 import type { Door, DoorName } from '../model/index.js';
+import type { SpineBlockYaml } from '../spine/index.js';
+import { spineBlockSchema } from '../spine/index.js';
 
 /**
  * A resolved door: the yaml registry shape plus the key RESOLVED FROM ENV
@@ -59,6 +61,12 @@ export interface Thea2Config {
   gravity: { seedWeight: number }; // g, default 0.7
   reconcile: { lostReplyWindowMin: number };
   embedder: { kind: 'fastembed' | 'api' | 'hash'; model?: string | undefined };
+  /**
+   * M21: the pinned OpenCode spine child. Absent ⇒ absent registration — the
+   * native loop serves (rule 5). Present ⇒ compose constructs the runner; the
+   * `opencode` binary must be provisioned first (M.6, install.sh block).
+   */
+  spine?: SpineBlockYaml | undefined;
 }
 
 export interface ConfigIssue {
@@ -245,6 +253,7 @@ const configSchema = z.strictObject({
     kind: z.enum(['fastembed', 'api', 'hash']),
     model: z.string().min(1).optional(),
   }),
+  spine: spineBlockSchema.optional(),
 });
 
 type YamlConfig = z.infer<typeof configSchema>;
@@ -390,5 +399,6 @@ export const loadConfig = (
     gravity: { seedWeight: y.gravity.seedWeight },
     reconcile: y.reconcile,
     embedder: y.embedder,
+    ...(y.spine !== undefined ? { spine: y.spine } : {}),
   };
 };
