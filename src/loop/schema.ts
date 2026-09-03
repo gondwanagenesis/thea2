@@ -120,5 +120,20 @@ export const SPAWN_REFUSED_INCIDENT = 'incident.spawn_refused';
 export const TOOL_TIMEOUT_INCIDENT = 'incident.tool_timeout';
 /** Context assembly threw — the turn locks a failure silence and says so. */
 export const ASSEMBLE_FAILED_INCIDENT = 'incident.assemble_failed';
+/**
+ * A runtime throw from assess/mediate/repair/gate (FA.1): the turn locks a
+ * failure silence and names the error's code. Structural loop sins
+ * (LoopError) are NOT this incident — those stay exceptions by design.
+ */
+export const TURN_ABORTED_INCIDENT = 'incident.turn_aborted';
 /** The model answered in prose instead of calling `decide`; the prose was folded deterministically. */
 export const DECISION_PROSE_FOLDED = 'decision.prose_folded';
+
+/** FA.1 — the payload of `incident.turn_aborted`. */
+export const TurnAbortedPayloadSchema = z.object({
+  turnId: z.string().min(1),
+  /** The error's namespaced code ('model/timeout', 'model/aborted', 'unknown', ...). */
+  code: z.string().min(1),
+  /** Which catch locked the silence: the loop body, or the pipeline's runLoop wrap. */
+  stage: z.enum(['loop', 'pipeline']),
+});

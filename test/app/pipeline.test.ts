@@ -6,6 +6,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { PACKET_RECORD_KIND } from '../../src/consolidate/index.js';
+import { modelError, MockModel, type ModelClient } from '../../src/model/index.js';
+import { loopError, TURN_ABORTED_INCIDENT } from '../../src/loop/index.js';
 import { bootApp, inboundMsg, runToQuiescent, settle, decisionJson, enqueueAppraisal, type AppHarness } from './helpers.js';
 import { startThead } from '../../src/app/index.js';
 import type { LedgerRow } from '../../src/bridge/types.js';
@@ -243,6 +245,88 @@ describe('the L0 boundary', () => {
     const reactions: string[] = [];
     for await (const e of h.sys.events.replay()) if (e.kind === 'memory.reaction') reactions.push((e.payload as { emoji: string }).emoji);
     expect(reactions).toEqual(['❤️']);
+    await handle.stop();
+  });
+});
+
+describe('turn failure posture (P-FAST FA.1): the turn never throws past the pipeline', () => {
+  const decisionRows = async (h: AppHarness): Promise<LedgerRow[]> => {
+    const rows: LedgerRow[] = [];
+    for await (const r of h.sys.ledger.read()) if (r.kind === 'decision') rows.push(r);
+    return rows;
+  };
+
+  it('deadline-abort-locks-failure-silence-with-ledger-row', { timeout: 30_000 }, async () => {
+    // A voice door that hangs forever; only the turn's own deadline signal ends it.
+    const hang: ModelClient = {
+      chat: (_req, ctx) =>
+        ctx?.signal === undefined
+          ? Promise.reject(modelError('model/timeout', 'no budget left for side calls')) // the afterturn is not owed a hang
+          : new Promise<never>((_, reject) => {
+              ctx.signal!.addEventListener('abort', () => reject(modelError('model/aborted', 'chat aborted by caller signal')), {
+                once: true,
+              });
+            }),
+    };
+    const h = await bootApp({ model: hang as unknown as MockModel });
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inboundMsg({ updateId: 581, msgId: 981 }));
+    await runToQuiescent(h); // the 30s budget fires mid-advance; the turn still lands
+
+    expect(h.sys.pipeline.lastDecision()).toMatchObject({ plan: 'silent', decidedBy: 'failure' });
+    const rows = await decisionRows(h);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ plan: 'silent', decidedBy: 'failure' });
+    const aborted: Array<{ payload: unknown }> = [];
+    for await (const e of h.sys.events.replay()) if (e.kind === TURN_ABORTED_INCIDENT) aborted.push(e);
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0]?.payload).toMatchObject({ code: 'model/aborted', stage: 'loop' });
+    await handle.stop();
+  });
+
+  it('the user text enters the window on a failed turn', { timeout: 30_000 }, async () => {
+    const h = await bootApp();
+    const handle = startThead(h.sys);
+    h.model.onTask('turn', () => ({ error: { code: 'model/http-error', message: 'voice door 500' } }));
+    h.channel.queueInbound(inboundMsg({ updateId: 591, msgId: 991, text: 'are you still there' }));
+    await runToQuiescent(h);
+
+    expect(h.sys.pipeline.lastDecision()).toMatchObject({ plan: 'silent', decidedBy: 'failure' });
+    // the failure silence is still an exchange: his words stay in the verbatim window
+    expect(h.sys.window.messages().some((m) => m.role === 'user' && m.content === 'are you still there')).toBe(true);
+    const rows = await decisionRows(h);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ plan: 'silent', decidedBy: 'failure' });
+    const aborted: Array<{ payload: unknown }> = [];
+    for await (const e of h.sys.events.replay()) if (e.kind === TURN_ABORTED_INCIDENT) aborted.push(e);
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0]?.payload).toMatchObject({ code: 'model/http-error', stage: 'loop' });
+    await handle.stop();
+  });
+
+  it('a throw that escapes the loop still locks the failure silence (ledger row + window)', { timeout: 30_000 }, async () => {
+    // A structural error rethrown past the loop's own catch lands in the
+    // pipeline's runLoop wrap: the ledger keeps the reply owed, the window
+    // keeps his words — a dead turn never erases the exchange.
+    const broken: ModelClient = {
+      chat: async () => {
+        throw loopError('loop/decision-invalid', 'synthetic structural failure');
+      },
+    };
+    const h = await bootApp({ model: broken as unknown as MockModel });
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inboundMsg({ updateId: 601, msgId: 1001, text: 'say something' }));
+    await runToQuiescent(h);
+
+    expect(h.sys.pipeline.lastDecision()).toMatchObject({ plan: 'silent', decidedBy: 'failure' });
+    const rows = await decisionRows(h);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ plan: 'silent', decidedBy: 'failure' });
+    expect(h.sys.window.messages().some((m) => m.role === 'user' && m.content === 'say something')).toBe(true);
+    const aborted: Array<{ payload: unknown }> = [];
+    for await (const e of h.sys.events.replay()) if (e.kind === TURN_ABORTED_INCIDENT) aborted.push(e);
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0]?.payload).toMatchObject({ code: 'loop/decision-invalid', stage: 'pipeline' });
     await handle.stop();
   });
 });

@@ -21,6 +21,7 @@ import type {
   LoopEntry,
   LoopPacket,
   LoopQuery,
+  ToolRegistry,
   ToolRegistryEntry,
   Vec12,
 } from '../../src/loop/index.js';
@@ -220,6 +221,9 @@ export interface HarnessOptions {
   /** Extra model rule (registered after the harness's own needs). */
   rule?: (m: MockModel) => void;
   strictModel?: boolean;
+  /** Base tool registry override (default: echo + wedged). Additive (P-FAST):
+   * lets a suite prove the offered def set against a bare registry. */
+  tools?: ToolRegistry;
 }
 
 export const makeHarness = (opts: HarnessOptions = {}): LoopHarness => {
@@ -231,9 +235,11 @@ export const makeHarness = (opts: HarnessOptions = {}): LoopHarness => {
   const assembleSpy: AssembleSpy = { queries: [] };
   const echoSeen: EchoRecord[] = [];
   const wedged = wedgedTool();
-  const tools = createToolRegistry();
-  tools.register(echoEntry(echoSeen));
-  tools.register(wedged.entry);
+  const tools = opts.tools ?? createToolRegistry();
+  if (opts.tools === undefined) {
+    tools.register(echoEntry(echoSeen));
+    tools.register(wedged.entry);
+  }
   const cfg = resolveLoopConfig(opts.cfg ?? {});
   const deps: LoopDeps = {
     model,

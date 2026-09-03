@@ -38,7 +38,7 @@ export type {
 } from './types.js';
 
 export { LOOP_CONFIG_DEFAULTS, resolveLoopConfig } from './config.js';
-export type { LoopConfig, InhibitionPlacement } from './config.js';
+export type { LoopConfig, InhibitionPlacement, SpawnsMode, TurnTransportConfig } from './config.js';
 
 export { LoopError, loopError, failLoop } from './errors.js';
 export type { LoopErrorCode } from './errors.js';
@@ -57,6 +57,7 @@ export {
   decisionIssue,
   DelegationPayloadSchema,
   GateLoopPayloadSchema,
+  TurnAbortedPayloadSchema,
   verdictRuleId,
   DELEGATION_KIND,
   DECISION_LOCKED_KIND,
@@ -65,6 +66,7 @@ export {
   SPAWN_REFUSED_INCIDENT,
   TOOL_TIMEOUT_INCIDENT,
   ASSEMBLE_FAILED_INCIDENT,
+  TURN_ABORTED_INCIDENT,
   DECISION_PROSE_FOLDED,
   DecidedBySchema,
 } from './schema.js';

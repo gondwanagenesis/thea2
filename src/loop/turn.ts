@@ -8,7 +8,7 @@
 // ONLY from `response.toolCalls` (the wire field). Nothing in this module
 // inspects prose for a call shape — tool-shaped JSON inside content is text.
 
-import { z } from 'zod';
+import { z, type ZodType } from 'zod';
 import { MAX_GATE_REENTRIES } from '../inhibit/index.js';
 import { asError, canonicalJson, newId } from '../kernel/index.js';
 import type { Clock, Rng } from '../kernel/index.js';
@@ -120,6 +120,30 @@ const toolChoiceFor = (defs: readonly ToolDef[]): { name: string } | undefined =
 export const thinkingFor = (cfg: LoopConfig, taskClass: TaskClass): ThinkingControl | undefined =>
   cfg.thinking?.[taskClass];
 
+/**
+ * DR.7 — the request-side validators: every OFFERED registry tool's zod input
+ * rides the request (`ChatRequest.toolInput`), so a call whose arguments miss
+ * the tool's schema is caught and repaired at the model layer (one cheap
+ * re-ask, doubled budget) instead of being rejected after execution was
+ * attempted. `decide` is deliberately absent — the decision parse is
+ * loop-owned (M13's documented law); the model layer still coerces
+ * `decide.bubbles` mechanically. Undefined when only `decide` is offered.
+ * The registry states `input` structurally, but every registration is a zod
+ * schema by construction — the cast is the seam that hands it to M03 without
+ * a compile-time edge (the DAG forbids model → loop).
+ */
+const toolInputFor = (state: TurnState, defs: readonly ToolDef[]): Record<string, ZodType> | undefined => {
+  const map: Record<string, ZodType> = {};
+  for (const d of defs) {
+    if (d.name === DECIDE_TOOL_NAME) continue;
+    // `?.` — a test double may carry a partial TurnState (the toolchoice.test
+    // precedent: only what assess strictly needs); absent registry ⇒ no validators.
+    const e = state.tools?.get(d.name);
+    if (e !== undefined) map[d.name] = e.input as unknown as ZodType;
+  }
+  return Object.keys(map).length > 0 ? map : undefined;
+};
+
 /** One assess call: native tool defs attached, NO schema — a decision arrives as
  * a native `decide` call (or as content, folded/parsed by the loop); a tool
  * round arrives as native tool_calls (schema + tools would force M03's
@@ -134,6 +158,7 @@ export const assess = (
 ): Promise<ChatResponse> => {
   const toolChoice = toolChoiceFor(defs);
   const thinking = thinkingFor(state.cfg, opts.taskClass);
+  const toolInput = toolInputFor(state, defs);
   return state.model.chat(
     {
       taskClass: opts.taskClass,
@@ -142,6 +167,7 @@ export const assess = (
       tools: [...defs],
       ...(toolChoice !== undefined ? { toolChoice } : {}),
       ...(thinking !== undefined ? { thinking } : {}),
+      ...(toolInput !== undefined ? { toolInput } : {}),
       maxTokens: state.cfg.assessMaxTokens,
       temperature: state.cfg.assessTemperature,
     },
@@ -155,6 +181,14 @@ export const assess = (
 
 const SPAWN_NAMES = new Set(['fork', 'task', 'committee']);
 export const isSpawnName = (name: string): boolean => SPAWN_NAMES.has(name);
+
+/**
+ * FA.3 (D.6-8) — the entries that may delegate. Under `cfg.spawns:'auto'` the
+ * spawn primitives are registered ONLY for these entries, so a user turn
+ * offers `decide` alone. 'followup' joins here when P-CAST lands (W3; the
+ * spine plan's S2.2 amends user turns to `decide` + Task at the same time).
+ */
+export const SPAWN_ENTRY_KINDS: readonly EntryKind[] = ['heartbeat', 'ponder'];
 
 export interface Execution {
   call: ToolCall;

@@ -16,7 +16,9 @@ const inbound = (text = 'look into this for me'): InboundMsg => ({
 });
 
 const entry = (over: Partial<Parameters<LoopHarness['run']>[0]> = {}): Parameters<LoopHarness['run']>[0] => ({
-  kind: 'user-turn',
+  // FA.3: spawns ride ponder/heartbeat entries only — a user turn offers
+  // `decide` alone, so every delegation mechanic below runs on a ponder entry.
+  kind: 'ponder',
   inbound: inbound(),
   ...over,
 });
@@ -170,11 +172,13 @@ describe('spawn caps', () => {
 describe('subprocess edges', () => {
   it('a subprocess inherits the gate: its blocked tool call is denied and re-injected too', async () => {
     const h = makeHarness();
+    // heartbeat, not ponder: the fixture yaml allowlists web_search on ponder
+    // only, so the denial actually fires on this entry
     enqueueToolRound(h.model, [{ name: 'fork', args: { brief: 'go search' } }]);
     h.model.enqueue({ toolCalls: [{ id: 's1', name: 'web_search', args: { q: 'blocked' } }] }); // denied inside the fork
     h.model.enqueue({ content: 'gave up politely' }); // the fork answers after the hint
     enqueueDecision(h.model, { bubbles: ['main done'] });
-    const d = await h.run(entry());
+    const d = await h.run({ kind: 'heartbeat', inbound: inbound() });
     const forkCall = h.model.calls[2]!; // the fork's second assess, after the denial
     expect(forkCall.messages.some((m) => m.role === 'tool' && m.content.includes('[INHIBITION:loop-no-search]'))).toBe(true);
     expect(d.spawns[0]?.outcome).toBe('gave up politely');

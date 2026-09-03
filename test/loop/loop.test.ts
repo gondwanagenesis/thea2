@@ -204,7 +204,7 @@ normalize:
   });
 });
 
-describe('the decision repair ladder (exactly ONE cheap-tier repair)', () => {
+describe('the decision repair ladder (exactly ONE repair, on the voice door)', () => {
   it('JSON-shaped malformed assess response -> one repair -> locked decision', async () => {
     const h = makeHarness();
     h.model.enqueue({ content: '{"plan": "reply", "bubbles": ["hi"], "confidence": ' });
@@ -213,7 +213,8 @@ describe('the decision repair ladder (exactly ONE cheap-tier repair)', () => {
     expect(d.bubbles).toEqual(['repaired']);
     expect(h.model.calls).toHaveLength(2);
     const repair = h.model.calls[1]!;
-    expect(repair.tier).toBe('cheap');
+    // FA.4: the repair is the same logical call as assess — the voice door
+    expect(repair.tier).toBe('main');
     expect(repair.temperature).toBe(0);
     expect(repair.messages.at(-1)?.content).toContain('could not be parsed');
     expect(h.events.kinds(DECISION_PARSE_INCIDENT)).toHaveLength(0);
@@ -242,16 +243,18 @@ describe('the decision repair ladder (exactly ONE cheap-tier repair)', () => {
     expect(incidents[0]?.payload).toMatchObject({ schema: 'DecisionObject', rung: 'repair' });
   });
 
-  it('tool args that miss the tool schema are answered, not fatal', async () => {
+  it('tool args that miss the tool schema are repaired at the door (DR.7), then answered', async () => {
     const h = makeHarness();
     h.model.enqueue({ toolCalls: [{ id: 'c0', name: 'echo', args: { wrong: 42 } }] });
+    // the model layer's one-shot tool-args repair, keyed by call id (DR.7)
+    h.model.enqueue({ content: JSON.stringify({ c0: { text: 'ping' } }) });
     enqueueDecision(h.model, { bubbles: ['ok'] });
     const d = await h.run(entry());
-    expect(d.toolTrace[0]?.result).toMatchObject({ error: 'args-schema' });
-    const answer = h.model.calls[1]?.messages.find((m) => m.role === 'tool');
-    expect(answer?.content).toContain('[rejected]');
-    expect(answer?.content).toContain('echo');
+    expect(d.toolTrace[0]?.result).toBe('echo:ping');
     expect(d.plan).toBe('reply');
+    // the repair re-ask keeps the requesting tier and doubles the budget (DR.6)
+    expect(h.model.calls[1]?.tier).toBe('main');
+    expect(h.model.calls[1]?.maxTokens).toBe(h.cfg.assessMaxTokens * 2);
   });
 });
 
@@ -271,7 +274,8 @@ describe('native function-calling invariant', () => {
     const h = makeHarness();
     enqueueToolRound(h.model, [{ name: 'echo', args: { text: 'x' } }]);
     enqueueDecision(h.model, {});
-    await h.run(entry());
+    // FA.3: the spawn primitives ride ponder entries, so the def-set proof runs there
+    await h.run(entry({ kind: 'ponder', goal: 'def-set proof' }));
     for (const req of h.model.calls) {
       expect(Array.isArray(req.tools)).toBe(true);
       expect(toolNamesOnWire(req)).toEqual(expect.arrayContaining(['echo', 'wedged', 'fork', 'task', 'committee']));

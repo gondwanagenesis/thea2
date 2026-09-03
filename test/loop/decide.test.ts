@@ -38,7 +38,9 @@ describe('the wire carries the contract', () => {
     await h.run(entry());
     const call = h.model.calls[0]!;
     expect(call.tools?.[0]?.name).toBe(DECIDE_TOOL_NAME);
-    expect(call.tools?.map((t) => t.name)).toEqual(expect.arrayContaining(['echo', 'fork', 'task', 'committee']));
+    // FA.3: a user turn offers no spawn primitives — the base registry only
+    expect(call.tools?.map((t) => t.name)).toEqual(expect.arrayContaining(['echo', 'wedged']));
+    expect(call.tools?.map((t) => t.name)).not.toContain('fork');
     const head = call.messages[0]!;
     expect(head.role).toBe('system');
     expect(head.content).toContain(OUTPUT_CONTRACT);
@@ -46,10 +48,11 @@ describe('the wire carries the contract', () => {
 
   it('a subprocess worker never sees `decide` — it answers in content', async () => {
     const h = makeHarness();
+    // FA.3: spawns ride ponder/heartbeat entries, so the delegation runs there
     enqueueToolRound(h.model, [{ name: 'task', args: { brief: 'count to three' } }]);
     h.model.enqueue({ content: 'one two three' }); // the worker's answer
     enqueueDecision(h.model, { bubbles: ['three'] });
-    await h.run(entry());
+    await h.run({ kind: 'ponder', goal: 'counting' });
     const worker = h.model.calls[1]!;
     expect(worker.tools?.map((t) => t.name)).not.toContain(DECIDE_TOOL_NAME);
     expect(worker.messages[0]?.content).not.toContain('[OUTPUT]');
@@ -89,7 +92,8 @@ describe('a native `decide` call locks the decision — no repair, no second cal
     expect(d.bubbles).toEqual(['repaired']);
     expect(d.decidedBy).toBe('model');
     expect(h.model.calls).toHaveLength(2);
-    expect(h.model.calls[1]?.tier).toBe('cheap');
+    // FA.4: the repair rides the voice door, same as assess
+    expect(h.model.calls[1]?.tier).toBe('main');
   });
 
   it('`decide` after a tool round: the round is mediated, then the decision locks', async () => {

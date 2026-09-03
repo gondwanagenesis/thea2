@@ -29,8 +29,8 @@ import {
   type SessionWindow,
 } from '../memory/index.js';
 import type { AffectStore } from '../affect/index.js';
-import { runLoop, type LoopConfig, type LoopDeps, type LoopPacket, type LoopQuery } from '../loop/index.js';
-import type { DecisionObject, ToolRegistry } from '../loop/index.js';
+import { TURN_ABORTED_INCIDENT, runLoop, type DecisionObject, type LoopConfig, type LoopDeps, type LoopEntry, type LoopPacket, type LoopQuery, type ToolRegistry } from '../loop/index.js';
+import { asError } from '../kernel/index.js';
 import { realize } from '../realize/index.js';
 import type { Channel, InboundMsg, MessageLedger } from '../bridge/index.js';
 import type { EventLog } from '../events/index.js';
@@ -265,15 +265,41 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
       cfg: deps.loopCfg,
     };
 
-    const decision = await runLoop(
-      {
-        kind: item.kind ?? 'user-turn',
-        inbound: m,
+    const entry: LoopEntry = {
+      kind: item.kind ?? 'user-turn',
+      inbound: m,
+      turnId,
+      ...(item.goal !== undefined ? { goal: item.goal } : {}),
+    };
+
+    // FA.1 — the loop survives its own runtime failures as values; a throw that
+    // still escapes it (a structural LoopError, or anything thrown around it)
+    // is folded HERE into the same value: the ledger keeps the reply owed
+    // (decidedBy 'failure') and his words stay in the verbatim window. A dead
+    // turn never erases the exchange.
+    let decision: DecisionObject;
+    try {
+      decision = await runLoop(entry, loopDeps);
+    } catch (e) {
+      void deps.events.emit(
+        TURN_ABORTED_INCIDENT,
+        { turnId, code: asError(e).code, stage: 'pipeline' },
         turnId,
-        ...(item.goal !== undefined ? { goal: item.goal } : {}),
-      },
-      loopDeps,
-    );
+      );
+      decision = {
+        turnId,
+        plan: 'silent',
+        decidedBy: 'failure',
+        bubbles: [],
+        confidence: 0,
+        weight: 0,
+        reluctance: 1,
+        completeness: 1,
+        toolTrace: [],
+        spawns: [],
+        inhibitions: [],
+      };
+    }
     last = decision;
 
     // Decision row lands BEFORE realization: a crash mid-send still shows the
