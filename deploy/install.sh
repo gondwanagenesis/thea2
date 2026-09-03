@@ -27,7 +27,9 @@ id -u thea2 >/dev/null 2>&1 || useradd --system --home-dir "$PREFIX" --shell /us
 # Not a git checkout (or no git): the rule cannot be enforced, so it degrades
 # to a loud warning rather than either blocking the install or passing silent.
 if git -C "$SRC" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  if [ -n "$(git -C "$SRC" status --porcelain 2>/dev/null)" ]; then
+  # Tracked dirt only: the deploy target's own runtime artifacts (bin/,
+  # corpus/derived/, var/) are untracked by design and must not block a redeploy.
+  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
     echo ">> $SRC has uncommitted changes — commit or stash first (deploy/ops.md §2)"; exit 1
   fi
 else
