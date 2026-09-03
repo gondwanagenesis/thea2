@@ -1,7 +1,7 @@
 ---
 title: Thea2 — Agent Execution Protocol
-syncedTo: spec-v1 (no code yet)
-date: 2026-09-01
+syncedTo: S8 as-built (2026-09-02)
+date: 2026-09-02
 ---
 
 # AGENTS.md — how AI coding agents work in this repo
@@ -25,15 +25,15 @@ You do NOT need the project's full history. Your module spec + this file + the D
 2. **TDD, literally.** Write the failing test from your spec's acceptance criteria first. Implement the simplest thing that passes. Refactor green. Every bug you discover — yours or upstream — gets a named regression test before the fix.
 3. **Determinism is law.** No `Date.now()`, `new Date()`, `Math.random()`, `setTimeout` in module code — inject `Clock` and `Rng` from M01-kernel. No network in tests — use MockModel, HashEmbedder/FixedEmbedder, FakeChannel, TestClock. If your test needs a real service, it is not a test, it is a probe (see `probes/`).
 4. **Definition of done** — all of, in order:
-   - Your module's suite passes: `pnpm vitest run src/<module>`
-   - The FULL gate passes: `pnpm lint && pnpm depcruise && pnpm test`
+   - Your module's suite passes: `npx vitest run src/<module>`
+   - The FULL gate passes: `npm run lint && npm run depcruise && npm test`
    - Acceptance criteria in your module spec are each covered by a named test (map them in your final report).
    - Documentation duty (below) discharged.
    - You did not break, disable, skip, or loosen any unrelated test. Never edit another module's tests to make yours pass.
 5. **No silent capability stubs.** Do not publish an interface that throws "not implemented". Unbuilt capability = absent registration (nominator not registered, job not scheduled, tool not in registry). The system must always boot and run with whatever exists.
 6. **Constants are load-bearing.** Affect mechanics constants, quota numbers, thresholds, caps — they come from the specs verbatim (many were extracted from Thea1's proven engine). Changing one is a design decision: propose it in your report; do not just do it.
 7. **Secrets never enter the repo.** Bot tokens and API keys come from env / `keys.env` outside the tree. If you find a secret-shaped string in a fixture, replace it and flag it.
-8. **Corpus discipline.** `corpus/canon/` is human-edited — agents never write it (only `scripts/` tooling and the human). `corpus/derived/` is written only by M08's pipeline. `corpus/lived/` only by M10's consolidators. `corpus/proposals/` only by M10, merged only by the human. Corpus content law (2026-09-01): exemplars assert TALKING STYLE only — never shared history, named third parties, Diego's biography or project specifics, or past tool outcomes. Real content enters at runtime via memory recall + affect + assembly; her own environment may carry continuity. Full text: corpus/proposals/README.md.
+8. **Corpus discipline.** `corpus/canon/` is human-edited — agents never write it (only `scripts/` tooling and the human). `corpus/derived/` is written only by M08's pipeline. `corpus/lived/` only by M10's consolidators. `corpus/proposals/` only by M10, merged only by the human. Corpus content law (2026-09-01, owner-calibrated 2026-09-02): exemplars assert TALKING STYLE, jokes, and present-tense tastes — never shared history, named third parties, Diego's biography or project specifics, past tool outcomes, or invented memories/past events for her. Concrete taste is hers to have (she can like sea glass); a biography is not hers to invent. Real content enters at runtime via memory recall + affect + assembly; her own environment may carry continuity. Full text: corpus/proposals/README.md + corpus/README.md (the laws).
 9. **Failure must be loud.** If your module swallows an error, it must emit an incident event. "It logged to console" is not loud; events are.
 
 ## Documentation duty
@@ -51,7 +51,7 @@ Docs stay synced with code — this is an engineering requirement, not a nicety 
 2. Read: your spec, ARCHITECTURE.md DAG row, the ADRs your spec cites.
 3. Tests first: transcribe acceptance criteria into failing vitest specs.
 4. Implement: simplest passing solution. Pure functions wherever the spec says pure.
-5. Gate: pnpm lint && pnpm depcruise && pnpm test — all green.
+5. Gate: npm run lint && npm run depcruise && npm test — all green.
 6. Sync docs: module spec + any touched doc headers.
 7. Report: files touched; acceptance-criteria → test-name map; constants questioned;
    spec bugs found; anything you deliberately did NOT do.

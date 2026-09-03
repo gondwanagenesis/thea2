@@ -1,16 +1,16 @@
 ---
 title: Thea2 — Architecture
-syncedTo: S5 (S0–S5 landed — src/app composes all 20 modules; 1456 tests, five gates green)
+syncedTo: S8 as-built (2026-09-02 — all modules landed; 1,502 tests, five gates green; live on VPS)
 date: 2026-09-02
 ---
 
 # Architecture
 
-Companion to [THESIS.md](THESIS.md) (concepts) and `docs/modules/` (per-module contracts). This file is the map: what exists, what depends on what, what flows where.
+Companion to [THESIS.md](THESIS.md) (concepts), [docs/MANUAL.md](docs/MANUAL.md) (the plain-language walkthrough), and `docs/modules/` (per-module contracts). This file is the map: what exists, what depends on what, what flows where.
 
 ## Topology
 
-**One process** — `thead` — hosting the Telegram bridge, the scheduler, and the turn pipeline. **Two systemd units**: `thea2.service` (thead) and `thea2-backup.timer`. Rationale in ADR-002: single-writer affect, the heartbeat-vs-live-conversation mutex, and the one-send-path-one-ledger invariant all want shared memory; job isolation moves in-process where TestClock can prove it.
+**One process** — `thead` — hosting the Telegram bridge, the scheduler, and the turn pipeline. **Two systemd units**: `thea2.service` (thead) and `thea2-backup.timer`. Rationale in ADR-002: single-writer affect, the heartbeat-vs-live-conversation mutex, and the one-send-path-one-ledger invariant all want shared memory; job isolation moves in-process where TestClock can prove it. Deployed on the VPS from this repo by `deploy/install.sh`; runbook in `deploy/ops.md`.
 
 One TypeScript package (Node 20+, ESM, tsx runtime, vitest). Module boundaries are directories under `src/`, enforced by dependency-cruiser in CI — a parallel agent cannot quietly import across a boundary.
 
@@ -20,8 +20,8 @@ One TypeScript package (Node 20+, ESM, tsx runtime, vitest). Module boundaries a
 |---|---|---|---|
 | M01 | `kernel` | S0 | Injected Clock, seeded forkable Rng, content hashing, JSONL store, atomic writes |
 | M02 | `events` | S1 | L0 append-only typed event log; replay; projections |
-| M03 | `model` | S1 | OpenAI-compatible client, tier registry, structured-output repair ladder, MockModel |
-| M04 | `embed` | S1 | In-process ONNX bge-small; brute-force cosine VectorIndex; Hash/Fixed embedder doubles |
+| M03 | `model` | S1 | Model client — openai **and** anthropic wire protocols — tier registry, streaming SSE, structured-output repair ladder, MockModel |
+| M04 | `embed` | S1 | Embedder seam: hash (prod today) / fastembed bge-small (S9); brute-force cosine VectorIndex; Hash/Fixed doubles |
 | M05 | `affect` | S2 | ticker v6 port: pure mechanics, single-writer state, EMOTION_TAGS vocab |
 | M06 | `coupling` | S3 | 12-dim affect space; signature extraction; the M matrix; `modulate()` |
 | M07 | `corpus` | S2 | Exemplar schema/parser/lint; CorpusIndex; corpus nominators |
@@ -31,8 +31,8 @@ One TypeScript package (Node 20+, ESM, tsx runtime, vitest). Module boundaries a
 | M11 | `assemble` | S4 | The packet assembler: quotas, coherence, contrast, budgets, PacketRecord |
 | M12 | `inhibit` | S3 | Compiled inhibitions.yaml → gate on tool calls + locked plans |
 | M13 | `loop` | S4 | Deliberation loop, tool registry, fork/task/committee, decision object |
-| M14 | `realize` | S4 | Pure delivery planner + executor; caused cadence |
-| M15 | `bridge` | S2 | Telegram adapter, message ledger, offset-after-append, reconciliation |
+| M14 | `realize` | S4 | Pure delivery planner + executor; caused cadence; verbatim invariant — merge/split only, never rewrites a word |
+| M15 | `bridge` | S2 | Telegram adapter, message ledger, offset-after-append, reconciliation, allowlist |
 | M16 | `sched` | S2 | One in-process scheduler: cadences, lanes, catch-up, isolation |
 | M17 | `life` | S6 | Heartbeat, ponder, reflection — thin compositions over the loop |
 | M18 | `siblings` | S8 | Ledger (cost/routing) + Nightingale (probe runner) as scheduler jobs |
@@ -108,23 +108,26 @@ Enforced by the assembler (drop lowest-scored exemplar first, then trim memory t
 7  afterturn (detached): appraise → episode(s) → affect.apply(events) → outcomePrev → credit queue
 ```
 
-Decision object: `{plan: reply|silent|defer, bubbles, confidence, weight, reluctance, completeness, toolTrace, spawns, inhibitions}`. Cadence derives from these fields + affect; the realizer never rewrites text (M14 invariant).
+Decision object: `{plan: reply|silent|defer, bubbles, confidence, weight, reluctance, completeness, toolTrace, spawns, inhibitions}`. Cadence derives from these fields + affect; the realizer never rewrites text (M14 invariant — merge/split only). Voice is guarded *around* the turn, not rewritten in it: canon exemplars demonstrate the voice per register (M06/M08); the draft prompt (M10) bans the corpus-zero tells; the inhibition gate rejects-and-rephrases the measured AI tells ("it's not X, it's Y", mood-labeling — two strikes, soft fails open / hard forces silent) and applies the one rewrite class, character-only normalize substitutions (em-dash → ". ", "…" → "...") in the loop *before* the gate checks, so verdicts judge what actually sends. Length and shape are carried by demonstration alone (chain-not-wall exemplars), not by gates. The Thea1 voice committee's gear classifier (17/17 fixtures) and sentinel token are heritage, not current code: thea2's replacements are the decision object + ledger reconciliation (silence is a recorded decision, never a lost token) and the M19 drift probe.
+
+## Model backend (as deployed)
+
+Z.ai GLM over the **anthropic-compat door** (`https://api.z.ai/api/anthropic`, protocol `anthropic`, SSE streaming) — Diego's pinned backend; the OpenAI-compat door is pay-as-you-go on his account while the anthropic door rides the coding plan. Tiers: `main` = `glm-5.3-flash` (her voice), `cheap` = `glm-5.3-flash`, `reasoning` = `glm-5.3` (judges). Known trap handled in the client: GLM's thinking burns `max_tokens` from the completion budget — request sizes are padded accordingly. Secrets (`THEA2_BOT_TOKEN`, `THEA2_MODEL_API_KEY`) enter via env only (`/etc/thea2/keys.env` in prod).
 
 Spawn primitives (registry tools, native calls): `fork` (character + procedural context), `task` (procedural + brief), `committee` (scripted DAG). Depth ≤ 2, concurrency ≤ 3, per-entry wall-clock budget. Spawns log delegation episodes → procedural exemplar feedstock.
 
 ## Scheduler jobs (v1 table)
 
-| Job | Cadence | Lane | Catch-up |
-|---|---|---|---|
-| heartbeat | 30 min ± jitter | interactive | skip |
-| ponder | 20 min ± jitter | interactive | skip |
-| reconcile | 5 min | maintenance | skip |
-| affect-snapshot | 15 min | maintenance | skip |
-| reflect | nightly | maintenance | once |
-| consolidate | nightly | maintenance | once |
-| ledger-report | daily | maintenance | once |
-| derive-check | weekly | maintenance | once |
-| probe-on-deploy watcher | 1 min | maintenance | skip |
+| Job | Cadence | Lane | Catch-up | As built |
+|---|---|---|---|---|
+| heartbeat | 30 min ± jitter | interactive | skip | registered |
+| ponder | 20 min ± jitter | interactive | skip | registered |
+| reconcile | 5 min | maintenance | skip | registered |
+| affect-snapshot | 15 min | maintenance | skip | registered |
+| reflect (M10 consolidators ride it) | nightly | maintenance | once | registered |
+| ledger (report + `sibling.report`) | daily | maintenance | once | registered |
+| derive-check | weekly | maintenance | once | **not registered** |
+| Nightingale (probe-on-deploy watcher) | 1 min | maintenance | skip | **not registered** — Phase 4 gates it |
 
 `skip` for moods, not obligations — 16 missed heartbeats must not become 16 texts (named test). Interactive lane respects the conversation-active mutex (skip if inbound < 10 min ago or a turn is in flight). Job isolation: timeout → cooperative abort; wedged → abandoned + flagged, singleton lock refuses re-entry until restart; 3 consecutive failures → alarm.
 
@@ -150,3 +153,14 @@ Corpus (`corpus/`) and `coupling.yaml` are repo-tracked, not `var/` — differen
 - Unknown emotion tag → hard zod reject + incident (never a silent no-op).
 - Stale derived corpus in prod → alarm only; prod never regenerates.
 - Unknown tool → deny by default. Chronic gate rejections → visible in daily report within a day.
+- Gate-rejected twice on a soft rule → fail-open + incident; on a hard rule → forced silent + incident. Voice drift → Nightingale drift gate (cosine drop > 0.05 = yellow). Voice failures are visible events, never silent.
+
+## Known test-infra notes
+
+- The hermetic suite is load-sensitive at the extremes: the 1k-concurrent event
+  log test and the 10k-row JSONL replay carry explicit generous timeouts
+  because under full vitest parallelism they can exceed the default 5s wall on
+  a busy dev box. They are deterministic; only their timeout headroom changed.
+- Embedder in prod is the **hash** embedder until S9 (fastembed) lands — same
+  identity everywhere (corpus index + episodes + queries), weaker semantics;
+  switching is a config flip plus an index rebuild (recorded in M20 as-built).

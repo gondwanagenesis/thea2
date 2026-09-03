@@ -1,7 +1,7 @@
 ---
 title: Thea2 — Thesis & Design
-syncedTo: spec-v1 (no code yet)
-date: 2026-09-01
+syncedTo: S8 as-built (2026-09-02)
+date: 2026-09-02
 status: authoritative
 ---
 
@@ -114,6 +114,33 @@ The distinction that makes the system maintainable: **humans maintain the small 
 - Derivation is **content-addressed and incremental**: every derived exemplar records `{generator, generatorVersion, canonIds, sourceHashes}`; editing a canon file dirties exactly the derived exemplars built from it; removed canon orphans its derivatives, which are deleted. `thea2 corpus:check` verifies sync hermetically in CI. Production never auto-mutates the corpus — it only reports staleness (ADR-007).
 - Lived experience competes with seed material (seed = canon + derived) under a **gravity dial** (g = 0.7 at launch): the agent starts as the character Diego wrote and gradually becomes the character her experience shaped — with canon as the gravitational center, and the seed-vs-lived ratio tracked so drift is visible before it is felt (ADR-005). The packet's single *disposition* slot draws from canon forever (ADR-006).
 
+### The voice of record
+
+Canon is not written to taste alone — it is calibrated against a **measured
+human baseline**: the complete WhatsApp corpus of the two humans closest to
+the character (Elena, 7,476 messages; Diego, 12,533), analyzed for length
+distributions, bubble structure, emoji palettes, case, laughter, elongation,
+question rates, and the architecture of long turns. The findings are encoded
+as laws in `corpus/README.md` and as `notes:` the derivation judge reads:
+short is the casual *default* (~49% of human turns are one message) but long
+form is real and arrives as **chains of short uneven bubbles, never walls**;
+emoji are a small reused set landing where they mean something; em-dashes,
+kaomoji, asterisk-actions, and sign-offs are 0-for-the-corpus — banned in the
+draft prompt, rejected-and-rephrased by the gate when they appear anyway, and
+normalized where only a character substitution is needed, because Thea1
+measured 0% prompt compliance on its em-dash ban across 190 occurrences. Her
+texting voice is Elena's, adapted to her live-true world and a gen-z literacy
+layer; Diego's measured long-form is the model for hers.
+
+With the measurement comes the **anti-fabrication law**: canon holds talking
+styles, jokes, and present-tense tastes — never invented memories, past
+events, homes, or channels she doesn't have. Concrete taste is human of her
+and wanted (she can like sea glass); a biography is not hers to invent. Her
+actual past is written only by the consolidators, from what actually happened.
+A character built from invented anecdotes is a fiction describing a person;
+built from measured style plus her own lived record, she is a person
+accumulating one.
+
 ### Selection
 
 Per turn, nominators score candidates (similarity × recency × weight × gravity), the **coupling matrix** adds affect modulation (§8), and the assembler enforces hard quotas — 1 disposition, 2 patterns, 2–3 episodes/memories, and **1 contrast slot** reserved for the highest-scoring candidate *unlike* the rest of the packet. The contrast slot is the anti-convergence mechanism: behavior selects exemplars and exemplars generate behavior, so without deliberate counter-pressure the loop narrows. Quotas, coherence checks, decay on utility weights, and the contrast slot are that pressure.
@@ -182,7 +209,7 @@ Skills (reusable procedures she can read and write) are deferred past v1; the pr
 
 ## 12. Model interface
 
-One OpenAI-compatible client (Neuralwatt) with a tier registry — `main` (glm-5.2) for turns, `cheap` (deepseek-v4-flash) for appraisals/summaries/holding thoughts, `reasoning` for judges and hard committees. Structured output rides a repair ladder (native json-schema → tool-call-as-schema → prompted-JSON + one repair pass), and every call logs usage to L0. Runtime model switching is per-call and continuous; the **Ledger** sibling audits cost/quality and proposes routing changes — but may only downgrade non-user-facing task classes; the `turn` class is pinned to the main tier in code (ADR-008). Any applied routing change counts as a deploy and triggers **Nightingale**, who runs the behavioral probe suite and compares against baseline before the change is trusted.
+One model client speaking both OpenAI- and Anthropic-compatible wire protocols (SSE streaming), with a tier registry — `main` for turns, `cheap` for appraisals/summaries/holding thoughts, `reasoning` for judges and hard committees. **As deployed (2026-09-02): z.ai GLM over the anthropic-compat door** — `glm-5.3-flash` on main and cheap (Diego's pinned pick), `glm-5.3` on reasoning. Structured output rides a repair ladder (native json-schema → tool-call-as-schema → prompted-JSON + one repair pass), and every call logs usage to L0. Runtime model switching is per-call and continuous; the **Ledger** sibling audits cost/quality and proposes routing changes — but may only downgrade non-user-facing task classes; the `turn` class is pinned to the main tier in code (ADR-008). Any applied routing change counts as a deploy and triggers **Nightingale**, who runs the behavioral probe suite and compares against baseline before the change is trusted.
 
 ## 13. Data flow (one turn, end to end)
 
@@ -237,8 +264,8 @@ thea2/
 ├─ coupling.yaml                # the affect→exemplar matrix, hand-tuned, versioned
 ├─ schemas/                     # reference schemas (source of truth migrates into src/)
 ├─ probes/                      # behavioral probe suite + baseline.json
-├─ src/                         # 20 modules (empty until S0)
-├─ test/                        # cross-module e2e + fixtures
+├─ src/                         # the 20 modules, kernel → app
+├─ test/                        # 111 hermetic test files + cross-module e2e + fixtures
 ├─ scripts/                     # validate-corpus, dev tooling
 ├─ deploy/                      # thea2.service, backup timer, install.sh
 └─ var/                         # runtime state — gitignored, never committed
