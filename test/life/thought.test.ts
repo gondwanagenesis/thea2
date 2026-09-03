@@ -7,12 +7,19 @@
 // it scores under 3.2.
 
 import { describe, expect, it } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { ChatRequest } from '../../src/model/types.js';
 import { schemaToJsonSchema } from '../../src/model/wire.js';
-import { HEARTBEAT_THOUGHT_SCHEMA, HeartbeatThoughtSchema, heartbeatThoughtMessages, thinkHeartbeatThought } from '../../src/life/thought.js';
+import { dueThreadNotes, HEARTBEAT_THOUGHT_SCHEMA, HeartbeatThoughtSchema, heartbeatThoughtMessages, thinkHeartbeatThought } from '../../src/life/thought.js';
 import { HEARTBEAT_THOUGHT_EVENT, HeartbeatThoughtPayload, LIFE_INCIDENT } from '../../src/life/events.js';
 import { HEARTBEAT_THRESHOLD, scoreThought } from '../../src/life/policy.js';
+import { openPersistedThreadIndex, openThreadIndex, THREAD_DUE_MS } from '../../src/memory/index.js';
+import { TestClock } from '../../src/kernel/clock.js';
 import {
+  HOUR,
+  T0,
   deadLog,
   recordingLog,
   thoughtCtx,
@@ -33,6 +40,56 @@ const run = async (
   const outcome = await thinkHeartbeatThought(thoughtCtx(over.ctx), over.pressure ?? 0, thoughtDeps(model, log));
   return { outcome, log, model };
 };
+
+// ---------------------------------------------------------------------------
+// The dueThreads consumer — M09's fold feeds the heartbeat's follow-up block
+// ---------------------------------------------------------------------------
+
+describe('dueThreadNotes — the thread index end to end', () => {
+  it('thread from appraisal is due for the next heartbeat', async () => {
+    // The full round-trip the job body will run at fire time: the appraisal's
+    // thread updates fold into the DURABLE index (var/memory/threads.jsonl),
+    // the clock passes the due horizon, and the thought prompt carries the
+    // thread by its appraisal title.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'thea2-life-threads-'));
+    try {
+      const clock = new TestClock(T0);
+      const threads = openPersistedThreadIndex(dir);
+      // The appraisal's threads[] for this turn: he said he would report back.
+      threads.apply([{ id: 'thread_crates', title: 'he would report back on the crates', status: 'open' }], clock.epochMs());
+
+      // Same morning: not yet due — the prompt honestly says "(none due)".
+      const early = heartbeatThoughtMessages(thoughtCtx({ dueThreads: dueThreadNotes(threads, clock.epochMs()) }))[1]?.content ?? '';
+      expect(early).toContain('(none due)');
+
+      // Tonight (past THREAD_DUE_MS): the thread is due, and a REOPENED index —
+      // the crash-restart path — still owes it, from the replayed log.
+      clock.advance(THREAD_DUE_MS + 60_000);
+      const due = dueThreadNotes(openPersistedThreadIndex(dir), clock.epochMs());
+      expect(due).toEqual([{ id: 'thread_crates', note: 'he would report back on the crates' }]);
+
+      const user = heartbeatThoughtMessages(thoughtCtx({ dueThreads: due }))[1]?.content ?? '';
+      expect(user).toContain('Follow-up threads he is owed');
+      expect(user).toContain('- thread_crates: he would report back on the crates');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a touched thread re-arms, a closed thread never comes due, and the list is capped', () => {
+    const threads = openThreadIndex();
+    threads.apply([{ id: 'a', title: 'A', status: 'open' }], 0);
+    threads.apply([{ id: 'b', title: 'B', status: 'open' }], 0);
+    threads.apply([{ id: 'c', title: 'C', status: 'open' }], 0);
+    threads.apply([{ id: 'd', title: 'D', status: 'open' }], 0);
+
+    expect(dueThreadNotes(threads, 6 * HOUR).map((t) => t.id)).toEqual(['a', 'b', 'c']); // cap: d waits (id-ordered cut)
+    threads.apply([{ id: 'a', status: 'touched' }], 6 * HOUR); // re-armed: due again at 12h
+    expect(dueThreadNotes(threads, 6 * HOUR + 1).map((t) => t.id)).toEqual(['b', 'c', 'd']);
+    threads.apply([{ id: 'b', status: 'closed' }], 6 * HOUR + 2); // closed retires forever
+    expect(dueThreadNotes(threads, 11 * HOUR).map((t) => t.id)).toEqual(['c', 'd']);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // The prompt — her private monologue, never anyone else's

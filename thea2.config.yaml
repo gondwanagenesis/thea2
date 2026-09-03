@@ -14,13 +14,24 @@ models:
     main: glm-5.3-flash     # her voice — fast tier, Diego's explicit pick
     cheap: glm-5.3-flash    # appraisals + heartbeat thoughts (flash IS the cheap door)
     reasoning: glm-5.3      # the judge — full model; the plan covers both
+# The people registry (Round 3): her [INTERLOCUTOR] line says his name, not a
+# raw tg id. Keyed by the bridge's speaker person id.
+people:
+  "tg:6971556140":
+    name: Diego
+    language: es
 bridge:
   # Diego's telegram chat id — the ONLY chat the bridge answers. Filled from
   # the first live getUpdates poll (2026-09-02, NEOGEO private chat).
   allowedChatIds: [6971556140]
+# Diego's zone: quiet hours, the daily heartbeat cap, and the day census are
+# read in THIS zone (Phase 1, 2026-09-02 — they were UTC before, which gagged
+# her 04:00–11:00 Madrid and freed her at 03:00).
+timezone: Europe/Madrid
 affect:
   statePath: var/affect/state.json
-  quietHours: [2, 9]
+  # [start, end) LOCAL hours; start > end wraps midnight. 01:00–09:00 Madrid.
+  quietHours: [1, 9]
 sched:
   statePath: var/sched/state.json
 budgets:

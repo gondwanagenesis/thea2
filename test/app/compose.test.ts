@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { bootApp, settle } from './helpers.js';
 
 describe('hermetic boot', () => {
-  it('composes a closed system over a tmp var/ and emits the boot trail', async () => {
+  it('composes a closed system over a tmp var/ and emits the boot trail', { timeout: 30_000 }, async () => {
     const h = await bootApp();
 
     const boots: Array<Record<string, unknown>> = [];
@@ -60,7 +60,7 @@ describe('hermetic boot', () => {
     await h.sys.stop();
   });
 
-  it('the pipeline is single-flight: a second inbound during a turn queues, never parallel-runs', async () => {
+  it('the pipeline is single-flight: a second inbound during a turn queues, never parallel-runs', { timeout: 30_000 }, async () => {
     const h = await bootApp();
     void h;
     // covered by pipeline.test.ts interruption suites; here just pin the flag

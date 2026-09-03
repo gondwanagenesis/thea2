@@ -196,6 +196,28 @@ describe('happy path (8 targets: 4 mood, 2 procedural, 1 deliberation, 1 weave)'
     expect(model.calls).toHaveLength(8); // the model was never called again
     expect(await snapshot(dir)).toEqual(before);
   });
+
+  it('concurrency k > 1 writes the SAME tree as the sequential run, byte for byte', async () => {
+    // The worker pool must be a scheduling change and nothing else: rng is
+    // forked per target, drafts echo the drawn angle (pure in the request), so
+    // same seed ⇒ same bytes regardless of interleaving. The real-backend motive
+    // is brute (a full re-derive is hundreds of sequential round-trips); the
+    // invariant it must not break is determinism.
+    const inputs = baseInputs({ moodBuckets: ['bright', 'low'] });
+
+    const seqDir = tmpDir('thea2-derive-run-seq-');
+    const seq = staged();
+    const seqReport = await derive(makeOpts(seqDir, inputs, seq.model, seq.judge));
+
+    const parDir = tmpDir('thea2-derive-run-par-');
+    const par = staged();
+    const parReport = await derive(makeOpts(parDir, inputs, par.model, par.judge, { concurrency: 4 }));
+
+    expect(parReport.ok).toBe(true);
+    expect(parReport.targets).toBe(seqReport.targets);
+    expect(parReport.written).toBe(seqReport.written);
+    expect(await snapshot(parDir)).toEqual(await snapshot(seqDir));
+  });
 });
 
 describe('judge gate: retry once, then discard', () => {

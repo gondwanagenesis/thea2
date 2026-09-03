@@ -1,7 +1,7 @@
 ---
 module: M05
 name: affect
-syncedTo: spec-v1 (implemented; see "Deviations as built" at the end)
+syncedTo: S8 (weatherLine '' at baseline — 2026-09-02)
 stage: S2
 depends: [M01-kernel, M02-events]
 ---
@@ -82,7 +82,7 @@ export const openAffectStore: (path: string, deps: { clock: Clock; rng: Rng; eve
   - `inhibition.ts` — `PRIM_INHIBIT` 0.28 mutual valence suppression.
   - `attribution.ts` — per-primary cause slots; `CAUSE_MIN_I` 5, `ATTRIB_MIN` .03, `ATTRIB_STALE_H` 36, `ATTRIB_CLEAR` .05.
   - `drives.ts` — novelty/connection/mastery; set point .25, floor .05, starvation .010/.018/.014 per hour; feeds via `tagFeed` events (DONE/MOMENT/GIFT).
-  - `landmarks.ts` — region blend → named weather word for the `[AFFECT]` line: `LANDMARKS` HI .52 / MD .30 / LO .14 / DN −.28, sigma 0.30; `weatherLine` = blend word + top cause clause.
+  - `landmarks.ts` — region blend → named weather word for the `[AFFECT]` line: `LANDMARKS` HI .52 / MD .30 / LO .14 / DN −.28, sigma 0.30; `weatherLine` = blend word + top cause clause. **At her baseline the line is `''`** (Package E, 2026-09-02): the blend still names regions on a flat field, but a resting field is no weather — the old `steady` fallback kept the `[AFFECT]` block in 100% of packets. `weatherLine` returns `''` only when the field is within `RESTING_EPSILON` of baseline AND no cause clause (applied emotion, long silence) stands; M11's render-if-nonempty logic keeps the block out of the packet. Unusual-weather wording unchanged.
   - Noise `NOISE` 0.012 drawn from the injected rng (why `tick` takes one).
 - **Vocabulary is law.** `EMOTION_TAGS` = `EMOTION_DELTAS ∪ EMOTION_PRIMARIES ∪ EMOTION_DRIVES` keys, one constant, three consumers (this module's engine, M06's space, M09's appraisal schema). An unknown tag at the store boundary: zod reject + `incident.unknown_tag` event, the state untouched. The every-tag-moves-something regression test (below) is the permanent grave marker of Thea1's orphan-tag incident (10 tags, incl. her 8th-most-used word "sharp", silently no-op'd for months; dominance pinned at 0.00 across 365 snapshots).
 - **Single writer.** The store is owned by the process (ADR-002); all mutation goes through `applyEvents` behind one serialized queue (turn path and scheduler jobs never race the state). Persisted at `var/affect/state.json` via kernel `atomicWriteJson` after each mutation batch; a corrupt state file is a startup incident with recovery from the newest snapshot event in L0 (M02 replay rebuilds state).

@@ -105,8 +105,8 @@ describe('loadConfig reject table (typed errors naming the path)', () => {
     expect(err.issues.some((i) => i.path.join('.').includes('quietHours'))).toBe(true);
   });
 
-  it('bad quiet hours: reversed', () => {
-    expect(reject(VALID_YAML.replace('quietHours: [1, 7]', 'quietHours: [7, 1]')).code).toBe(
+  it('rejects equal endpoints ([7, 7] is ambiguous — no window or all day)', () => {
+    expect(reject(VALID_YAML.replace('quietHours: [1, 7]', 'quietHours: [7, 7]')).code).toBe(
       'app/config-invalid',
     );
   });
@@ -131,6 +131,23 @@ describe('loadConfig reject table (typed errors naming the path)', () => {
     const err = reject('models: [unclosed\n  bad');
     expect(err.code).toBe('app/config-unreadable');
     expect(err.yamlPath).toMatch(/thea2\.config\.yaml$/);
+  });
+});
+
+describe('timezone and quietHours (Phase 1 — his day, not Greenwich day)', () => {
+  it('timezone defaults to UTC', () => {
+    expect(cfg(VALID_YAML).timezone).toBe('UTC'); // fixtures stay byte-identical: no timezone key, UTC behavior
+  });
+
+  it('rejects an unknown IANA zone (a typo would silently become UTC)', () => {
+    const err = reject(VALID_YAML + 'timezone: Europa/Madri\n');
+    expect(err.code).toBe('app/config-invalid');
+    expect(err.issues.some((i) => i.path.includes('timezone'))).toBe(true);
+  });
+
+  it('accepts a wrapping quietHours window (start > end wraps past midnight)', () => {
+    const c = cfg(VALID_YAML.replace('quietHours: [1, 7]', 'quietHours: [23, 8]'));
+    expect(c.affect.quietHours).toEqual([23, 8]);
   });
 });
 

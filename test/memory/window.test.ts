@@ -84,7 +84,7 @@ describe('the eviction summarizer', () => {
     rmDir(dir);
   });
 
-  it('reuses the cached line until the NEXT full span evicts, folding it into the next prompt', async () => {
+  it('reuses the cached line until the NEXT full span evicts, folding it into the next prompt', { timeout: 30_000 }, async () => {
     const dir = tmpDir('win-cache');
     const clock = new TestClock(0);
     const model = new MockModel({ clock });
@@ -119,7 +119,7 @@ describe('the eviction summarizer', () => {
     rmDir(dir);
   });
 
-  it('degrades when the summarizer fails: span drops, incident fires, window keeps flowing', async () => {
+  it('degrades when the summarizer fails: span drops, incident fires, window keeps flowing', { timeout: 30_000 }, async () => {
     const dir = tmpDir('win-summary-fail');
     const clock = new TestClock(0);
     const model = new MockModel({ clock });

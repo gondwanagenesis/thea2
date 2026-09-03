@@ -3,6 +3,8 @@
 //   C:\Users\neogo\LocalFiles\TheaBackup\latest\opt\thea\affect\ticker.py
 // (v6, 2026-08-27). These numbers were calibrated against 438 real diary lines;
 // "cleaning them up" is a design decision, not a refactor. Do not retune here.
+
+import { fail } from '../kernel/index.js';
 //
 // The tables are keyed by TAG and split by target layer, exactly as ticker.py
 // splits them: EMOTION_DELTAS pushes the identity dials + PAD, the tag→primary
@@ -44,6 +46,36 @@ export const PRIMARY_BASELINE = {
 
 export type Primary = keyof typeof PRIMARY_BASELINE;
 
+/**
+ * ADR-004a — the dominance home is CONFIG-BACKED. `0.0` is Thea1's pathology as
+ * a constant: 365 consecutive ticker snapshots pinned at 0.00 because the
+ * baseline divisor `max(b, 1−b) = 1` made dominance the least movable dim in
+ * the space and the orphan-tag fix (2026-08-26) only later wired any tag to it.
+ * The default stays 0.0 (ZERO behavior change until Diego decides); the
+ * proposed resting home is 0.35 — evidence and the open question live in
+ * docs/decisions/ADR-004a-dominance-baseline.md. Composition (Round 3) calls
+ * `setDominanceBaseline` at boot from config; the value is validated loud and
+ * mutates `DIAL_BASELINE.dominance` in place, so every runtime reader (engine
+ * decay, initial state, `baselineOf`) moves with it.
+ */
+export const DOMINANCE_BASELINE_DEFAULT = 0.0;
+
+/** The live dominance home: the override when set, the Thea1 default otherwise. */
+export const dominanceBaseline = (): number => DIAL_BASELINE.dominance;
+
+/**
+ * Set the dominance home from config (0..1, else a loud kernel error — a bad
+ * baseline is a bug, not a mood). Must run at composition, BEFORE any state is
+ * built or signature taken; there is deliberately no unset (a deployed baseline
+ * is a fact about who she is, not a toggle).
+ */
+export const setDominanceBaseline = (v: number): void => {
+  if (!Number.isFinite(v) || v < 0 || v > 1) {
+    fail('affect/baseline-range', `dominance baseline must be a finite number in [0,1], got ${String(v)}`);
+  }
+  DIAL_BASELINE.dominance = v;
+};
+
 /** Primary NAME list (the spec's interface exports this under the ticker table's old name). */
 export const EMOTION_PRIMARIES: Primary[] = Object.keys(PRIMARY_BASELINE) as Primary[];
 
@@ -60,7 +92,9 @@ export type Drive = (typeof EMOTION_DRIVES)[number];
 export const DIAL_BASELINE: Record<Dial, number> = {
   pleasure: 0.66,
   arousal: 0.34,
-  dominance: 0.0,
+  // ADR-004a: Thea1's pinned-at-zero home, kept as the DEFAULT; config-backed
+  // via setDominanceBaseline (above), proposed resting home 0.35 — Diego decides.
+  dominance: DOMINANCE_BASELINE_DEFAULT,
   attachment: 0.75,
   brattiness: 0.55,
   protectiveness: 0.75,

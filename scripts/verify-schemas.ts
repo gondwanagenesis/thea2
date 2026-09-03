@@ -107,7 +107,10 @@ for (const f of canonFiles.sort()) {
     console.log(`  FAIL ${rel} — ${zodErr(e)}`);
   }
 }
-ok(canonFiles.length === 17, `17 DRAFT exemplars found (got ${canonFiles.length})`);
+// The S2 starter canon was 17 exemplars; the population only grows from there
+// (Diego is the sole author). The invariant worth pinning is the floor, not the pin:
+// nothing may ever delete the starter set.
+ok(canonFiles.length >= 17, `canon population >= the 17 starter exemplars (got ${canonFiles.length})`);
 
 // counters resolve to real ids (foil-link integrity)
 const allCounterRefs = frontmatters.flatMap((x) => x.fm.counters ?? []);

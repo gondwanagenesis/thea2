@@ -95,9 +95,14 @@ export interface SpawnRecord {
 }
 
 /** The loop's single output — the only shape that can reach the channel (M14 reads it). */
+/** Provenance of a locked plan — see DecidedBySchema (schema.ts). */
+export type DecidedBy = 'model' | 'gate' | 'failure';
+
 export interface DecisionObject {
   turnId: string;
   plan: 'reply' | 'silent' | 'defer';
+  /** Who decided: her, the gate, or nobody (a failure wearing a silence). */
+  decidedBy: DecidedBy;
   bubbles: string[];
   confidence: number;
   weight: number;

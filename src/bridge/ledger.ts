@@ -10,6 +10,7 @@ import { fail, type Clock, type JsonlStore, openJsonl } from '../kernel/index.js
 import type { EventLog } from '../events/index.js';
 import {
   DEFAULT_RECONCILE_WINDOW_MS,
+  type DecidedBy,
   type DecisionPlan,
   type Discrepancy,
   type InboundMsg,
@@ -68,6 +69,7 @@ export const openMessageLedger = (dir: string, deps: OpenMessageLedgerDeps): Mes
         plan: d.plan,
         at: d.at,
         ...(d.dueBy !== undefined ? { dueBy: d.dueBy } : {}),
+        ...(d.decidedBy !== undefined ? { decidedBy: d.decidedBy } : {}),
       });
     },
 
@@ -98,7 +100,7 @@ interface Arrival {
 const reconcileRows = async (store: JsonlStore<LedgerRow>, now: number, windowMs: number): Promise<Discrepancy[]> => {
   const links = new Map<number, string>();
   const replied = new Set<string>(); // turnIds with ≥1 recorded outbound
-  const decisions = new Map<string, { plan: DecisionPlan; dueBy?: number }>(); // last decision wins
+  const decisions = new Map<string, { plan: DecisionPlan; dueBy?: number; decidedBy?: DecidedBy }>(); // last decision wins
   const arrivals = new Map<number, Arrival>();
 
   for await (const row of store.read()) {
@@ -110,7 +112,11 @@ const reconcileRows = async (store: JsonlStore<LedgerRow>, now: number, windowMs
         replied.add(row.turnId);
         break;
       case 'decision':
-        decisions.set(row.turnId, { plan: row.plan, ...(row.dueBy !== undefined ? { dueBy: row.dueBy } : {}) });
+        decisions.set(row.turnId, {
+          plan: row.plan,
+          ...(row.dueBy !== undefined ? { dueBy: row.dueBy } : {}),
+          ...(row.decidedBy !== undefined ? { decidedBy: row.decidedBy } : {}),
+        });
         break;
       case 'inbound': {
         const prev = arrivals.get(row.msg.updateId);
@@ -132,6 +138,9 @@ const reconcileRows = async (store: JsonlStore<LedgerRow>, now: number, windowMs
     if (arrival.count > 1) duplicates.push({ kind: 'DUPLICATE_INBOUND', updateId });
     // A reaction is an outcome signal, not a request — it can never be "lost".
     if (arrival.msg.reaction !== undefined) continue;
+    // A skipped update (photo, edit, denied chat) was recorded only so the
+    // offset could move past it — nothing is owed.
+    if (arrival.msg.skipped !== undefined) continue;
 
     const ageMs = now - arrival.ts;
     if (ageMs <= windowMs) continue; // still inside T — her turn to terminate
@@ -141,7 +150,10 @@ const reconcileRows = async (store: JsonlStore<LedgerRow>, now: number, windowMs
       if (replied.has(turnId)) continue; // replied ⇒ clean
       const d = decisions.get(turnId);
       if (d !== undefined) {
-        if (d.plan === 'silent') continue; // decided-silent ⇒ clean
+        // Decided-silent ⇒ clean — unless the "decision" was the loop failing
+        // to decide. A failure silence is the sentinel disease in a typed row;
+        // it stays owed (ADR-003: silence by failure is a discrepancy).
+        if (d.plan === 'silent' && d.decidedBy !== 'failure') continue;
         // A defer past its due-by with nothing to show is exactly the loss the
         // invariant exists to catch. A dueBy-less defer cannot happen (the
         // writer rejects it); if one ever lands, treat it as already due.

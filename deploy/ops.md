@@ -1,10 +1,45 @@
-# Thea2 ops — runbook
+---
+title: Thea2 ops — runbook
+syncedTo: Phase 1
+date: 2026-09-02
+---
 
-`syncedTo: spec-v1 (deploy scaffolding; completes in S8)`
+# Thea2 ops — runbook
 
 One process, two systemd files, one timer. ADR-002 put the bridge, the
 scheduler, and the turn pipeline inside a single `thead` process — M16's
 in-process scheduler is what replaces Thea1's 97 units.
+
+## Phase 1 as-built (2026-09-02)
+
+- **Clean-tree deploys.** `install.sh` refuses to run from a tree with
+  uncommitted changes (what runs must be what git has). If `$SRC` is not a git
+  checkout at all, the rule degrades to a loud warning, never a silent pass.
+- **The thead pid lock.** One `thead` per `var/` — the lock lives at
+  `var/thead.pid`, and a second writer exits 2. `thea2 derive` refuses beside
+  a live thead for the same reason (shared L0, rate-limit theft). The escape
+  hatch `thea2 derive --allow-live-derive` overrides the refusal and the run
+  then marks itself on L0 with a `derive.live_override` event — an override
+  that left no trace would be a silent one.
+- **`bin/thea2`.** The CLI verbs (`status`, `reconcile`, `corpus:check`,
+  `derive`) resolve through `/opt/thea2/bin/thea2`, symlinked to
+  `/usr/local/bin/thea2`; it cds to `/opt/thea2` so canon and `var/` resolve
+  from cwd, exactly as `bin/thead` does.
+- **Clean stops are clean.** `thea2.service` carries `SuccessExitStatus=143`
+  (the tsx wrapper relays SIGTERM and exits 143 while `main.ts` drains to 0)
+  and `TimeoutStopSec=120` (an in-flight turn settles; a half-said reply is
+  worse than a late one).
+- **Backups take optional env.** `thea2-backup.service` sources
+  `EnvironmentFile=-/etc/thea2/backup.env` (the `-` means absent is fine):
+  the restic offsite leg lives there, root:0600. Local-only backups remain a
+  choice, not a failure.
+- **The scheduler runs SIX registered jobs**: heartbeat, ponder, reflect,
+  reconcile, affect-snapshot, ledger (compose registers exactly this table on
+  a real boot; earlier drafts of this doc said 3 or 9 — 6 is what was built;
+  Nightingale stays unregistered until the Phase-4 probe suite).
+- **His hours, not the server's.** The deployed config runs
+  `timezone: Europe/Madrid` with quiet hours `[1, 9]` local — jobs and
+  delivery pacing respect them.
 
 ## 1. Layout
 
@@ -13,6 +48,7 @@ in-process scheduler is what replaces Thea1's 97 units.
 | `/opt/thea2` | the repo (installed by `install.sh`) |
 | `/opt/thea2/var` | ALL runtime state: `events/` (L0), `ledger/`, affect/memory/sched stores |
 | `/opt/thea2/bin/thead` | process entry (wraps the M20 CLI) |
+| `/opt/thea2/bin/thea2` → `/usr/local/bin/thea2` | CLI verbs: `status`, `reconcile`, `corpus:check`, `derive` |
 | `/opt/thea2/bin/backup` | backup body |
 | `/etc/thea2/keys.env` | secrets, root-owned 0600, read by systemd before the privilege drop |
 | `/etc/systemd/system/thea2*.service`, `thea2-backup.timer` | the whole unit footprint |

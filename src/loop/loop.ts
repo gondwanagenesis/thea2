@@ -19,10 +19,11 @@ import {
   type ChatResponse,
   type ToolCall,
 } from '../model/index.js';
-import type { DecisionObject, LoopDeps, LoopEntry, LoopPacket, LoopQuery, ModelDecision, RunLoop } from './types.js';
+import type { DecidedBy, DecisionObject, LoopDeps, LoopEntry, LoopPacket, LoopQuery, ModelDecision, RunLoop } from './types.js';
 import { createToolRegistry, overlayRegistry } from './registry.js';
 import { buildMessages } from './messages.js';
 import { validateCommittee, runCommittee } from './committee.js';
+import { OUTPUT_CONTRACT, decideToolDef, isDecideCall, looksJsonShaped, proseToDecision } from './decide.js';
 import {
   assess,
   emit,
@@ -33,8 +34,10 @@ import {
 } from './turn.js';
 import { failLoop } from './errors.js';
 import {
+  ASSEMBLE_FAILED_INCIDENT,
   DECISION_LOCKED_KIND,
   DECISION_PARSE_INCIDENT,
+  DECISION_PROSE_FOLDED,
   DecisionObjectSchema,
   GATE_LOOP_INCIDENT,
   GateLoopPayloadSchema,
@@ -81,9 +84,51 @@ export type DecisionParse =
 export const parseDecision = (content: string): DecisionParse => {
   const parsed = looseJsonParse(content);
   if (!parsed.ok) return { ok: false, error: parsed.error };
-  const check = ModelDecisionSchema.safeParse(normalizeDecision(parsed.value));
+  return parseDecisionValue(parsed.value);
+};
+
+/** A decoded value (a `decide` call's args, or parsed content) → ModelDecision. */
+export const parseDecisionValue = (value: unknown): DecisionParse => {
+  const check = ModelDecisionSchema.safeParse(normalizeDecision(value));
   if (!check.success) return { ok: false, error: decisionIssue(check.error) };
   return { ok: true, value: check.data };
+};
+
+type Settle =
+  | { kind: 'decision'; value: ModelDecision; via: 'decide' | 'json' | 'prose' }
+  | { kind: 'repair'; malformed: string; error: string }
+  | { kind: 'tools'; calls: readonly ToolCall[] };
+
+/**
+ * What one assess reply settles to. Priority: a native `decide` call (the
+ * contract) → other tool calls (a round) → parseable JSON content → plain prose
+ * folded deterministically → the repair rung (empty or JSON-shaped-but-broken).
+ * A `decide` call whose args miss the schema goes to repair with the args as
+ * the malformed text — the model tried the contract; one correction is owed.
+ */
+const settleReply = (res: ChatResponse): Settle => {
+  const calls: readonly ToolCall[] = res.toolCalls ?? [];
+  const decide = calls.find(isDecideCall);
+  if (decide !== undefined) {
+    const parsed = parseDecisionValue(decide.args);
+    if (parsed.ok) return { kind: 'decision', value: parsed.value, via: 'decide' };
+    let malformed: string;
+    try {
+      malformed = JSON.stringify(decide.args);
+    } catch {
+      malformed = String(decide.args);
+    }
+    return { kind: 'repair', malformed, error: parsed.error };
+  }
+  if (calls.length > 0) return { kind: 'tools', calls };
+  const content = res.content;
+  const parsed = parseDecision(content);
+  if (parsed.ok) return { kind: 'decision', value: parsed.value, via: 'json' };
+  if (content.trim() !== '' && !looksJsonShaped(content)) {
+    const folded = proseToDecision(content);
+    if (folded !== null) return { kind: 'decision', value: folded, via: 'prose' };
+  }
+  return { kind: 'repair', malformed: content, error: parsed.error };
 };
 
 /** The one-shot repair: same conversation + the malformed reply + the correction
@@ -112,10 +157,17 @@ const repairOnce = async (state: TurnState, msgs: readonly ChatMsg[], malformed:
 // Forced-silent outcomes (values, not exceptions)
 // ---------------------------------------------------------------------------
 
-const forcedSilent = (state: TurnState): DecisionObject => {
+/**
+ * A silence the model did not choose. `gate` = the inhibition gate's verdict
+ * after the re-entry cap (restraint by law); `failure` = the loop could not
+ * produce a decision at all — recorded as such so the ledger keeps the reply
+ * owed (a failure silence is never "decided-silent ⇒ clean").
+ */
+const forcedSilent = (state: TurnState, decidedBy: Exclude<DecidedBy, 'model'>): DecisionObject => {
   const d: DecisionObject = {
     turnId: state.turnId,
     plan: 'silent',
+    decidedBy,
     bubbles: [],
     confidence: 0,
     weight: 0,
@@ -136,6 +188,7 @@ const lockDecision = (state: TurnState, decision: ModelDecision): DecisionObject
   const d: DecisionObject = {
     turnId: state.turnId,
     plan: decision.plan,
+    decidedBy: 'model',
     bubbles: decision.bubbles,
     confidence: decision.confidence,
     weight: decision.weight,
@@ -148,7 +201,7 @@ const lockDecision = (state: TurnState, decision: ModelDecision): DecisionObject
   const check = DecisionObjectSchema.safeParse(d);
   if (!check.success) {
     // A decision that cannot validate is not sent anywhere — the silent stub is.
-    return forcedSilent(state);
+    return forcedSilent(state, 'failure');
   }
   return d;
 };
@@ -275,17 +328,19 @@ export const runLoop: RunLoop = async (entry, deps) => {
   let packet: LoopPacket;
   try {
     packet = await deps.assemble(query, deps.affect);
-  } catch {
-    // No context, no deliberation. Lock silent; schemas/events.ts defines no
-    // incident kind for an assembly failure (see the docs deviation note).
+  } catch (e) {
+    // No context, no deliberation. A failure silence — loud (incident) and
+    // recorded as failure so the reply stays owed (review 2026-09-02, P0-1f).
+    await emit(deps.events, ASSEMBLE_FAILED_INCIDENT, { turnId, entry: entry.kind, error: e instanceof Error ? e.message : String(e) }, turnId);
     const failed = { ...baseState, truncated: true } as TurnState;
-    return forcedSilent(failed);
+    return forcedSilent(failed, 'failure');
   }
   const state: TurnState = { ...baseState, packet, tools: createToolRegistry(), defs: [] };
   // The spawn primitives close over this very state; the late tools binding is
   // safe because handlers read state.* at call time, never at bind time.
   state.tools = overlayRegistry(deps.tools, spawnEntries(state));
-  state.defs = state.tools.defs(entry.kind);
+  // `decide` travels first: the contract is the most prominent thing on the wire.
+  state.defs = [decideToolDef, ...state.tools.defs(entry.kind)];
 
   if (entry.committee !== undefined) return runCommitteeEntry(entry, deps, state);
 
@@ -294,7 +349,33 @@ export const runLoop: RunLoop = async (entry, deps) => {
     window: deps.window,
     turnText: situation,
     placement: cfg.inhibitionPlacement,
+    outputContract: OUTPUT_CONTRACT,
   });
+
+  /** Records how a decision arrived; a prose fold is worth knowing about. */
+  const noteVia = async (via: 'decide' | 'json' | 'prose', bubbles: number): Promise<void> => {
+    if (via === 'prose') await emit(state.events, DECISION_PROSE_FOLDED, { turnId: state.turnId, bubbles }, state.turnId);
+  };
+
+  /** Settle one reply with the one repair rung; null ⇒ typed failure already emitted. */
+  const settleOrRepair = async (res: ChatResponse): Promise<ModelDecision | null> => {
+    const s = settleReply(res);
+    if (s.kind === 'decision') {
+      await noteVia(s.via, s.value.bubbles.length);
+      return s.value;
+    }
+    if (s.kind === 'tools') return failLoop('loop/decision-invalid', 'settleOrRepair called on a tool round');
+    // Exactly one cheap-tier repair, then the typed failure path (§5.2).
+    const repaired = await repairOnce(state, msgs, s.malformed, s.error);
+    if (repaired.ok) return repaired.value;
+    await emit(
+      state.events,
+      DECISION_PARSE_INCIDENT,
+      { turnId: state.turnId, schema: 'DecisionObject', rung: 'repair', error: repaired.error },
+      state.turnId,
+    );
+    return null;
+  };
 
   // -- assess / mediate loop ------------------------------------------------
   let decision: ModelDecision | null = null;
@@ -305,10 +386,10 @@ export const runLoop: RunLoop = async (entry, deps) => {
       break;
     }
     const res: ChatResponse = await assess(state, msgs, { tier: 'main', taskClass: taskClassFor(entry.kind) });
-    const calls: readonly ToolCall[] = res.toolCalls ?? [];
-    if (calls.length > 0) {
+    const s = settleReply(res);
+    if (s.kind === 'tools') {
       state.hops += 1;
-      const med = await mediate(state, msgs, calls, 0);
+      const med = await mediate(state, msgs, s.calls, 0);
       if (med.denied) {
         state.reentries += 1;
         if (state.reentries > MAX_GATE_REENTRIES) {
@@ -318,58 +399,37 @@ export const runLoop: RunLoop = async (entry, deps) => {
       }
       continue;
     }
-    const parsed = parseDecision(res.content);
-    if (parsed.ok) {
-      decision = parsed.value;
-      break;
-    }
-    // Exactly one cheap-tier repair, then the typed failure path (§5.2).
-    const repaired = await repairOnce(state, msgs, res.content, parsed.error);
-    if (repaired.ok) {
-      decision = repaired.value;
-      break;
-    }
-    await emit(
-      state.events,
-      DECISION_PARSE_INCIDENT,
-      { turnId: state.turnId, schema: 'DecisionObject', rung: 'repair', error: repaired.error },
-      state.turnId,
-    );
+    decision = await settleOrRepair(res);
     break;
   }
 
   if (exhaustedRuleIds !== null) {
     const resolution = resolutionFor(state, exhaustedRuleIds);
     await emitGateLoop(state, exhaustedRuleIds, resolution);
-    if (resolution === 'forced-silent') return forcedSilent(state);
-    // Fail-open: one final decision call with no tools on the wire, so the
-    // blocked path cannot re-fire; the decision still passes checkPlan below.
-    const res = await assess(state, msgs, { tier: 'main', taskClass: taskClassFor(entry.kind) });
-    const parsed = parseDecision(res.content);
-    if (parsed.ok) {
-      decision = parsed.value;
-    } else {
-      const repaired = await repairOnce(state, msgs, res.content, parsed.error);
-      if (repaired.ok) decision = repaired.value;
-      else {
-        await emit(
-          state.events,
-          DECISION_PARSE_INCIDENT,
-          { turnId: state.turnId, schema: 'DecisionObject', rung: 'repair', error: repaired.error },
-          state.turnId,
-        );
-        return forcedSilent(state);
-      }
+    if (resolution === 'forced-silent') return forcedSilent(state, 'gate');
+    // Fail-open: one final decision call with only `decide` on the wire, so
+    // the blocked path cannot re-fire; the decision still passes checkPlan below.
+    const res = await assess(state, msgs, { tier: 'main', taskClass: taskClassFor(entry.kind) }, [decideToolDef]);
+    if ((res.toolCalls ?? []).some((c) => !isDecideCall(c))) {
+      // It reached for a tool again with none offered — a refusal to decide.
+      return forcedSilent(state, 'failure');
     }
+    decision = await settleOrRepair(res);
+    if (decision === null) return forcedSilent(state, 'failure');
   }
 
   if (decision === null) {
-    // Hop/budget exhaustion without a decision on the table.
-    return forcedSilent(state);
+    // Parse failure (already an incident) or hop/budget exhaustion without a
+    // decision on the table: nobody decided — the reply stays owed.
+    return forcedSilent(state, 'failure');
   }
 
   // -- plan gate ------------------------------------------------------------
   for (;;) {
+    // Normalize BEFORE the gate so the verdicts judge what will actually send:
+    // the yaml's normalize class is character-only and idempotent, and nothing
+    // downstream rewrites text (M14 stays pure).
+    decision = { ...decision, bubbles: decision.bubbles.map((b) => deps.gate.normalizeText(b)) };
     const verdict = deps.gate.checkPlan({ plan: decision.plan, bubbles: decision.bubbles });
     state.inhibitions.push(verdict);
     if (verdict.allow) break;
@@ -377,7 +437,7 @@ export const runLoop: RunLoop = async (entry, deps) => {
     if (state.reentries > MAX_GATE_REENTRIES) {
       const resolution = resolutionFor(state, [verdict.ruleId]);
       await emitGateLoop(state, [verdict.ruleId], resolution);
-      if (resolution === 'forced-silent') return forcedSilent(state);
+      if (resolution === 'forced-silent') return forcedSilent(state, 'gate');
       break; // fail-open: the denied draft locks as-is
     }
     // Plan-path re-entry: the denied draft and the hint go into context, and
@@ -385,37 +445,23 @@ export const runLoop: RunLoop = async (entry, deps) => {
     msgs.push({ role: 'assistant', content: decision.bubbles.join('\n\n') });
     msgs.push({ role: 'user', content: `${verdict.hint}\n\nRevise your decision.` });
     const res = await assess(state, msgs, { tier: 'main', taskClass: taskClassFor(entry.kind) });
-    const calls: readonly ToolCall[] = res.toolCalls ?? [];
-    if (calls.length > 0) {
+    const s = settleReply(res);
+    if (s.kind === 'tools') {
       // A revision call that reaches for tools is mediated like any other.
       state.hops += 1;
-      await mediate(state, msgs, calls, 0);
+      await mediate(state, msgs, s.calls, 0);
       continue;
     }
-    const parsed = parseDecision(res.content);
-    if (parsed.ok) {
-      decision = parsed.value;
-      continue;
-    }
-    const repaired = await repairOnce(state, msgs, res.content, parsed.error);
-    if (repaired.ok) {
-      decision = repaired.value;
-      continue;
-    }
-    await emit(
-      state.events,
-      DECISION_PARSE_INCIDENT,
-      { turnId: state.turnId, schema: 'DecisionObject', rung: 'repair', error: repaired.error },
-      state.turnId,
-    );
-    return forcedSilent(state);
+    const revised = await settleOrRepair(res);
+    if (revised === null) return forcedSilent(state, 'failure');
+    decision = revised;
   }
 
   const locked = lockDecision(state, decision);
   await emit(
     deps.events,
     DECISION_LOCKED_KIND,
-    { turnId, entry: entry.kind, plan: locked.plan, bubbles: locked.bubbles.length, committee: entry.committee !== undefined },
+    { turnId, entry: entry.kind, plan: locked.plan, decidedBy: locked.decidedBy, bubbles: locked.bubbles.length, committee: entry.committee !== undefined },
     turnId,
   );
   return locked;

@@ -10,6 +10,7 @@ import {
   JOURNAL_FILE,
   THREADS_FILE,
   openEpisodeStore,
+  openPersistedThreadIndex,
   openThreadIndex,
   utcClockStamp,
   utcDayStamp,
@@ -95,6 +96,29 @@ describe('threads.json', () => {
     });
     expect(raw.endsWith('\n')).toBe(true);
     expect(raw).toContain('  "threads"'); // human-format, not canonical
+    rmDir(dir);
+  });
+
+  it('round-trips the durable fold: a persisted index projects identically (round 2)', async () => {
+    // The projection must not care where the fold came from — a reopened
+    // threads.jsonl fold renders the same threads.json as the live one.
+    const dir = tmpDir('threads-json-persisted');
+    const live = openThreadIndex();
+    live.apply([{ id: 'jazz', title: 'Jazz night', status: 'open' }], MORNING);
+    live.apply([{ id: 'jazz', status: 'touched' }], MORNING + 1);
+
+    const persisted = openPersistedThreadIndex(path.join(dir, 'memory'));
+    persisted.apply([{ id: 'jazz', title: 'Jazz night', status: 'open' }], MORNING);
+    persisted.apply([{ id: 'jazz', status: 'touched' }], MORNING + 1);
+
+    await writeProjections(dir, [], live);
+    const fromLive = fs.readFileSync(path.join(dir, THREADS_FILE), 'utf8');
+    await writeProjections(dir, [], persisted);
+    const fromPersisted = fs.readFileSync(path.join(dir, THREADS_FILE), 'utf8');
+    expect(fromPersisted).toBe(fromLive);
+    expect(JSON.parse(fromPersisted)).toMatchObject({
+      threads: [{ id: 'jazz', title: 'Jazz night', status: 'touched', updatedAt: MORNING + 1, updates: 2 }],
+    });
     rmDir(dir);
   });
 });

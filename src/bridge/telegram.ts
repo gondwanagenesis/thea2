@@ -52,6 +52,9 @@ const retryAfterOf = (body: TelegramBody): number => {
   return typeof seconds === 'number' && seconds > 0 ? seconds * 1000 : FALLBACK_RETRY_AFTER_MS;
 };
 
+/** Backstop for a wedged socket: far above the 25 s long-poll, it only fires when the connection is truly dead. */
+const HTTP_TIMEOUT_MS = 60_000;
+
 /**
  * One Bot API call: POST, status + bot-api `ok` mapping, typed errors. The token
  * rides the URL, so any body we did not build could echo it into an error
@@ -69,8 +72,15 @@ const httpCall = async (
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
+      // Host-network backstop (real timers, deliberately not the injected
+      // clock): a getUpdates socket that never answers would otherwise hang
+      // the poll loop forever. 60 s sits far above the 25 s long-poll.
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
   } catch (e) {
+    if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      throw new BridgeError('bridge/timeout', `${method}: no response within ${HTTP_TIMEOUT_MS} ms`, { cause: e });
+    }
     throw new BridgeError('bridge/transport', `${method}: ${errMsg(e)}`, { cause: e });
   }
   const text = await res.text().catch(() => '');
@@ -201,6 +211,11 @@ const pollUpdates = async function* (
       const batch = Array.isArray(body.result) ? body.result : [];
       for (const raw of batch) {
         const parsed = parseUpdate(raw, speaker);
+        // Every numbered update parses — a real inbound, or a skip-stamped
+        // placeholder the ingest records so the offset commits past it (an
+        // unrecorded skip would re-poll forever: the photo-wedge). Only an
+        // update Telegram never numbered fails to parse, and there is nothing
+        // to advance past — dropping it is all that can be done.
         if (parsed.ok) yield parsed.msg;
       }
       if (batch.length === 0) {

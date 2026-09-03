@@ -20,11 +20,13 @@ import {
   type ChatResponse,
   type ModelClient,
   type TaskClass,
+  type ThinkingControl,
   type Tier,
   type ToolCall,
   type ToolDef,
 } from '../model/index.js';
 import type { EntryKind, InhibitionGate, Verdict } from '../inhibit/index.js';
+import { DECIDE_TOOL_NAME } from './decide.js';
 import type {
   LoopPacket,
   LoopQuery,
@@ -95,25 +97,57 @@ export interface TurnState {
 export const taskClassFor = (kind: EntryKind): TaskClass =>
   kind === 'user-turn' ? 'turn' : kind === 'heartbeat' ? 'heartbeat-thought' : 'ponder-seed';
 
+/**
+ * Tool choice for one assess call: when `decide` is the ONLY tool offered, the
+ * decision is not a menu option — it is forced on the wire
+ * (`tool_choice:{name:'decide'}`), so a starvation-adjacent or wavering model
+ * cannot answer with prose and burn the repair rung. This is what makes the
+ * fail-open branch's final call (loop.ts passes exactly `[decideToolDef]`) and
+ * any tool-less registry's main call a mandatory decision. Any other def set
+ * (decide + registry tools, workers without decide) leaves the field unset and
+ * each door's default stands. The wire mappings live in M03's builders.
+ */
+const toolChoiceFor = (defs: readonly ToolDef[]): { name: string } | undefined =>
+  defs.length === 1 && defs[0]?.name === DECIDE_TOOL_NAME ? { name: DECIDE_TOOL_NAME } : undefined;
+
+/**
+ * The per-task-class `thinking` control for one assess call (config.thinking,
+ * M03 passes it verbatim on the anthropic door): her turns run without a
+ * thinking trace, judge-family work runs with the configured budget. An absent
+ * table entry yields undefined ⇒ the field is omitted and the door's default
+ * stands.
+ */
+export const thinkingFor = (cfg: LoopConfig, taskClass: TaskClass): ThinkingControl | undefined =>
+  cfg.thinking?.[taskClass];
+
 /** One assess call: native tool defs attached, NO schema — a decision arrives as
- * the content; a tool round arrives as native tool_calls (schema + tools would
- * force M03's rung-(c) path and misparse every tool hop). */
+ * a native `decide` call (or as content, folded/parsed by the loop); a tool
+ * round arrives as native tool_calls (schema + tools would force M03's
+ * rung-(c) path and misparse every tool hop). `defs` defaults to the entry's
+ * set (which carries `decide` first); workers pass their own. The task class
+ * also selects the thinking control (turn-class OFF, judge-class ON). */
 export const assess = (
   state: TurnState,
   msgs: readonly ChatMsg[],
   opts: { tier: Tier; taskClass: TaskClass },
-): Promise<ChatResponse> =>
-  state.model.chat(
+  defs: readonly ToolDef[] = state.defs,
+): Promise<ChatResponse> => {
+  const toolChoice = toolChoiceFor(defs);
+  const thinking = thinkingFor(state.cfg, opts.taskClass);
+  return state.model.chat(
     {
       taskClass: opts.taskClass,
       tier: opts.tier,
       messages: [...msgs],
-      tools: state.defs,
+      tools: [...defs],
+      ...(toolChoice !== undefined ? { toolChoice } : {}),
+      ...(thinking !== undefined ? { thinking } : {}),
       maxTokens: state.cfg.assessMaxTokens,
       temperature: state.cfg.assessTemperature,
     },
     { turnId: state.turnId, signal: state.signal },
   );
+};
 
 // ---------------------------------------------------------------------------
 // Tool mediation
@@ -367,6 +401,9 @@ export const runSubprocess = async (
     placement: state.cfg.inhibitionPlacement,
   });
   const taskClass = taskClassFor(state.kind);
+  // A worker answers in content: it gets the registry's tools, never `decide`
+  // (state.defs is the main deliberation's set, which carries it first).
+  const workerDefs = state.tools.defs(state.kind);
 
   for (;;) {
     if (state.hops >= state.cfg.maxToolHops || state.clock.epochMs() >= state.deadline) {
@@ -376,10 +413,15 @@ export const runSubprocess = async (
         outcome: 'mixed',
       };
     }
-    const res = await assess(state, msgs, {
-      tier: kind === 'fork' ? state.cfg.spawnTier.fork : state.cfg.spawnTier.task,
-      taskClass,
-    });
+    const res = await assess(
+      state,
+      msgs,
+      {
+        tier: kind === 'fork' ? state.cfg.spawnTier.fork : state.cfg.spawnTier.task,
+        taskClass,
+      },
+      workerDefs,
+    );
     if (res.toolCalls === undefined || res.toolCalls.length === 0) {
       return { text: res.content, outcome: res.content === '' ? 'mixed' : 'good' };
     }

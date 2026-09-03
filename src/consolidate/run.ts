@@ -10,8 +10,9 @@
 //      zero error issues and the judge scores >= judgeThreshold.
 //   4. IDEMPOTENCE: the consolidation key is checked against BOTH manifests
 //      before any model call, so a replay burns no tokens and writes no bytes.
-//   5. ADR-007: prod never auto-promotes — 'lived' here means corpus/lived/,
-//      not canon; canon is human-only and its lint rejects lived stamps.
+//   5. ADR-007: prod never auto-promotes — 'lived' here means var/lived/
+//      (runtime state, round 2), not canon; canon is human-only and its lint
+//      rejects lived stamps.
 
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
@@ -764,6 +765,11 @@ const runConsolidation = async (deps: ConsolidateDeps, kind: RunKind): Promise<C
     alarms: gravity.alarms,
     durationMs: deps.clock.epochMs() - startedAt,
   });
+
+  // Round 2's reload seam: the run is durable, the run row is on L0 — only now
+  // hand the report to the caller's hook (compose wires corpus.reload() in
+  // round 3). A rejection propagates so M16 counts it; a re-run is safe.
+  if (deps.onConsolidated !== undefined) await deps.onConsolidated(report);
   return report;
 };
 

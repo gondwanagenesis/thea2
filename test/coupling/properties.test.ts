@@ -36,11 +36,15 @@ const seededSig = (rng: ReturnType<typeof makeRng>): SparseVec12 => {
 
 describe('property: neutral affect ⇒ exactly 0', () => {
   it('the zero vector gives exactly 0 for every candidate when no form rule can fire at neutral', () => {
-    // Rules with θ ≥ 0 cannot fire at the zero vector (max(0, 0 − θ) = 0), so the
-    // spec's exact-0 guarantee holds over the whole pool, every tag combination.
+    // Min-rules with θ ≥ 0 cannot fire at the zero vector (max(0, 0 − θ) = 0);
+    // max-rules are dropped from the mutant entirely (their whole point is
+    // firing strictly BELOW a negative θ, which neutral never is). Over the
+    // whole pool, every tag combination: exactly 0.
     const thetaNonNegative: CouplingConfig = {
       ...COMMITTED.cfg,
-      formRules: COMMITTED.cfg.formRules.map((r) => ({ ...r, when: { dim: r.when.dim, min: Math.max(0, r.when.min) } })),
+      formRules: COMMITTED.cfg.formRules.flatMap((r) =>
+        r.when.max !== undefined ? [] : [{ ...r, when: { dim: r.when.dim, min: Math.max(0, r.when.min) } }],
+      ),
     };
     const compiled = compileConfig(thetaNonNegative);
     const a = zeroVec();
@@ -58,17 +62,25 @@ describe('property: neutral affect ⇒ exactly 0', () => {
     expect(modulate(zeroVec(), POOL[10]!.sig, [], COMMITTED)).toBe(0);
   });
 
-  it('KNOWN DEVIATION — the committed quiet rules have θ < 0, so a neutral state still boosts quiet-tagged candidates', () => {
-    // Documented, not hidden: `quiet` fires at min −0.4 on arousal and on valence,
-    // so at the zero vector a quiet-tagged candidate gets
-    //   0.10·(0 − (−0.4)) + 0.08·(0 − (−0.4)) = 0.072
-    // instead of 0. The rules' whys ask for BELOW-threshold triggers, which the
-    // max(0, a−θ) shape cannot express — reported to Diego; do not "fix" silently
-    // here, the yaml is hand-tuned by the human.
-    expect(modulate(zeroVec(), {}, ['quiet'], COMMITTED)).toBeCloseTo(0.1 * 0.4 + 0.08 * 0.4, 12);
-    // Non-quiet candidates are untouched at neutral.
-    expect(modulate(zeroVec(), {}, [], COMMITTED)).toBe(0);
-    expect(modulate(zeroVec(), {}, ['banter'], COMMITTED)).toBe(0);
+  it('RESOLVED (v2) — the committed document itself is exactly 0 at neutral, every candidate, every tag set', () => {
+    // The v1 quiet rules carried min: −0.4 and boosted quiet-tagged candidates
+    // +0.072 AT neutral (the pinned KNOWN DEVIATION). v2 expresses them as max
+    // rules — firing strictly below θ — so ADR-004's "neutral affect means
+    // modulation is exactly 0" holds for the committed document as shipped.
+    for (const c of POOL) {
+      for (const tags of [[], SOME_TAGS, ['quiet'], ['banter', 'crisis']]) {
+        expect(modulate(zeroVec(), c.sig, tags, COMMITTED), `${c.id} [${tags.join(',')}]`).toBe(0);
+      }
+    }
+  });
+
+  it('the quiet max-rules fire only strictly BELOW θ = −0.4, growing as the dim falls', () => {
+    const quiet = (arousal: number, valence = 0): number =>
+      modulate(vecOf({ arousal, valence }), {}, ['quiet'], uncapped(COMMITTED));
+    expect(quiet(-0.39)).toBe(0); // above θ: silent
+    expect(quiet(-0.4)).toBe(0); // exactly at θ: max(0, 0) — silent
+    expect(quiet(-0.5)).toBeCloseTo(0.10 * 0.1, 12); // 0.1 past θ on arousal
+    expect(quiet(-0.9, -0.5)).toBeCloseTo(0.10 * 0.5 + 0.08 * 0.1, 12); // both sides sum
   });
 });
 

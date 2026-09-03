@@ -131,16 +131,44 @@ const phrase = (weight: number, regions: number, word: string): string => {
 };
 
 /**
+ * The largest headroom-normalised deviation anywhere in the field (blend units
+ * — the same norm() the landmark centres live on). Every dim the landmarks read
+ * is a dial or primary, so walking dials + primaries covers the space.
+ */
+const peakDeviation = (s: AffectState): number => {
+  const keys = [...(Object.keys(s.dials) as Dial[]), ...(Object.keys(s.primaries) as Primary[])];
+  return keys.reduce((max, k) => Math.max(max, Math.abs(norm(blendFeature(s, k), baselineOf(k)))), 0);
+};
+
+/**
+ * Deviation below which the field IS her baseline — a place she rests in, not
+ * weather. Snapshot rounding keeps stored states well clear of float dust, but
+ * the comparison is inclusive-with-tolerance so an exact baseline never
+ * flickers a line in.
+ */
+export const RESTING_EPSILON = 1e-9;
+
+/**
  * The [AFFECT] line: blend words + top cause clause, one line, ≤ ~30 tokens.
- * A PROJECTION — coupling (M06) always reads the numeric state, never this string.
+ * A PROJECTION — coupling (M06) always reads the numeric state, never this
+ * string. AT REST IT IS '': a baseline field has nothing to report, and the
+ * assembler's render-if-nonempty logic keeps the [AFFECT] block out of the
+ * packet (description of the ordinary is noise; only unusual weather renders).
+ * A cause clause still renders on its own when the field is flat — a named
+ * reason (applied emotion, long silence) is unusual even when she is resting.
  */
 export const weatherLine = (s: AffectState): string => {
   const regions = Object.keys(LANDMARKS).length;
-  const words = landmarkBlend(s)
-    .slice(0, 3)
-    .map((b) => phrase(b.weight, regions, b.word));
+  const resting = peakDeviation(s) <= RESTING_EPSILON;
+  const words = resting
+    ? []
+    : landmarkBlend(s)
+      .slice(0, 3)
+      .map((b) => phrase(b.weight, regions, b.word));
+  const head = words.join(', '); // '' at rest — the old 'steady' fallback kept the block in 100% of packets
   const cause = topCause(s);
-  const head = words.length > 0 ? words.join(', ') : 'steady';
+  if (head === '' && cause === null) return '';
+  if (head === '') return cause ?? '';
   return cause === null ? head : `${head} — ${cause}`;
 };
 

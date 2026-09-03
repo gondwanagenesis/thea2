@@ -1,7 +1,7 @@
 ---
 module: M16
 name: sched
-syncedTo: S2 (implemented — src/sched, test/sched; wired into compose at S5; see "Deviations as built" at the end)
+syncedTo: Phase 1 as-built (2026-09-02 — src/sched, test/sched; wired into compose at S5; maintenance jobs reconcile + affect-snapshot registered; see "Deviations as built" at the end)
 stage: S2
 depends: [M01-kernel, M02-events]
 ---
@@ -90,3 +90,7 @@ export const startScheduler: (jobs: Job[], deps: SchedulerDeps) => {
 - **Grace window before `wedged`**: after the cooperative cancel, the body gets one further `timeoutMs` to settle; settling (or throwing) inside the window is a plain timeout failure (`sched/timeout`) and the job may run again — only ignoring the signal through the whole window is a wedge.
 - **Pathological downtime bail-out**: the missed-slot scan saturates at `MAX_SLOT_SCAN` (1e6) and jumps to "first slot after now" rather than walking a year of 1-minute slots.
 - **A body that already finished keeps its outcome at shutdown**: stop()/timeout races yield a few microtask rounds so a finished body records success/failure instead of being counted as `stopped`; only a still-pending body is abandoned.
+
+## As built (Phase 1)
+
+Compose registers the two maintenance jobs the architecture promised, both M16 bodies over src/app/maintenance-jobs.ts: `reconcile` (every 5 min, ADR-003; maintenance lane, catchUp skip) and `affect-snapshot` (every 15 min). Both obey the failure law — a throwing body lands its incident (`incident.reconcile_failed` / `incident.affect_snapshot_failed`) and never throws out of run(). The heartbeat job's body now holds its slot while its self-entry turn realizes (the M17 outcome await, bounded by `heartbeatTimeoutMs` at 5 min above the 2 min turn budget); `catchUp:'skip'` is unchanged — a missed heartbeat is dropped, never a backlog of texts.

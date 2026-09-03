@@ -1,6 +1,7 @@
 // M10 consolidate — the consolidation manifest, one per output directory
-// (corpus/lived/manifest.json, corpus/proposals/manifest.json), mirroring M08's
-// committed-manifest discipline.
+// (var/lived/manifest.json, var/proposals/manifest.json since round 2 moved the
+// consolidators' outputs under var/), mirroring M08's committed-manifest
+// discipline.
 //
 // The manifest is the module's idempotence memory: its key is the CONSOLIDATION
 // KEY (consolidator × version × sorted episode ids), not the file content hash,

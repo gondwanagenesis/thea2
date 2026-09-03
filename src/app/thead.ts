@@ -4,7 +4,7 @@
 // detached afterturn, then stops the scheduler. In-flight turns are DRAINED,
 // never aborted, at shutdown — a half-said reply is worse than a late one.
 
-import { emitLostReplyAlarms, ingestUpdates } from '../bridge/index.js';
+import { ingestUpdates } from '../bridge/index.js';
 import type { System } from './compose.js';
 
 export interface TheadHandle {
@@ -19,22 +19,27 @@ export const startThead = (sys: System, opts: { signal?: AbortSignal | undefined
   }
 
   // Boot reconcile: a crash before this boot may have left a lost reply —
-  // alarm on L0 immediately, never silently.
-  void (async () => {
-    try {
-      const discrepancies = await sys.ledger.reconcile(sys.clock.epochMs());
-      await emitLostReplyAlarms(sys.events, discrepancies);
-    } catch (e) {
-      void sys.events.emit('incident.reconcile_failed', { error: String(e) });
-    }
-  })();
+  // alarm on L0 immediately, never silently, and RE-RUN the young ones (the
+  // shared recovery in compose marks each rerun so the 5-min job won't repeat
+  // it). Recovery honors the pipeline's busy state, so this cannot double-run
+  // the turn that is only still in flight.
+  void sys.reconcile();
 
   const poll = (async () => {
     for await (const m of sys.channel.updates(ac.signal)) {
-      // Denied chats never reach the ledger: an unallowed chat is not her
-      // responsibility, and a ledger row here would alarm forever.
+      // A skipped update (photo, edit, reaction removal) is recorded so the
+      // offset moves past it — an unrecorded skip re-polls forever — and it is
+      // never owed a turn (reconcile reads the `skipped` stamp).
+      if (m.skipped !== undefined) {
+        void sys.events.emit('bridge.update_skipped', { updateId: m.updateId, chatId: m.chatId, reason: m.skipped.reason });
+        await ingestUpdates({ ledger: sys.ledger, offsets: sys.offsets }, [m]);
+        continue;
+      }
+      // Denied chats are not her responsibility, but they must not wedge the
+      // poll either: recorded as a skip (never owed), announced on L0.
       if (!sys.cfg.bridge.allowedChatIds.includes(m.chatId)) {
         void sys.events.emit('app.chat_denied', { chatId: m.chatId, updateId: m.updateId });
+        await ingestUpdates({ ledger: sys.ledger, offsets: sys.offsets }, [{ ...m, skipped: { reason: 'denied_chat' } }]);
         continue;
       }
       // handle returns the pre-minted turnId synchronously — the offset

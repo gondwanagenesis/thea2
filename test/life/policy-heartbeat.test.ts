@@ -14,6 +14,8 @@ import {
   backoffHoursFor,
   heartbeatPrecondition,
   isQuietHour,
+  localDateOf,
+  localHourOfDay,
   scoreThought,
   silencePressure,
   utcHourOfDay,
@@ -32,6 +34,7 @@ const QUIET: readonly [number, number] = [23, 8];
 const awake = (over: Partial<HeartbeatPreState> = {}): HeartbeatPreState => ({
   nowH: 14,
   quietHours: QUIET,
+  owedInbound: 0,
   sentToday: 0,
   unanswered: 0,
   lastUnansweredAgeH: 0,
@@ -109,6 +112,69 @@ describe('utcHourOfDay', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Local time — the quiet-hours window and the daily cap are HIS wall clock
+// (Europe/Madrid below: CEST = UTC+2 in July, CET = UTC+1 in January). Every
+// epoch here is a fixed constant — the same values must read the same on any
+// host, any ICU, any DST state of the machine running the suite.
+// ---------------------------------------------------------------------------
+
+describe('Madrid quiet hours: CEST and CET epochs', () => {
+  const MADRID = 'Europe/Madrid';
+  const QUIET_H = QUIET;
+
+  it('reads 23:30 local in both DST epochs and blocks the fire in both', () => {
+    // 2026-07-15T21:30Z — CEST (UTC+2): 23:30 Madrid, inside [23, 8).
+    const JULY = 1_784_151_000_000;
+    expect(localHourOfDay(JULY, MADRID)).toBeCloseTo(23.5, 9);
+    // 2026-01-15T22:30Z — CET (UTC+1): 23:30 Madrid again, one UTC hour later.
+    const JANUARY = 1_768_516_200_000;
+    expect(localHourOfDay(JANUARY, MADRID)).toBeCloseTo(23.5, 9);
+
+    for (const ms of [JULY, JANUARY]) {
+      const verdict = heartbeatPrecondition(awake({ nowH: localHourOfDay(ms, MADRID), quietHours: QUIET_H }));
+      expect(verdict).toEqual({ canText: false, reason: 'quiet hours' });
+    }
+  });
+
+  it('the same UTC instant is a different local hour across the epochs (DST is real, not a table)', () => {
+    // 21:30Z: 23:30 in July, 22:30 in January — the offset moved, the window did not.
+    expect(localHourOfDay(1_784_151_000_000, MADRID)).toBeCloseTo(23.5, 9);
+    expect(localHourOfDay(1_768_512_600_000, MADRID)).toBeCloseTo(22.5, 9); // 2026-01-15T21:30Z
+  });
+});
+
+describe('wrapping window [23, 8) local', () => {
+  const MADRID = 'Europe/Madrid';
+
+  it('sweeps the wrap on real local instants: awake 22:30 → quiet 23:30/00:30/07:59 → awake 08:00', () => {
+    const verdictAt = (ms: number) =>
+      heartbeatPrecondition(awake({ nowH: localHourOfDay(ms, MADRID), quietHours: QUIET }));
+
+    expect(verdictAt(1_784_147_400_000)).toEqual({ canText: true, reason: 'ok' }); // 22:30 CEST — still awake
+    expect(verdictAt(1_784_151_000_000)).toEqual({ canText: false, reason: 'quiet hours' }); // 23:30
+    expect(verdictAt(1_784_154_600_000)).toEqual({ canText: false, reason: 'quiet hours' }); // 00:30, past HIS midnight (Jul 16)
+    expect(verdictAt(1_784_181_540_000)).toEqual({ canText: false, reason: 'quiet hours' }); // 07:59 — one minute left
+    expect(verdictAt(1_784_181_600_000)).toEqual({ canText: true, reason: 'ok' }); // 08:00 — end excluded, locally
+  });
+});
+
+describe('daily cap resets at local midnight', () => {
+  const MADRID = 'Europe/Madrid';
+
+  it('the census date flips at HIS midnight (00:00 local), not at UTC midnight', () => {
+    // runHeartbeat resets sentToday when localDateOf(now) rolls — these two
+    // epochs are the exact flip: 23:59:59 still yesterday, 00:00:00 tomorrow.
+    expect(localDateOf(1_784_152_799_000, MADRID)).toBe('2026-07-15'); // 2026-07-15T21:59:59Z
+    expect(localDateOf(1_784_152_800_000, MADRID)).toBe('2026-07-16'); // 2026-07-15T22:00:00Z = 00:00:00 local
+
+    // UTC midnight is NOT his: 2026-07-16T00:00Z is 02:00 local — same census
+    // day as the 00:30 local instant, so the cap does not reset at Greenwich.
+    expect(localDateOf(1_784_160_000_000, MADRID)).toBe('2026-07-16');
+    expect(localDateOf(1_784_154_600_000, MADRID)).toBe('2026-07-16');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The backoff ladder
 // ---------------------------------------------------------------------------
 
@@ -134,6 +200,28 @@ describe('backoffHoursFor (the doubling no-reply ladder)', () => {
 describe('heartbeatPrecondition — the hard gates, checked in the spec order', () => {
   it("'ok' when every gate is clear", () => {
     expect(heartbeatPrecondition(awake())).toEqual({ canText: true, reason: 'ok' });
+  });
+
+  it('owed inbound outranks every other gate', () => {
+    // Phase 1, 2026-09-02: a question of his with no answer beats quiet hours,
+    // the cap, the backoff ladder and the mutex — the heartbeat may not text
+    // about anything else while a LOST_REPLY of his stands, and 'owed' is THE
+    // reason even when every other gate is also closed.
+    expect(
+      heartbeatPrecondition(
+        awake({
+          owedInbound: 1,
+          nowH: 23.5, // deep in quiet hours…
+          sentToday: 5, // …cap blown…
+          unanswered: 3, // …maximum backoff debt…
+          lastUnansweredAgeH: 0.5, // …far inside the 24h ladder…
+          mutexActive: true, // …and a conversation in flight
+        }),
+      ),
+    ).toEqual({ canText: false, reason: 'owed' });
+    // And it outranks them severally, not just jointly.
+    expect(heartbeatPrecondition(awake({ owedInbound: 2, mutexActive: true }))).toEqual({ canText: false, reason: 'owed' });
+    expect(heartbeatPrecondition(awake({ owedInbound: 1, sentToday: 9 }))).toEqual({ canText: false, reason: 'owed' });
   });
 
   it('quiet hours win first, boundaries included/excluded exactly', () => {

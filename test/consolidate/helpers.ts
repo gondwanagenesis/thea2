@@ -77,7 +77,7 @@ export const errorCodeOfAsync = async (fn: () => Promise<unknown>): Promise<stri
  * downstream read of a broken frontmatter field.
  */
 export const analyzeWritten = (raw: string, name: string): Exemplar => {
-  const analysis = analyzeFile({ path: `corpus/lived/${name}`, raw }, 'lived');
+  const analysis = analyzeFile({ path: `var/lived/${name}`, raw }, 'lived');
   if (analysis.exemplar === undefined) {
     const first = analysis.issues[0];
     throw new Error(`fixture file '${name}' does not parse: ${first?.code} ${first?.message ?? ''}`);
@@ -264,7 +264,7 @@ export const corpusWith = (canon: ReadonlyArray<CorpusFile>, livedDir?: string):
       if (!name.endsWith('.md') || name.startsWith('.')) continue;
       const full = path.join(livedDir, name);
       if (fs.statSync(full).isDirectory()) continue;
-      files.push({ path: `corpus/lived/${name}`, raw: fs.readFileSync(full, 'utf8') });
+      files.push({ path: `var/lived/${name}`, raw: fs.readFileSync(full, 'utf8') });
     }
   }
   return buildIndex(files);
@@ -329,8 +329,10 @@ export const harnessDirs = (label: string): HarnessDirs => {
   const root = tmpDir(label);
   return {
     root,
-    livedDir: path.join(root, 'corpus', 'lived'),
-    proposalsDir: path.join(root, 'corpus', 'proposals'),
+    // Round 2: the consolidators' outputs are RUNTIME STATE under var/ —
+    // corpus/lived + corpus/proposals are no longer theirs to write.
+    livedDir: path.join(root, 'var', 'lived'),
+    proposalsDir: path.join(root, 'var', 'proposals'),
     reportsDir: path.join(root, 'var', 'reports'),
     creditPath: path.join(root, 'var', 'credit', 'weights.json'),
   };

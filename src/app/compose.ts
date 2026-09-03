@@ -19,9 +19,11 @@ import { openEventLog, type EventLog } from '../events/index.js';
 import { createZaiClient, makeRouter, MockModel, type ModelClient } from '../model/index.js';
 import { makeHashEmbedder, type Embedder } from '../embed/index.js';
 import { openAffectStore, type AffectStore } from '../affect/index.js';
+import { setDominanceBaseline } from '../affect/vocab.js';
 import { compileCoupling, signature, COUPLING_BASELINES, type CompiledCoupling, type Vec12 } from '../coupling/index.js';
 import { openCorpusIndex, type OpenedCorpus } from '../corpus/corpus-index.js';
 import { loadControls } from '../corpus/controls.js';
+import { identityBody } from '../corpus/frontmatter.js';
 import { corpusNominator } from '../corpus/nominator.js';
 import {
   episodicNominator,
@@ -29,6 +31,8 @@ import {
   openProceduralStore,
   openSessionWindow,
   proceduralNominator,
+  writeProjections,
+  openPersistedThreadIndex,
   type EpisodeStore,
   type ProceduralStore,
   type SessionWindow,
@@ -50,7 +54,8 @@ import { openMessageLedger, openOffsetStore, telegramChannel, FakeChannel } from
 import { startScheduler, type Job, type SchedulerHandle } from '../sched/index.js';
 import { heartbeatJob, ponderJob, reflectJob, type LifeJobDeps } from '../life/jobs.js';
 import { resolveLifeConfig } from '../life/config.js';
-import { readRoutingTable } from '../siblings/index.js';
+import { readRoutingTable, ledgerJob, type SiblingDeps } from '../siblings/index.js';
+import { gravityWeekOf } from '../consolidate/gravity.js';
 import {
   consolidateNightly,
   consolidateWeekly,
@@ -61,6 +66,7 @@ import {
 import type { ProbeTarget } from '../probes/index.js';
 import { makePipeline, type Pipeline } from './pipeline.js';
 import { makeEmbedder } from './embedder.js';
+import { affectSnapshotJob, reconcileJob, runReconcile, type RecoverLostDeps } from './maintenance-jobs.js';
 import type { Thea2Config } from './config.js';
 
 export type ComposePreset = 'prod' | 'hermetic' | 'probe-harness';
@@ -100,6 +106,14 @@ export interface System {
   sched: SchedulerHandle;
   /** The wired job table — status reports it; thead boots it. */
   jobCount: number;
+  /** The job names in registration order — the status line derives from these, never a hardcoded list. */
+  jobNames: readonly string[];
+  /**
+   * One reconcile pass (ledger → alarms → lost-reply recovery), shared by the
+   * 5-min job and thead's boot reconcile. The rerun-once set lives here, so a
+   * loss re-run at boot is never re-run again by the job.
+   */
+  reconcile: () => Promise<void>;
   paths: SystemPaths;
   probeTarget(): ProbeTarget;
   /** Settle in-flight turns + afterturns, stop the scheduler. Idempotent-ish: safe to call twice. */
@@ -150,6 +164,17 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   for (const d of [paths.events, paths.ledger, paths.memory, paths.corpusCache, path.dirname(paths.affectState), path.dirname(paths.schedState), path.dirname(paths.offsets)]) {
     fs.mkdirSync(d, { recursive: true });
   }
+  // The launch-week epoch (ADR-005's glidepath counts from FIRST BOOT, not
+  // 1970 - composed as weeks-since-this-stamp). Written once, read forever.
+  const firstBootPath = v('var/first-boot');
+  let firstBootMs = clock.epochMs();
+  try {
+    const stamp = Number(readFileSync(firstBootPath, 'utf8').trim());
+    if (Number.isFinite(stamp) && stamp > 0) firstBootMs = stamp;
+    else throw new Error('absent');
+  } catch {
+    fs.writeFileSync(firstBootPath, String(firstBootMs), { encoding: 'utf8' });
+  }
 
   // ---- L0 event log ------------------------------------------------------
   const events = openEventLog(paths.events, { clock });
@@ -165,13 +190,16 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
 
   // ---- stores ------------------------------------------------------------
   const affect = openAffectStore(paths.affectState, { clock, rng, events });
+  // ADR-004a: the dominance resting home is config's say (default 0.0 = Thea1's
+  // pinned zero, zero behavior change). Must run before any state is read.
+  setDominanceBaseline(cfg.affect.dominanceBaseline ?? 0.0);
   // Boot barrier: the store boots async; snapshot() queues behind it, persists
   // the recovered state (crash-recovery's L0 copy) and proves current() safe.
   await affect.snapshot();
   const episodes = await openEpisodeStore(paths.memory, { embedder });
   const procedures = await openProceduralStore(paths.memory, { embedder });
   const corpus = await openCorpusIndex(
-    { canon, derived: path.resolve(canon, '..', 'derived'), lived: path.resolve(canon, '..', 'lived') },
+    { canon, derived: path.resolve(canon, '..', 'derived'), lived: v('var/lived') },
     { embedder, controls: loadControls(readCanon(path.join(canon, 'registers.yaml')), readCanon(path.join(canon, 'exclusions.yaml'))), cacheDir: paths.corpusCache },
   );
   await events.emit('app.boot', { stage: 'stores', exemplars: corpus.all().length, episodes: episodes.size() });
@@ -222,7 +250,9 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     budgets: { ...DEFAULT_ASSEMBLE_CONFIG.budgets, total: cfg.budgets.packetTokens },
   };
   const nominators: Nominator[] = [
-    corpusNominator(corpus, { g: cfg.gravity.seedWeight }),
+    // creditPath: the gamma term is live - the nightly weights file the
+    // consolidator writes is the same one selection reads (Round 2).
+    corpusNominator(corpus, { g: cfg.gravity.seedWeight, creditPath: v('var/credit/weights.json') }),
     episodicNominator(episodes, { clock }),
     proceduralNominator(procedures),
   ];
@@ -233,8 +263,13 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     inhibitionBlock: gate.renderPromptBlock(),
     cfg: assembleCfg,
     rng,
-    identityBlock: readCanon(path.join(canon, 'identity.md')),
+    // [IDENTITY] carries her words only - frontmatter and the author's draft
+    // note are Diego's editing surface, never prompt (Round 3, review P0-4).
+    identityBlock: identityBody(readCanon(path.join(canon, 'identity.md'))),
   });
+
+  // The people registry (Round 3): [INTERLOCUTOR] says his name, not an id.
+  const personLabel = (person: string): string | undefined => cfg.people[person]?.name;
 
   // ---- channel + ledger + offsets ---------------------------------------
   const channel =
@@ -258,6 +293,9 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   // ONE window instance for the whole system — a second open over the same dir
   // would hold a divergent in-memory copy of the conversation.
   const window = openSessionWindow(paths.memory, { model, clock, events });
+  // Standing intent (Round 3): durable across restarts, folded by the
+  // afterturn's appraisals, read by the heartbeat's due list.
+  const threads = openPersistedThreadIndex(paths.memory);
   const pipeline = makePipeline({
     model,
     gate,
@@ -278,6 +316,9 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     loopCfg,
     allowedChatIds: cfg.bridge.allowedChatIds,
     reconcileWindowMs: cfg.reconcile.lostReplyWindowMin * 60_000,
+    threads,
+    personLabel,
+    timezone: cfg.timezone,
   });
   await events.emit('app.boot', { stage: 'pipeline', model: model.constructor.name });
 
@@ -293,6 +334,16 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   // Life jobs wire by default on a real boot (opts.jobs undefined — the cli's
   // thead path). Hermetic tests inject their own table explicitly.
   let jobs: Job[] = opts.jobs ?? [];
+  // The maintenance pair (ADR-003's 5-min reconcile + the 15-min affect
+  // snapshot) wires on a real boot beside the life jobs. The rerun-once set is
+  // shared with sys.reconcile (thead's boot pass) through the closure below.
+  const reconcileRerun = new Set<number>();
+  const reconcileDeps: RecoverLostDeps = {
+    ledger,
+    events,
+    pipeline,
+    rerun: reconcileRerun,
+  };
   if (opts.jobs === undefined) {
     const stateDir = path.resolve(paths.base, 'var', 'life');
     fs.mkdirSync(stateDir, { recursive: true });
@@ -301,24 +352,37 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     // replay. Writes land in corpus/lived + corpus/proposals + var only —
     // the M10 prod-safety law, enforced by the paths handed in here.
     const consolidatePaths = {
-      livedDir: path.resolve(canon, '..', 'lived'),
-      proposalsDir: path.resolve(canon, '..', 'proposals'),
+      // Runtime state (Round 2): lived + proposals live in var/, the sandbox's
+      // ReadWritePaths - consolidation can actually write them in prod now.
+      livedDir: v('var/lived'),
+      proposalsDir: v('var/proposals'),
       reportsDir: v('var/reports'),
     };
     fs.mkdirSync(consolidatePaths.reportsDir, { recursive: true });
     fs.mkdirSync(v('var/credit'), { recursive: true });
+    fs.mkdirSync(v('var/lived'), { recursive: true });
+    fs.mkdirSync(v('var/proposals'), { recursive: true });
     const consolidateDeps: ConsolidateDeps = {
       model,
       episodes,
       corpus,
       affectHistory: events,
       creditPath: v('var/credit/weights.json'),
+      // The flywheel's closing link (Round 2): the moment a consolidation
+      // lands, the corpus re-reads it and the projections are written - no
+      // restart, no write-only learning loop. A rejecting hook fails the run
+      // loudly AFTER the outputs are durable (M16 counts it; replay is safe).
+      onConsolidated: async () => {
+        await corpus.reload();
+        await writeProjections(v('var'), episodes.all(), threads);
+      },
       events,
       clock,
       rng: rng.fork('consolidate'),
-      cfg: nightlyConfig(consolidatePaths, Math.floor(clock.epochMs() / WEEK_MS)),
+      cfg: nightlyConfig(consolidatePaths, gravityWeekOf(clock.epochMs(), firstBootMs)),
     };
-    const lifeCfg = resolveLifeConfig({ quietHours: cfg.affect.quietHours });
+    // Quiet hours and the daily cap are HIS hours, not the server's (Phase 1).
+    const lifeCfg = resolveLifeConfig({ quietHours: cfg.affect.quietHours, timeZone: cfg.timezone });
     const lifeDeps: LifeJobDeps = {
       model,
       events,
@@ -329,7 +393,12 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
       lastInboundTs: () => pipeline.lastInboundAtMs(),
       selfEntry: (kind, goal) => pipeline.selfEntry(kind, goal),
       stateDir,
+      threads,
       vec12: () => signature(affect.current(), COUPLING_BASELINES),
+      // His unanswered messages come first: reconcile's LOST_REPLY count, read
+      // straight off the ledger (a pure read — alarms are the reconcile job's
+      // business, so this never double-alarms).
+      owedInbound: async () => (await ledger.reconcile(clock.epochMs())).filter((d) => d.kind === 'LOST_REPLY').length,
       ponderPacket: async () => {
         const queryVec = (await embedder.embed(['what is worth thinking about now?']))[0] ?? new Float32Array(0);
         return assemble(
@@ -358,7 +427,35 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
         };
       },
     };
-    jobs = [heartbeatJob(lifeDeps), ponderJob(lifeDeps), reflectJob(lifeDeps)];
+    // M18's Ledger surfaces the day's truths (lost replies, failure silences,
+    // spend) as a report + `sibling.report` - the ops line, minus channel
+    // delivery (v1 reads it; Nightingale stays unregistered until the probe
+    // suite is meaningful, Phase 4). Its ProbeRunner dependency is a loud
+    // refusal: nothing registered can ever invoke it.
+    const notBuiltProbe = {
+      run: async () => fail('probes/not-built', 'Nightingale is not registered - the Phase 4 probe suite gates it'),
+      runAll: async () => fail('probes/not-built', 'Nightingale is not registered - the Phase 4 probe suite gates it'),
+    };
+    const siblingDeps: SiblingDeps = {
+      model,
+      events,
+      sched: { statePath: paths.schedState },
+      clock,
+      rng: rng.fork('siblings'),
+      probes: notBuiltProbe,
+      baselinePath: path.resolve(process.cwd(), 'probes', 'baseline.json'),
+      deployMarkerPath: v('var/deploy-marker'),
+      routingPath: v('var/routing.json'),
+      reportsDir: v('var/reports'),
+    };
+    jobs = [
+      heartbeatJob(lifeDeps),
+      ponderJob(lifeDeps),
+      reflectJob(lifeDeps),
+      reconcileJob(reconcileDeps),
+      affectSnapshotJob({ affect }),
+      ledgerJob(siblingDeps),
+    ];
   }
   const sched = startScheduler(jobs, {
     clock,
@@ -391,6 +488,10 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     pipeline,
     sched,
     jobCount: jobs.length,
+    jobNames: jobs.map((j) => j.name),
+    reconcile: async () => {
+      await runReconcile(reconcileDeps, clock.epochMs());
+    },
     paths,
     probeTarget: () => {
       const fake = channel as Channel & Partial<FakeChannelExtras>;

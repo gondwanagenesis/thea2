@@ -12,7 +12,21 @@ export interface Thea2Config {
     protocol: 'openai' | 'anthropic';
   };
   bridge: { botToken: string; allowedChatIds: number[] }; // botToken from env only
-  affect: { statePath: string; quietHours: [number, number] };
+  /** IANA zone Diego lives in (quiet hours, daily caps, the [EARLIER] clock). Default 'UTC'. */
+  timezone: string;
+  affect: {
+    statePath: string;
+    quietHours: [number, number];
+    /** ADR-004a: the dominance resting home. Absent ⇒ 0.0 (Thea1's default, zero change); Diego decides the real value. */
+    dominanceBaseline?: number | undefined;
+  };
+  /**
+   * The people registry, keyed by speaker person id (`tg:<chatId>`). What v1
+   * social awareness is: her [INTERLOCUTOR] line carries a NAME, not a raw id.
+   * Per-person hours stay global (timezone) — the registry notes language for
+   * the corpus/multilingual work, nothing reads it yet.
+   */
+  people: Record<string, { name: string; language?: string | undefined }>;
   sched: { statePath: string };
   budgets: { packetTokens: number; windowTokens: number; turnTokens: number };
   inhibitionPlacement: 'trailing' | 'merged';
@@ -89,9 +103,28 @@ const findSecrets = (node: unknown, path: (string | number)[] = []): ConfigIssue
 
 // ——— schema ————————————————————————————————————————————————————————
 
+// A [start, end) window of LOCAL hours; `start > end` wraps midnight (23 → 8).
+// Equal endpoints would be "no window" or "all day" — ambiguous, rejected.
 const quietHoursSchema = z
   .tuple([z.number().int().min(0).max(23), z.number().int().min(0).max(23)])
-  .refine(([a, b]) => a < b, { message: 'quietHours must be an increasing [start, end) window' });
+  .refine(([a, b]) => a !== b, { message: 'quietHours start and end must differ ([start, end), wrapping past midnight allowed)' });
+
+/** An IANA zone the runtime can actually resolve — a typo here would silently become UTC. */
+const timezoneSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (tz) => {
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: 'timezone must be an IANA zone this runtime knows (e.g. Europe/Madrid)' },
+  )
+  .default('UTC');
 
 const configSchema = z.strictObject({
   models: z.strictObject({
@@ -107,10 +140,21 @@ const configSchema = z.strictObject({
     // botToken deliberately absent — env only; its presence here is a secret-in-yaml hit
     allowedChatIds: z.array(z.number().int()).min(1),
   }),
+  timezone: timezoneSchema,
   affect: z.strictObject({
     statePath: z.string().min(1),
     quietHours: quietHoursSchema,
+    dominanceBaseline: z.number().min(0).max(1).optional(),
   }),
+  people: z
+    .record(
+      z.string().min(1),
+      z.strictObject({
+        name: z.string().min(1),
+        language: z.string().min(1).optional(),
+      }),
+    )
+    .default({}),
   sched: z.strictObject({ statePath: z.string().min(1) }),
   budgets: z.strictObject({
     packetTokens: z.number().int().positive(),
@@ -198,7 +242,13 @@ export const loadConfig = (
       protocol: y.models.protocol,
     },
     bridge: { botToken: botToken as string, allowedChatIds: y.bridge.allowedChatIds },
-    affect: { statePath: y.affect.statePath, quietHours: y.affect.quietHours },
+    timezone: y.timezone,
+    affect: {
+      statePath: y.affect.statePath,
+      quietHours: y.affect.quietHours,
+      ...(y.affect.dominanceBaseline !== undefined ? { dominanceBaseline: y.affect.dominanceBaseline } : {}),
+    },
+    people: y.people,
     sched: { statePath: y.sched.statePath },
     budgets: y.budgets,
     inhibitionPlacement: y.inhibitionPlacement,

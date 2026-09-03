@@ -43,6 +43,7 @@ import {
   type EpisodeRow,
   type Harness,
 } from './helpers.js';
+import type { ConsolidateReport } from '../../src/consolidate/index.js';
 
 // ---------------------------------------------------------------------------
 // The fixture week: one 4-episode pattern, one 2-episode not-yet-pattern.
@@ -131,7 +132,7 @@ describe('nightly happy path (gates b, f)', () => {
     expect(files).toHaveLength(1);
     const name = files[0] ?? '';
     const raw = fs.readFileSync(path.join(h.dirs.livedDir, name), 'utf8');
-    const analysis = analyzeFile({ path: `corpus/lived/${name}`, raw }, 'lived');
+    const analysis = analyzeFile({ path: `var/lived/${name}`, raw }, 'lived');
     expect(analysis.issues.filter((i) => i.severity === 'error')).toEqual([]);
 
     // Gate (b): the stamps are the episodes' own records, complete.
@@ -264,6 +265,94 @@ describe('gate (c): the human merge gate', () => {
     // The weekly pass does not run the credit batch.
     expect(report.credit.applied).toBe(0);
     expect(fs.existsSync(h.dirs.creditPath)).toBe(false);
+  });
+});
+
+describe('round 2: lived + proposals are runtime state under var/', () => {
+  /** A second, evidence-gapped cluster: full stamps for the pattern, none for g4. */
+  const GAP_CLUSTER: EpisodeRow[] = [
+    { id: 'g1', turnId: 'turn_g1', vec: [0, 1], ts: T0 - 4 * HOUR },
+    { id: 'g2', turnId: 'turn_g2', vec: [0.02, 0.98], ts: T0 - 3 * HOUR },
+    { id: 'g3', turnId: 'turn_g3', vec: [0.01, 0.99], ts: T0 - 2 * HOUR },
+    { id: 'g4', turnId: 'turn_g4', vec: [0.03, 0.97], ts: T0 - 1 * HOUR },
+  ];
+  const GAP_OUTCOMES = [
+    outcomeEnvelope({ ts: T0 - 3.5 * HOUR, turnId: 'turn_g1', sign: 1, evidence: 'g1' }),
+    outcomeEnvelope({ ts: T0 - 2.5 * HOUR, turnId: 'turn_g2', sign: 1, evidence: 'g2' }),
+    outcomeEnvelope({ ts: T0 - 1.5 * HOUR, turnId: 'turn_g3', sign: 1, evidence: 'g3' }),
+    // turn_g4 has NO outcome record -> that cluster routes to proposals.
+  ];
+
+  it('lived and proposals are written under var/, and corpus/ never grows', async () => {
+    const h = harness('var-dirs', { episodes: [...PATTERN, ...GAP_CLUSTER], l0: [...OUTCOMES, ...GAP_OUTCOMES] });
+
+    const report = await consolidateNightly(h.deps);
+
+    // One cluster of each destination in a single run.
+    expect(report.writtenLived).toBe(1);
+    expect(report.writtenProposals).toBe(1);
+    expect(fs.readdirSync(h.dirs.livedDir).some((n) => n.endsWith('.md'))).toBe(true); // var/lived
+    expect(fs.readdirSync(h.dirs.proposalsDir).some((n) => n.endsWith('.md'))).toBe(true); // var/proposals
+    expect(fs.existsSync(manifestPath(h.dirs.livedDir))).toBe(true);
+    expect(fs.existsSync(manifestPath(h.dirs.proposalsDir))).toBe(true);
+    // The corpus tree is untouched: no lived/ or proposals/ under corpus/.
+    expect(fs.existsSync(path.join(h.dirs.root, 'corpus', 'lived'))).toBe(false);
+    expect(fs.existsSync(path.join(h.dirs.root, 'corpus', 'proposals'))).toBe(false);
+    // The nightly report + gravity alarm behavior is unchanged.
+    expect(fs.existsSync(path.join(h.dirs.reportsDir, 'status.md'))).toBe(true);
+    expect(h.log.kinds()).toContain(CONSOLIDATE_GRAVITY_EVENT);
+  });
+});
+
+describe('round 2: the onConsolidated hook (the reload seam)', () => {
+  it('nightly and weekly completion invoke onConsolidated with the report, after the run row lands', async () => {
+    const h = harness('hook', { episodes: PATTERN, l0: [...OUTCOMES, ...CREDIT_EVENTS] });
+    const seen: ConsolidateReport[] = [];
+    let kindsAtHook: string[] = [];
+    h.deps.onConsolidated = async (r) => {
+      kindsAtHook = h.log.kinds();
+      seen.push(r);
+    };
+
+    const report = await consolidateNightly(h.deps);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(report); // the finished report, not a copy
+    expect(seen[0]?.writtenLived).toBe(1);
+    // The run is already durable and on L0 when the hook fires.
+    expect(kindsAtHook).toContain(CONSOLIDATE_RUN_EVENT);
+    expect(livedFiles(h)).toHaveLength(1);
+
+    // The weekly pass rides the same seam.
+    const seenAfterWeekly = seen.length;
+    await consolidateWeekly(h.deps);
+    expect(seen).toHaveLength(seenAfterWeekly + 1);
+  });
+
+  it('a rejecting hook fails the run loudly AFTER the outputs are durable', async () => {
+    const h = harness('hook-throws', { episodes: PATTERN, l0: [...OUTCOMES, ...CREDIT_EVENTS] });
+    h.deps.onConsolidated = async () => {
+      throw new Error('reload exploded');
+    };
+
+    await expect(consolidateNightly(h.deps)).rejects.toThrow('reload exploded');
+
+    // The writes and the run row survived the hook's failure...
+    expect(livedFiles(h)).toHaveLength(1);
+    expect(h.log.kinds()).toContain(CONSOLIDATE_RUN_EVENT);
+    // ...and the failure was loud without corrupting idempotence: with the hook
+    // healthy again, the replay burns nothing and writes nothing.
+    h.deps.onConsolidated = undefined;
+    const replay = await consolidateNightly(h.deps);
+    expect(replay.skippedExisting).toBe(1);
+    expect(livedFiles(h)).toHaveLength(1);
+  });
+
+  it('defaults to undefined: no hook means today\'s behavior, unchanged', async () => {
+    const h = harness('hook-absent', { episodes: PATTERN, l0: [...OUTCOMES] });
+    const report = await consolidateNightly(h.deps);
+    expect(report.writtenLived).toBe(1);
+    expect(h.deps.onConsolidated).toBeUndefined();
   });
 });
 

@@ -15,7 +15,7 @@ import { makeRng } from '../../src/kernel/rng.js';
 import { canonicalJson } from '../../src/kernel/index.js';
 import { renderLedgerBody, renderLedgerReport, runLedgerReport, ledgerJob } from '../../src/siblings/ledger.js';
 import { aggregateWindow } from '../../src/siblings/aggregate.js';
-import { LEDGER_JOB_NAME, LEDGER_TIMEOUT_MS, LEDGER_UTC_MINUTE, LEDGER_WINDOW_MS } from '../../src/siblings/types.js';
+import { LEDGER_JOB_NAME, LEDGER_TIMEOUT_MS, LEDGER_UTC_MINUTE, LEDGER_WINDOW_MS, SIBLING_REPORT_EVENT } from '../../src/siblings/types.js';
 import type { LedgerReportData, LedgerTruths } from '../../src/siblings/ledger.js';
 import type { Job, JobCtx } from '../../src/sched/index.js';
 import {
@@ -76,6 +76,7 @@ const GOLDEN_BODY = [
   '## operational truths',
   '',
   '- lost replies: 2 (oldest 90 min)',
+  '- failure silences: 2 — decided silent by failure, still owed',
   '- gate rejections: 2 loops, 4 re-entries — rules: low-arousal ×3, quiet-hours ×1',
   '- sched alarms: 2 — ledger-report ×1, ponder-seed ×1',
   '- gravity alarms: tilt ×1, unmoored ×2',
@@ -157,12 +158,47 @@ describe('the Ledger report from a replayed event fixture', () => {
       costUsd: 7.25,
       parseFailures: 6, // 4 attributed + 2 unattributed
       lostReplies: 2,
+      failureSilences: 2,
       gateLoops: 2,
       schedAlarms: 2,
       gravityAlarms: 3,
       incidents: 1,
       routing: { applied: [], refused: [], changed: false },
     });
+  });
+
+  it('ledger report lists lost replies and failure silences (and emits sibling.report for round 3 delivery)', async () => {
+    const h = setup('ledger-failure-silences', {
+      l0: [
+        ...goldenDay(),
+        // Covered inside goldenDay: two `decidedBy:'failure'` silences and one
+        // of her own model-decided silences, which must NOT count.
+      ],
+      schedState: schedStateJson(T0),
+    });
+    voiced(h);
+
+    const run = await runLedgerReport(h.deps);
+
+    // The page names both truths side by side, with the numbers.
+    const page = reportOf(h, run.file);
+    expect(page).toContain('- lost replies: 2 (oldest 90 min)');
+    expect(page).toContain('- failure silences: 2 — decided silent by failure, still owed');
+
+    // Her own decided silences are restraint, not an operational truth.
+    expect(page).not.toContain('failure silences: 3');
+
+    // The delivery row: everything a round-3 channel deliverer needs, no
+    // Telegram here. It rides BESIDE the per-sibling verdict event.
+    const reports = eventsOf(h.log, SIBLING_REPORT_EVENT);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toEqual({
+      sibling: 'ledger',
+      file: run.file,
+      date: '2023-11-14',
+      summary: 'lost replies 2 · failure silences 2 · sched alarms 2 · gravity alarms 3 · incidents 1 · $7.25',
+    });
+    expect(eventsOf(h.log, 'sibling.ledger_report')).toHaveLength(1); // both rows landed
   });
 
   it('the window is the trailing UTC day, boundary inclusive', async () => {
@@ -319,6 +355,7 @@ describe('the pure renderers', () => {
   const EMPTY_TRUTHS: LedgerTruths = {
     lostReplies: 0,
     lostReplyMaxAgeMs: 0,
+    failureSilences: 0,
     gateLoops: 0,
     gateLoopReentries: 0,
     gateRules: [],
@@ -355,6 +392,7 @@ describe('the pure renderers', () => {
         '## operational truths',
         '',
         '- lost replies: 0',
+        '- failure silences: 0',
         '- gate rejections: 0 loops',
         '- sched alarms: 0',
         '- gravity alarms: none',

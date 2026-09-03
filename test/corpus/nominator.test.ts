@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { CorpusIndex } from '../../src/corpus/corpus-index.js';
 import { corpusGravity, corpusNominator } from '../../src/corpus/nominator.js';
 import type { AffectDim, Dimension, Exemplar } from '../../schemas/exemplar.js';
-import { gravityMultiplier } from '../../src/assemble/index.js';
+import { CREDIT_GAMMA, gravityMultiplier, scoreOf } from '../../src/assemble/index.js';
+import { COMMITTED } from '../coupling/helpers.js';
 import { cosineSimilarity } from '../../src/embed/index.js';
 import { sceneBody, sceneFile } from '../probes/helpers.js';
 import { buildIndex, type VectorMap } from '../../src/corpus/corpus-index.js';
@@ -28,7 +32,13 @@ const ex = (
   kind: Exemplar['kind'],
   source: Exemplar['source'],
   body: string,
-  o: { dims?: Dimension[]; register?: string[]; weight?: number; affect?: Partial<Record<AffectDim, number>> } = {},
+  o: {
+    dims?: Dimension[];
+    register?: string[];
+    weight?: number;
+    affect?: Partial<Record<AffectDim, number>>;
+    disposition?: boolean;
+  } = {},
 ): Exemplar => ({
   id,
   kind,
@@ -37,6 +47,7 @@ const ex = (
   affect: o.affect ?? {},
   context: 'nominator fixture',
   weight: o.weight ?? 1.0,
+  disposition: o.disposition,
   source,
   body,
   tokens: 12,
@@ -91,6 +102,23 @@ describe('corpusNominator tier mapping', () => {
     expect(tierOf['sha256:lived-1']).toBe('episode');
   });
 
+  it('a canon scene flagged disposition: true nominates to the disposition tier, any kind', async () => {
+    const idx = makeIdx([
+      ex('canon/voice/flagged-scene', 'scene', 'canon', BODY_A, { disposition: true }),
+      ex('canon/voice/flagged-stmt', 'statement', 'canon', STMT_A, { dims: ['taste'], disposition: true }),
+    ]);
+    const cs = await corpusNominator(idx).nominate({ queryVec: QUERY }, 10);
+    const tierOf = Object.fromEntries(cs.map((c) => [c.id, c.tier]));
+    expect(tierOf['canon/voice/flagged-scene']).toBe('disposition');
+    expect(tierOf['canon/voice/flagged-stmt']).toBe('disposition');
+  });
+
+  it('a canon scene without the flag is not the keel — it stays pattern', async () => {
+    const idx = makeIdx([ex('canon/voice/unflagged', 'scene', 'canon', BODY_A)]);
+    const cs = await corpusNominator(idx).nominate({ queryVec: QUERY }, 10);
+    expect(cs.map((c) => c.tier)).toEqual(['pattern']);
+  });
+
   it('never nominates procedures (the procedural channel is M09’s)', async () => {
     const cs = await corpusNominator(makeIdx(POPULATION())).nominate({ queryVec: QUERY }, 10);
     expect(cs.some((c) => c.id === 'sha256:proc-1')).toBe(false);
@@ -138,10 +166,10 @@ describe('corpusNominator ranking law', () => {
     expect(byId['canon/voice/other-dim']).toBe(0);
   });
 
-  it('render() emits the body verbatim; identity fields ride along', async () => {
+  it('render() emits the situation frame above the body; identity fields ride along', async () => {
     const cs = await corpusNominator(makeIdx(POPULATION()), { g: 0.7 }).nominate({ queryVec: QUERY }, 10);
     const a = cs.find((c) => c.id === 'canon/voice/scene-a');
-    expect(a?.render()).toBe(BODY_A);
+    expect(a?.render()).toBe(`situation: nominator fixture\n${BODY_A}`);
     expect(a?.channel).toBe('character');
     expect(a?.source).toBe('canon');
     expect(a?.tags).toEqual(['play']);
@@ -198,7 +226,7 @@ describe('corpusNominator over a real buildIndex corpus', () => {
     const cs = await corpusNominator(cached).nominate({ queryVec: query }, 10);
     expect(cs.length).toBe(3);
     expect(cs.every((c) => c.tier === 'pattern')).toBe(true); // canon scenes are pattern tier
-    expect(cs[0]!.render()).toBe(BODY_C); // cos 1 with itself wins
+    expect(cs[0]!.render()).toBe(`situation: probe fixture\n${BODY_C}`); // cos 1 with itself wins
     expect(cs[0]!.baseScore).toBeCloseTo(1.4, 12); // cos 1 × weight 1 × gravity 1.4
     // ranked by score: cos 1 (itself), then 1/√2 (BODY_A is 45° off), then 0 (orthogonal)
     expect(cs.map((c) => c.id)).toEqual([
@@ -206,5 +234,43 @@ describe('corpusNominator over a real buildIndex corpus', () => {
       'canon/voice/server-hum',
       'canon/voice/one-word-worlds',
     ]);
+  });
+});
+
+const T0 = 1_780_000_000_000; // a fixed 2026 morning (deterministic utime stamps)
+
+describe("the credit seam (Round 2: M10's weights move selection)", () => {
+  it("credit weight changes a candidate's score", async () => {
+    // M10's gamma term goes live through creditPath (Round 2): the nightly
+    // weights file must be able to move a candidate WITHOUT any code change.
+    const dir = mkdtempSync(join(tmpdir(), 'thea2-credit-'));
+    const weightsPath = join(dir, 'weights.json');
+    const write = (w: number, mtimeMs: number): void => {
+      writeFileSync(
+        weightsPath,
+        JSON.stringify({ version: 1, lastSeq: 1, decayDay: 0, weights: { 'canon/voice/scene-a': w } }),
+      );
+      utimesSync(weightsPath, mtimeMs / 1000, mtimeMs / 1000); // the cache is mtime-keyed (numeric seconds)
+    };
+
+    write(1.0, T0); // neutral: every id reads as 1.0
+    const nom = corpusNominator(makeIdx(POPULATION()), { g: 0.7, creditPath: weightsPath });
+    const neutral = (await nom.nominate({ queryVec: QUERY }, 10)).find((c) => c.id === 'canon/voice/scene-a')!;
+    expect(neutral.creditW).toBe(1.0);
+
+    write(2.0, T0 + 60_000); // the consolidator re-weighted this exemplar
+    const boosted = (await nom.nominate({ queryVec: QUERY }, 10)).find((c) => c.id === 'canon/voice/scene-a')!;
+    expect(boosted.creditW).toBe(2.0);
+
+    // The score itself moves, by exactly the gamma term, at a NEUTRAL affect
+    // vector (modulation = 0), so the delta isolates credit and nothing else.
+    const zero: Float64Array = new Float64Array(12);
+    const sBefore = scoreOf(zero, neutral, COMMITTED).score;
+    const sAfter = scoreOf(zero, boosted, COMMITTED).score;
+    expect(sAfter - sBefore).toBeCloseTo(CREDIT_GAMMA * (2.0 - 1.0), 12);
+
+    // An exemplar the consolidator never scored stays neutral.
+    const other = (await nom.nominate({ queryVec: QUERY }, 10)).find((c) => c.id === 'canon/voice/scene-b')!;
+    expect(other.creditW).toBe(1.0);
   });
 });

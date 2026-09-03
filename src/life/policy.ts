@@ -44,14 +44,14 @@ export const HEARTBEAT_BACKOFF_BASE_H = 3;
 export const backoffHoursFor = (unanswered: number): number =>
   unanswered <= 0 ? 0 : HEARTBEAT_BACKOFF_BASE_H * 2 ** unanswered;
 
-export type HeartbeatPreReason = 'quiet hours' | 'cap' | 'backoff' | 'mutex' | 'ok';
+export type HeartbeatPreReason = 'owed' | 'quiet hours' | 'cap' | 'backoff' | 'mutex' | 'ok';
 
 export interface HeartbeatPre {
   canText: boolean;
   reason: HeartbeatPreReason;
 }
 
-/** Quiet hours as a [start, end) pair of UTC hours; the range wraps midnight. */
+/** Quiet hours as a [start, end) pair of LOCAL hours (see localHourOfDay); the range wraps midnight. */
 export const isQuietHour = (nowH: number, quietHours: readonly [number, number]): boolean => {
   const [start, end] = quietHours;
   if (start === end) return false; // a degenerate window is no window at all
@@ -59,18 +59,73 @@ export const isQuietHour = (nowH: number, quietHours: readonly [number, number])
   return nowH >= start || nowH < end;
 };
 
-/**
- * The UTC hour of day as a fraction (14.5 = 14:30), computed by pure arithmetic
- * off epoch ms — never `new Date`, so the answer cannot depend on the host TZ.
- */
-export const utcHourOfDay = (ms: number): number => {
-  const DAY = 86_400_000;
-  const HOUR = 3_600_000;
-  return (((ms % DAY) + DAY) % DAY) / HOUR;
+// ---------------------------------------------------------------------------
+// Local time — Diego lives in a timezone, not in UTC. The quiet-hours window
+// and the daily cap are HIS day, so both read the wall clock of the configured
+// IANA zone. Intl.DateTimeFormat is the one sanctioned zone-math primitive:
+// no `new Date` (lint-banned, host-TZ-dependent), no hand-rolled DST tables.
+// The formatter is built once per zone and cached — formatToParts is pure.
+// ---------------------------------------------------------------------------
+
+const hourFormatters = new Map<string, Intl.DateTimeFormat>();
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+const hourFormatter = (timeZone: string): Intl.DateTimeFormat => {
+  let f = hourFormatters.get(timeZone);
+  if (f === undefined) {
+    f = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hourCycle: 'h23',
+    });
+    hourFormatters.set(timeZone, f);
+  }
+  return f;
 };
 
+const dateFormatter = (timeZone: string): Intl.DateTimeFormat => {
+  let f = dateFormatters.get(timeZone);
+  if (f === undefined) {
+    // en-CA renders YYYY-MM-DD — the same shape the UTC census used.
+    f = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    dateFormatters.set(timeZone, f);
+  }
+  return f;
+};
+
+/**
+ * The LOCAL hour of day in `timeZone` as a fraction (14.5 = 14:30), DST
+ * included, read off epoch ms through Intl — never the host timezone. Keeps
+ * the sub-second remainder so `localHourOfDay(ms, 'UTC')` equals the old
+ * arithmetic `utcHourOfDay` bit for bit. An invalid zone throws RangeError
+ * (config validates the zone at load, so this is unreachable in prod).
+ */
+export const localHourOfDay = (ms: number, timeZone: string): number => {
+  const parts = hourFormatter(timeZone).formatToParts(ms);
+  const num = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? '0');
+  const hour = num('hour') % 24; // some ICU builds render midnight as 24
+  const minute = num('minute');
+  const second = num('second');
+  const msRemainder = ((ms % 1000) + 1000) % 1000;
+  return hour + minute / 60 + second / 3600 + msRemainder / 3_600_000;
+};
+
+/** The LOCAL calendar date (YYYY-MM-DD) in `timeZone` — the daily cap's census key. */
+export const localDateOf = (ms: number, timeZone: string): string => dateFormatter(timeZone).format(ms);
+
+/** The UTC hour of day as a fraction — kept for compatibility; `localHourOfDay(ms, 'UTC')`. */
+export const utcHourOfDay = (ms: number): number => localHourOfDay(ms, 'UTC');
+
 export interface HeartbeatPreState {
-  /** Fractional UTC hour of the candidate fire. */
+  /**
+   * Inbound messages of his that reconcile currently reports as LOST_REPLY —
+   * questions of his with no answer. While one is owed she must not text about
+   * something else; the reconcile job re-runs the owed turn (M20).
+   */
+  owedInbound: number;
+  /** Fractional LOCAL hour of the candidate fire (the configured timezone). */
   nowH: number;
   quietHours: readonly [number, number];
   /** Heartbeat sends so far today (local to the census, not recomputed here). */
@@ -84,10 +139,14 @@ export interface HeartbeatPreState {
 }
 
 /**
- * The hard gates, checked in the spec's order: quiet hours → cap → backoff →
+ * The hard gates, checked in order: owed → quiet hours → cap → backoff →
  * mutex → ok. Hard gates live in code; the model only decides within them.
+ * `owed` outranks everything (Phase 1, 2026-09-02): the day a real message
+ * was lost to a 429 and the heartbeat texted about something else eleven
+ * minutes later is the day this gate was born.
  */
 export const heartbeatPrecondition = (s: HeartbeatPreState): HeartbeatPre => {
+  if (s.owedInbound > 0) return { canText: false, reason: 'owed' };
   if (isQuietHour(s.nowH, s.quietHours)) return { canText: false, reason: 'quiet hours' };
   if (s.sentToday >= HEARTBEAT_DAILY_CAP) return { canText: false, reason: 'cap' };
   if (s.unanswered > 0 && s.lastUnansweredAgeH < backoffHoursFor(s.unanswered)) {

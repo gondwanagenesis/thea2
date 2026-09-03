@@ -8,7 +8,7 @@
 // in the corpus index, not in the record. run.ts supplies both from M07.
 
 import { compareStrings } from '../corpus/types.js';
-import { DAY_MS } from './cluster.js';
+import { DAY_MS, WEEK_MS } from './cluster.js';
 import type { Alarm, PacketRecordView, RunKind, SlotTier } from './types.js';
 
 /** ADR-005's rolling window: the last 50 packets. */
@@ -23,6 +23,19 @@ export const ALARM_NOT_INTEGRATING_WEEK = 6;
 export const ALARM_TUNNEL_VISION_SHARE = 0.7;
 /** The tunnel-vision measurement window. */
 export const TUNNEL_VISION_WINDOW_MS = 7 * DAY_MS;
+
+/**
+ * The launch week counter, counted from FIRST BOOT, not from 1970. The week-6
+ * not-integrating gate (`gravityAlarms`) is meaningless against
+ * weeks-since-1970 (~2,900 by 2026): the gate was always already past, so a
+ * fresh install could alarm on day one. `firstBootMs` is the persisted boot
+ * stamp from var/ — its persistence and wiring at the composition root are
+ * Round 3's; the epoch-1970 DEFAULT (0) reproduces the old computation
+ * verbatim, so existing callers see no change until the real stamp arrives.
+ * A stamp in the future clamps at 0 (week zero is week zero, not negative).
+ */
+export const gravityWeekOf = (nowMs: number, firstBootMs: number = 0): number =>
+  Math.max(0, Math.floor((nowMs - firstBootMs) / WEEK_MS));
 
 /** The most recent `n` packets, most recent first — (ts, turnId) descending.
  * The ratio math is order-agnostic, but the window reports the RECENT past, so
@@ -137,7 +150,8 @@ export interface GravityMetrics {
   patternSlots: number;
   episodeSlots: number;
   disposition: DispositionShare;
-  /** Weeks since launch; gates not-integrating until week 6 is past. */
+  /** Weeks since launch — `gravityWeekOf(now, firstBootMs)`, NOT weeks since
+   * 1970; gates not-integrating until week 6 is past. */
   gravityWeek: number;
 }
 

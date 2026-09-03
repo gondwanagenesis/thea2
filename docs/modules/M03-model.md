@@ -1,7 +1,7 @@
 ---
 module: M03
 name: model
-syncedTo: S8 (implemented — src/model, test/model; dual-protocol wire (openai + anthropic), SSE streaming on the anthropic door, structured ladder through the synthetic `emit` tool rung)
+syncedTo: Phase 1 as-built (2026-09-02 — src/model, test/model; dual-protocol wire (openai + anthropic), SSE streaming on the anthropic door, structured ladder through the synthetic `emit` tool rung, ChatRequest.toolChoice)
 stage: S8
 depends: [M01-kernel, M02-events]
 ---
@@ -116,3 +116,16 @@ work if the door starts sending it.
 - unit: router guardrail table (all 9 task classes x 3 tiers); zod-to-JSON-schema goldens; repair-prompt construction; usage math; backoff jitter determinism per seed.
 - component: ladder rung matrix against MockModel-scripted endpoints; retry/timeout/abort with TestClock; conformance suite over recorded Neuralwatt fixtures (plain chat, tool_calls, json_schema, malformed JSON, 5xx).
 - fixtures needed: recorded wire responses for each conformance case; sample `var/routing.json` (legal + illegal downgrade); representative zod schemas (Appraisal shape, DecisionObject shape).
+
+## As built (Phase 1)
+
+`ChatRequest.toolChoice?: 'auto' | 'required' | {name: string}` (types.ts). Wire mappings: openai — `'auto'`/`'required'` pass through verbatim, `{name}` maps to `{type:'function',function:{name}}`, and an ABSENT field keeps the legacy bytes (tools on the request ⇒ `tool_choice:'auto'`; no tools ⇒ the field is omitted entirely). Anthropic — `'auto'` → `{type:'auto'}`, `'required'` → `{type:'any'}`, `{name}` → `{type:'tool',name}`, absent ⇒ the field is omitted from the body entirely. The structured ladder's forced-emit `tool_choice` still outranks a caller's value. Pinned in test/model/toolchoice.test.ts; the emit-tool goldens in wire.test.ts / anthropic.test.ts remain byte-identical when toolChoice is absent.
+
+## As built (W1.1 door smoke, 2026-09-03)
+
+Live smoke against the z.ai anthropic door (`scripts/thinking-smoke.ts`, both tier models × omitted / `disabled` / `enabled 1024` / `enabled 2048`):
+
+- **`thinking:{type:'disabled'}` is REJECTED by `glm-5.3-flash`** — HTTP 500, `api_error` 1234, every time. `glm-5.3` accepts it. Asymmetry is the door's.
+- Therefore `THINKING_DEFAULTS` **omits the field entirely** for `turn`, `heartbeat-thought`, `ponder-seed`, `summarize` (door default answered 200, end_turn, ~3.5 s on flash); `enabled 1024` verified working on BOTH models for the judge family.
+- `enabled 2048` also accepted on both (no reason to raise the 1024 budget).
+- Kill-switch `models.thinking: 'off'` remains the emergency lever (P-A.2).

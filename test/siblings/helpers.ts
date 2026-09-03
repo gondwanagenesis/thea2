@@ -155,6 +155,21 @@ export const gravityEvent = (over: { ts: number; alarms: string[] }): SeedEvent 
   payload: { alarms: over.alarms },
 });
 
+/** M13's decision.locked row — the shape loop.ts emits (the Ledger folds the
+ * failure silences out of it). */
+export const decisionLockedEvent = (over: {
+  ts: number;
+  turnId: string;
+  plan: 'reply' | 'silent' | 'defer';
+  decidedBy: 'model' | 'gate' | 'failure';
+}): SeedEvent => ({
+  seq: 0,
+  ts: over.ts,
+  kind: 'decision.locked',
+  ...(over.turnId !== undefined ? { turnId: over.turnId } : {}),
+  payload: { turnId: over.turnId, entry: 'chat', plan: over.plan, decidedBy: over.decidedBy, bubbles: 0, committee: false },
+});
+
 export const eventOf = (ts: number, kind: string, payload: unknown = {}): SeedEvent => ({
   seq: 0,
   ts,
@@ -206,6 +221,12 @@ export const goldenDay = (): SeedEvent[] => [
   // The operational truths, one of each.
   lostReplyEvent({ ts: T0 - 6 * HOUR, ageMs: 300_000, updateId: 1 }),
   lostReplyEvent({ ts: T0 - 5 * HOUR, ageMs: 5_400_000, updateId: 2 }),
+  // Two failure silences — plus one of her OWN decided silences, which must
+  // NOT count (restraint is not an operational truth; the same rule reconcile
+  // applies when it refuses decidedBy:'failure' as a termination).
+  decisionLockedEvent({ ts: T0 - 4.9 * HOUR, turnId: 't_dead1', plan: 'silent', decidedBy: 'failure' }),
+  decisionLockedEvent({ ts: T0 - 4.8 * HOUR, turnId: 't_dead2', plan: 'silent', decidedBy: 'failure' }),
+  decisionLockedEvent({ ts: T0 - 4.7 * HOUR, turnId: 't_calm', plan: 'silent', decidedBy: 'model' }),
   gateLoopEvent({ ts: T0 - 4.5 * HOUR, ruleIds: ['low-arousal', 'low-arousal', 'quiet-hours'], reentries: 3 }),
   gateLoopEvent({ ts: T0 - 4.4 * HOUR, ruleIds: ['low-arousal'], reentries: 1 }),
   schedAlarmEvent({ ts: T0 - 4 * HOUR, job: 'ponder-seed' }),
@@ -240,6 +261,7 @@ export const GOLDEN = {
   truths: {
     lostReplies: 2,
     lostReplyMaxAgeMs: 5_400_000,
+    failureSilences: 2,
     gateLoops: 2,
     gateLoopReentries: 4,
     gateRules: [

@@ -1,7 +1,7 @@
 ---
 module: M12
 name: inhibit
-syncedTo: implementation (src/inhibit, S3 build)
+syncedTo: S8 (prompt block renders ids only — 2026-09-02)
 stage: S3
 depends: [M01-kernel, M03-model, M07-corpus]
 ---
@@ -71,6 +71,7 @@ export interface RuleInfo {              // one compiled rule, as audits and the
 - **`allow_when` binds only `entry.kind == '<kind>'`, on the tool path.** `checkPlan` has no entry, so a bounded condition there compiles DORMANT: surfaced via `RuleInfo.dormantAllowWhen`, rule still enforced unconditionally. Other `entry.<field> == true|false` forms (canon's `entry.crisis == true`) are recognized but unbindable today — same dormant-and-loud treatment, never silently dropped.
 - **Reject regexes are case-sensitive and non-global**, compiled exactly as written. A hard-rule false positive eats a real reply (the sentinel sin), so widening stays a decision the yaml author makes deliberately, not a flag the compiler adds.
 - **`normalize` rules are enforced, not prompted.** They are excluded from `renderPromptBlock` (measured 0% prompt compliance is why the class exists) and applied by M14 via `normalizeText`.
+- **The prompt block names rule IDS under one neutral header sentence — no why-text (Package E, 2026-09-02).** A ban's `why` argues with a model that planned to break the rule, and printing it primes the exact construction the ban exists to stop; enforcement is the gate's job (`hint` still carries the full why for the loop's re-entry injection). Budget pressure now comes from rule COUNT, not why length: 60 ids ≈ 650 tokens refuses to compile, canon v1 renders far under the 300-token budget. Pinned in `test/inhibit/prompt.test.ts`.
 - **The prompt budget is enforced at compile.** An over-budget block throws `inhibit/prompt-budget` at startup rather than trimming silently. Canon v1 renders at ~195 tokens by `estimateTokens` (779 chars).
 - **Rule ids share one namespace** across `tool`/`plan`/`normalize` (a duplicate is `inhibit/duplicate-id`), because verdicts name a rule and `severityOf` resolves that name. Tool-class rules are `hard` by definition (binary section, no severity field); only plan rules may declare `soft`.
 

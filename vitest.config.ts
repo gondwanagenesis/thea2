@@ -12,8 +12,16 @@ export default defineConfig({
     // Determinism over speed: forks, not threads, so Rng/TestClock state can never
     // leak between files through worker globals.
     pool: "forks",
-    // CI runs the full suite serially enough to keep golden replays stable.
-    fileParallelism: true,
+    // Timeout doctrine (plan v3 §0.1): the 5 s default predated the crown
+    // proofs and the corpus tripling — a slow box turned it into false reds.
+    // 30 s house default; genuine hangs are bugs and surface as 30 s stalls.
+    // Named crown proofs carry higher explicit values with a comment.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    // §0.0 unwedge: parallel forks wedged the full suite mid-run on Windows
+    // (per-file and serial runs green; only the concurrent fan-out stalled).
+    // Deterministic over fast: one fork, files in sequence.
+    fileParallelism: false,
     sequence: { concurrent: false },
   },
 });

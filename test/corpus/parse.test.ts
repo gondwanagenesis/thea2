@@ -111,7 +111,9 @@ describe('committed canon parses clean (the smoke that would have caught it)', (
 
   // Only exemplar-shaped paths: canon/<dim>/<slug>.md inside a real dimension
   // dir, or a derived/lived file. Root-of-canon docs (identity.md, TEMPLATEs)
-  // are deliberate non-exemplars — the loader skips them, so does this smoke.
+  // and READMEs (derived/README.md is the committed-artifact rule, not a
+  // scene) are deliberate non-exemplars — the loader skips them, so does this
+  // smoke.
   const isExemplarPath = (path: string): boolean => {
     const parts = path.replaceAll('\\', '/').split('/');
     const seg = parts.findIndex((p) => p === 'canon' || p === 'derived' || p === 'lived');
@@ -124,7 +126,11 @@ describe('committed canon parses clean (the smoke that would have caught it)', (
     const walk = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
         const p = `${dir}/${e.name}`;
-        return e.isDirectory() ? walk(p) : p.endsWith('.md') && !p.endsWith('TEMPLATE.md') ? [p] : [];
+        return e.isDirectory()
+          ? walk(p)
+          : p.endsWith('.md') && !p.endsWith('TEMPLATE.md') && !p.endsWith('README.md')
+            ? [p]
+            : [];
       });
     const files = walk('corpus').filter(isExemplarPath);
     expect(files.length).toBeGreaterThan(15);

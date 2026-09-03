@@ -41,6 +41,9 @@ import type { Embedder } from '../embed/index.js';
 import type { AssembleDeps, Packet, TurnQuery } from '../assemble/index.js';
 import type { ModelClient } from '../model/index.js';
 import type { InhibitionGate } from '../inhibit/index.js';
+import type { ThreadIndex } from '../memory/threads.js';
+import { localHourOfDay } from '../life/policy.js';
+import { inferRegister } from './register.js';
 
 /** Section head for undelivered bubbles carried into the next turn's context (M20 spec §Behavior). */
 export const UNDELIVERED_HEAD = '[UNDELIVERED]';
@@ -66,6 +69,20 @@ interface Queued {
   goal?: string | undefined;
 }
 
+export interface SelfEntryHandle {
+  /** The minted turn id. */
+  turnId: string;
+  /**
+   * The heartbeat-outcome hook (Phase 1, 2026-09-02): settles EXACTLY ONCE with
+   * the number of bubbles this turn actually delivered to the channel — 0 when
+   * the turn went silent/deferred in-loop, was aborted mid-send, or died before
+   * realizing. Every exit path settles, so an M17 job awaiting this can never
+   * hang; a wedged turn would hold the job until the scheduler's timeout, and
+   * the unwritten counters are the safe direction (nothing was sent).
+   */
+  sent: Promise<number>;
+}
+
 export interface PipelineDeps {
   model: ModelClient;
   gate: InhibitionGate;
@@ -88,13 +105,24 @@ export interface PipelineDeps {
   loopCfg: LoopConfig;
   allowedChatIds: readonly number[];
   reconcileWindowMs: number;
+  /**
+   * The durable thread index (Round 3). The afterturn folds each appraisal's
+   * threads[] into it — standing intent accrues here; the heartbeat reads it
+   * due list. Optional only because hermetic tests that never touch threads
+   * omit it; a prod boot always wires it.
+   */
+  threads?: ThreadIndex | undefined;
+  /** Registry name for a speaker person id, when the people map knows him. */
+  personLabel?: ((person: string) => string | undefined) | undefined;
+  /** HIS zone (config timezone) — register inference's clock modifier. */
+  timezone: string;
 }
 
 export interface Pipeline {
   /** Mint + enqueue. Returns the turnId (ingest links on it), or undefined when nothing should run (reaction-only, denied chat). */
   inbound(m: InboundMsg): string | undefined;
-  /** Mint + enqueue a self-initiated turn (M17 heartbeat/ponder). Returns the turnId. */
-  selfEntry(kind: 'heartbeat' | 'ponder', goal: string): string;
+  /** Mint + enqueue a self-initiated turn (M17 heartbeat/ponder). The handle's `sent` settles with the delivered bubble count — the heartbeat-outcome hook the M17 job counts on. */
+  selfEntry(kind: 'heartbeat' | 'ponder', goal: string): SelfEntryHandle;
   /** Epoch ms of the last real user arrival (reactions included) — the M17 conversation-active mutex input. */
   lastInboundAtMs(): number | undefined;
   isBusy(): boolean;
@@ -107,6 +135,16 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
   const queue: Queued[] = [];
   const recentTurnIds: string[] = [];
   const afterturns: Promise<unknown>[] = [];
+  // The heartbeat-outcome hook's pending settlements, by turnId. A self-entry
+  // with no waiter (compose-less probes) is settled and dropped — never a leak.
+  const selfOutcomes = new Map<string, (sent: number) => void>();
+
+  /** Settles a self-entry's sent count exactly once; every turn exit calls this. */
+  const settleSelfOutcome = (turnId: string, sent: number): void => {
+    const settle = selfOutcomes.get(turnId);
+    selfOutcomes.delete(turnId);
+    settle?.(sent);
+  };
 
   let running = false;
   let chain: Promise<void> = Promise.resolve();
@@ -131,7 +169,10 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
         await runTurn(item);
       } catch (e) {
         // A turn that throws outside its own handling is a loud incident; the
-        // ledger keeps the inbound row so reconcile names what was lost.
+        // ledger keeps the inbound row so reconcile names what was lost. Its
+        // self-entry outcome settles at 0 first: a dead turn sent nothing, and
+        // the awaiting heartbeat job must not hang on it.
+        settleSelfOutcome(item.turnId, 0);
         void deps.events.emit('incident.turn_failed', { turnId: item.turnId, error: String(e) }, item.turnId);
       }
     }
@@ -174,12 +215,21 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
 
     const adapterDeps: AssembleDeps = deps.assembleDeps();
     const adapter = async (q: LoopQuery, a: Vec12): Promise<LoopPacket> => {
+      const entry = q.entry ?? 'user-turn';
+      const label = deps.personLabel?.(((q.speaker as TurnQuery['speaker']) ?? m.speaker).person);
       const tq: TurnQuery = {
-        entry: q.entry ?? 'user-turn',
+        entry,
         ...(q.text !== undefined ? { text: q.text } : {}),
         ...(q.goal !== undefined ? { goal: q.goal } : {}),
         speaker: (q.speaker as TurnQuery['speaker']) ?? m.speaker,
-        register: q.register ?? 'play', // v1: one register; work/friend split lands with the mode system
+        ...(label !== undefined ? { personLabel: label } : {}),
+        // Register inference (Round 3): HIS words pick the frame, bounded by
+        // HIS wall clock — the mode system's exclusivity then selects scenes.
+        register:
+          q.register ??
+          (entry === 'user-turn' && q.text !== undefined
+            ? inferRegister(q.text, localHourOfDay(deps.clock.epochMs(), deps.timezone))
+            : 'play'),
         queryVec: q.queryVec ?? queryVec,
         recentTurnIds: q.recentTurnIds ?? recentTurnIds,
         ...(q.turnId !== undefined ? { turnId: q.turnId } : {}),
@@ -226,24 +276,23 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
     );
     last = decision;
 
-    // Decision row lands BEFORE realization: a crash mid-send still shows the plan.
+    // Decision row lands BEFORE realization: a crash mid-send still shows the
+    // plan. Provenance rides along: a `decidedBy:'failure'` silence is NOT a
+    // termination for reconcile — the reply stays owed. A model-authored
+    // defer carries its due-by in the same row (the ledger rejects a defer
+    // without one, and a rejected row would have thrown the turn away).
+    const now = deps.clock.epochMs();
     await deps.ledger.recordDecision(turnId, {
       turnId,
       plan: decision.plan,
-      at: deps.clock.epochMs(),
+      at: now,
+      decidedBy: decision.decidedBy,
+      ...(decision.plan === 'defer' ? { dueBy: now + deps.reconcileWindowMs } : {}),
     });
 
     if (decision.plan !== 'reply' || decision.bubbles.length === 0) {
-      if (decision.plan === 'defer') {
-        // The model itself deferred: clean until due, alarm after if nothing answers.
-        await deps.ledger.recordDecision(turnId, {
-          turnId,
-          plan: 'defer',
-          at: deps.clock.epochMs(),
-          dueBy: deps.clock.epochMs() + deps.reconcileWindowMs,
-        });
-      }
       await settle(turnId, m, decision, [], item.kind);
+      settleSelfOutcome(turnId, 0); // in-loop silence/defer: nothing was sent, nothing counted (Phase 1)
       return;
     }
 
@@ -269,10 +318,14 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
         turnId,
         plan: 'defer',
         at: deps.clock.epochMs(),
+        decidedBy: 'model', // she decided to reply; the interruption deferred the delivery
         dueBy: deps.clock.epochMs() + deps.reconcileWindowMs, // strictly future: clean while the carry-over turn may still land
       });
     }
 
+    // The abort path settles at 0 too: the undelivered bubbles ride the
+    // carry-over into the NEXT turn, so this one genuinely sent nothing.
+    settleSelfOutcome(turnId, report.sent.length);
     await settle(turnId, m, decision, report.sent.map((s) => s.text), item.kind);
     void deps.events.emit(
       'app.turn_done',
@@ -331,6 +384,17 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
           { turnId, ts: deps.clock.epochMs(), appraisal: out.appraisal },
         ),
       );
+      // Standing intent (Round 3): the appraisal's threads[] fold into the
+      // durable index — open/touched threads come due for the heartbeat's
+      // follow-up six hours later. A fold failure must not unsend the turn:
+      // it lands as an incident, the episode above is already durable.
+      if (deps.threads !== undefined && out.appraisal.threads.length > 0) {
+        try {
+          deps.threads.apply(out.appraisal.threads, deps.clock.epochMs());
+        } catch (e) {
+          void deps.events.emit('incident.thread_fold_failed', { turnId, error: e instanceof Error ? e.message : String(e) }, turnId);
+        }
+      }
       const evs: AffectEvent[] = affectEvents(out.appraisal);
       if (evs.length > 0) await deps.affect.applyEvents(evs, { source: 'appraisal' });
     })();
@@ -343,7 +407,9 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
   // M17 life entries: she starts the turn herself. The synthetic InboundMsg is
   // deliberately never ledger-recorded (no real updateId — delivery correctness
   // is a user-arrival law); if the turn dies, incident.turn_failed is the trace.
-  const selfEntry = (kind: 'heartbeat' | 'ponder', goal: string): string => {
+  // The returned handle settles on realization outcome (the heartbeat-outcome
+  // hook): the M17 job moves its counters only when bubbles actually left.
+  const selfEntry = (kind: 'heartbeat' | 'ponder', goal: string): SelfEntryHandle => {
     const chatId = deps.allowedChatIds[0] ?? fail('app/self-entry', 'no allowed chat for a self-initiated turn');
     const m: InboundMsg = {
       updateId: 0,
@@ -355,18 +421,31 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
       speaker: { channel: 'telegram', person: `tg:${chatId}` },
     };
     const turnId = newId(deps.clock, deps.rng);
+    let settleSent!: (sent: number) => void;
+    const sent = new Promise<number>((resolve) => {
+      settleSent = resolve;
+    });
+    selfOutcomes.set(turnId, settleSent);
     queue.push({ m, turnId, kind, goal });
     kick();
-    return turnId;
+    return { turnId, sent };
   };
 
   return {
     inbound: (m) => {
-      lastInboundAt = deps.clock.epochMs();
+      // A skipped update (photo without caption, edit, denied chat — the
+      // bridge marks them) is recorded only so the offset can move past it:
+      // no turn, no reply owed, and it does not count as him talking to her.
+      if (m.skipped !== undefined) {
+        void deps.events.emit('bridge.update_skipped', { updateId: m.updateId, chatId: m.chatId, reason: m.skipped.reason });
+        return undefined;
+      }
       if (m.chatId !== undefined && !deps.allowedChatIds.includes(m.chatId)) {
+        // A stranger's message is not contact — it must not mute the heartbeat.
         void deps.events.emit('app.chat_denied', { chatId: m.chatId, updateId: m.updateId });
         return undefined;
       }
+      lastInboundAt = deps.clock.epochMs();
       // A reaction is an outcome signal, never a request (M15). Recorded on L0
       // for credit (M10/S7); it starts no turn and owes no reply.
       if (m.reaction !== undefined && m.text === '') {

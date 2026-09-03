@@ -34,12 +34,24 @@ const expectReject = (text: string, code: string, messageFragment: RegExp): void
 };
 
 describe('the committed coupling.yaml compiles (CI guard over the real file)', () => {
-  it('parses to version 1, λ = 0.25, the full matrix and rule set', () => {
-    expect(COMMITTED.cfg.version).toBe(1);
+  it('parses to version 2, λ = 0.25, the full matrix and rule set', () => {
+    expect(COMMITTED.cfg.version).toBe(2);
     expect(COMMITTED.cfg.lambda).toBe(0.25); // the double-dipping guard, as designed
     expect(COMMITTED.cfg.matrix.length).toBe(18);
     expect(COMMITTED.cfg.formRules.length).toBe(4);
     expect(COMMITTED.m.length).toBe(AFFECT_DIMS.length * AFFECT_DIMS.length);
+  });
+
+  it('the two low-state rules fire on the MAX side — "low" means below θ, not above', () => {
+    // v2 fix: these were min: −0.4, which fired ALWAYS-ON (a neutral vector sat
+    // 0.4 above θ). The whys ask for below-threshold triggers; max is that shape.
+    const quiet = COMMITTED.cfg.formRules.filter((r) => r.boostTag === 'quiet');
+    expect(quiet.map((r) => r.when)).toEqual([
+      { dim: 'arousal', min: undefined, max: -0.4 },
+      { dim: 'valence', min: undefined, max: -0.4 },
+    ]);
+    const above = COMMITTED.cfg.formRules.filter((r) => r.boostTag !== 'quiet');
+    for (const r of above) expect(r.when.min, r.when.dim).toBeGreaterThanOrEqual(0);
   });
 
   it('every entry carries a non-empty why and a weight in [-1,1] — no unexplainable weight survives', () => {
@@ -122,6 +134,29 @@ describe('compile reject table — every rejection names its entry', () => {
 
   it('a form rule whose θ could never fire (min outside [-1,1])', () => {
     expectReject(VALID.replace('min: 0.4', 'min: 2.0'), 'coupling/threshold-range', /form_rules\[0\].*arousal/);
+  });
+
+  it('a max rule (fires BELOW θ) compiles, and θ range guards the max side too', () => {
+    const maxRule = VALID.replace('when: {dim: arousal, min: 0.4}', 'when: {dim: arousal, max: -0.4}');
+    const compiled = compileCoupling(maxRule);
+    expect(compiled.cfg.formRules[0]!.when).toEqual({ dim: 'arousal', min: undefined, max: -0.4 });
+    expectReject(maxRule.replace('max: -0.4', 'max: -1.5'), 'coupling/threshold-range', /form_rules\[0\].*arousal.*max/);
+  });
+
+  it("a rule with BOTH min and max is a schema reject — a rule fires on one side of one θ", () => {
+    expectReject(
+      VALID.replace('when: {dim: arousal, min: 0.4}', 'when: {dim: arousal, min: 0.4, max: -0.4}'),
+      'coupling/schema',
+      /form_rules\[0\].*both min and max/,
+    );
+  });
+
+  it('a rule with NEITHER min nor max is a schema reject', () => {
+    expectReject(
+      VALID.replace('when: {dim: arousal, min: 0.4}', 'when: {dim: arousal}'),
+      'coupling/schema',
+      /form_rules\[0\].*exactly one of min/,
+    );
   });
 
   it('|gain| > 1', () => {

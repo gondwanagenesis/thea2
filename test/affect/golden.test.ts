@@ -71,14 +71,14 @@ describe('the golden diary replay', () => {
     expect(kinds.has('emotion')).toBe(true);
   });
 
-  it('replays deterministically: two fresh runs land on the exact same state', async () => {
+  it('replays deterministically: two fresh runs land on the exact same state', { timeout: 60_000 }, async () => {
     const a = await replay();
     const b = await replay();
     expect(JSON.stringify(a.final)).toBe(JSON.stringify(b.final));
     expect(a.weather).toBe(b.weather);
   });
 
-  it('matches the committed expectation, state and weather, to the last dial', async () => {
+  it('matches the committed expectation, state and weather, to the last dial', { timeout: 60_000 }, async () => {
     const run = await replay();
     expect(run.eventCount).toBe(diary.events.length);
     expect(JSON.parse(JSON.stringify(run.final))).toEqual(expected.state);

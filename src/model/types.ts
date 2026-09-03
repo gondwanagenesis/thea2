@@ -63,6 +63,20 @@ export interface Usage {
   attempts: number;
 }
 
+/**
+ * Anthropic-protocol extended-thinking control, passed through verbatim on the
+ * anthropic door (z.ai's GLM thinking models draw the trace from the same
+ * max_tokens budget — see M03 "starvation family"). Ignored on the openai wire.
+ */
+export type ThinkingControl = { type: 'enabled'; budget_tokens: number } | { type: 'disabled' };
+
+/**
+ * Why the model stopped, as the wire reported it. Anthropic vocabulary; the
+ * openai wire maps finish_reason onto it (length → max_tokens, stop → end_turn,
+ * tool_calls → tool_use). Unknown door-specific values pass through as strings.
+ */
+export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence' | (string & {});
+
 export interface ChatRequest<T = string> {
   taskClass: TaskClass;
   tier: Tier;
@@ -74,8 +88,20 @@ export interface ChatRequest<T = string> {
   schemaName?: string;
   maxTokens: number;
   temperature: number;
+  /**
+   * Native tool-choice control, mapped per protocol by the wire builders:
+   * openai `'auto' | 'required' | {type:'function',function:{name}}`,
+   * anthropic `{type:'auto'} | {type:'any'} | {type:'tool',name}`. Absent ⇒ the
+   * field keeps each door's existing default (openai: 'auto' when tools ride
+   * along; anthropic: omitted entirely). The loop's assess path sets
+   * `{name:'decide'}` when `decide` is the ONLY tool offered — a decision is
+   * mandatory, not a menu option.
+   */
+  toolChoice?: 'auto' | 'required' | { name: string };
   /** Forwarded as `seed` when the endpoint capability flag says it is supported. */
   seedHint?: number;
+  /** Anthropic `thinking` parameter; sent only when set (anthropic protocol only). */
+  thinking?: ThinkingControl;
 }
 
 export interface ChatContext {
@@ -88,6 +114,8 @@ export interface ChatResponse<T = string> {
   toolCalls?: ToolCall[];
   usage: Usage;
   model: string;
+  /** Wire stop reason of the first (non-repair) generation, when the door reported one. */
+  stopReason?: StopReason;
 }
 
 export interface ModelClient {

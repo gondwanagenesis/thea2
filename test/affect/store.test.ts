@@ -60,7 +60,9 @@ describe('boot', () => {
     const kinds = (await s.events()).map((e) => e.kind);
     expect(kinds.some((k) => k.startsWith('incident'))).toBe(false); // a first boot is not a corruption
     expect(kinds).toEqual(['affect.applied']); // one (empty) batch, one trail entry
-    expect(s.store.weather()).not.toBe('');
+    // Baseline is not weather: the at-rest [AFFECT] line is '' (landmarks
+    // weatherLine law) and the block stays out of the packet until she deviates.
+    expect(s.store.weather()).toBe('');
   });
 
   it('current() hands out a copy — mutating it cannot corrupt the writer', async () => {

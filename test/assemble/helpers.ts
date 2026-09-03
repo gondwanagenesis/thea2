@@ -5,6 +5,7 @@
 // the hash embedder felt".
 
 import { buildIndex, type CorpusIndex, type VectorMap } from '../../src/corpus/corpus-index.js';
+import { renderExemplar } from '../../src/corpus/render.js';
 import type { CorpusFile } from '../../src/corpus/types.js';
 import {
   DEFAULT_ASSEMBLE_CONFIG,
@@ -61,6 +62,8 @@ export interface CanonSpec {
   affect?: string;
   weight?: number;
   body: string;
+  /** ADR-006 keel marking — nominates a canon scene into the disposition tier. */
+  disposition?: boolean;
 }
 
 const canonRaw = (o: CanonSpec): string =>
@@ -73,6 +76,7 @@ const canonRaw = (o: CanonSpec): string =>
     `affect: {${o.affect ?? ''}}`,
     `context: fixture exemplar ${o.slug}`,
     `weight: ${o.weight ?? 1.0}`,
+    ...(o.disposition === true ? ['disposition: true'] : []),
     '---',
     o.body,
     '',
@@ -152,7 +156,9 @@ export const cand = (over: Partial<Candidate> & { id: string }): Candidate => ({
 /**
  * The corpus-side nominator M07 owes the assembler (test stand-in): ranks by
  * cosine × weight × gravity, assigns tiers by the fixture rule (canon statement
- * → disposition, lived → episode, else pattern), fills sig/tags/vec/render.
+ * OR canon flagged `disposition: true` → disposition, lived → episode, else
+ * pattern), fills sig/tags/vec/render — the render mirrors M07's frame
+ * (src/corpus/render.ts), so packet goldens test the real bytes.
  */
 export const testCorpusNominator = (
   idx: CorpusIndex,
@@ -169,7 +175,7 @@ export const testCorpusNominator = (
       .map((e) => {
         const vec = vectors.get(e.id) ?? vec3(DIR_A);
         const tier =
-          e.kind === 'statement' && e.source === 'canon'
+          e.source === 'canon' && (e.kind === 'statement' || e.disposition === true)
             ? ('disposition' as const)
             : e.source === 'lived'
               ? ('episode' as const)
@@ -185,7 +191,7 @@ export const testCorpusNominator = (
           tags: [...e.register],
           source: e.source,
           dimension: e.dimensions[0],
-          render: () => e.body,
+          render: () => renderExemplar(e),
         });
       })
       .sort((a, b) => b.baseScore - a.baseScore || (a.id < b.id ? -1 : 1))

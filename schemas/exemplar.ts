@@ -14,8 +14,10 @@
 //   - length: <= 500 tokens hard / 350 warn (packet-budget protection; M7 lint runs in CI)
 //
 // Tier (disposition/pattern/episode) is assigned by the corpus nominator and packet
-// assembler (M7/M11), not authored in frontmatter. The disposition slot is canon-only
-// (ADR-006); gravity multipliers apply to pattern/episode tiers (ADR-005).
+// assembler (M7/M11) — EXCEPT the keel claim: a canon file may author
+// `disposition: true` (below), which nominates it to the disposition tier. The
+// disposition slot is canon-only (ADR-006); gravity multipliers apply to
+// pattern/episode tiers (ADR-005).
 
 import { z } from 'zod';
 
@@ -100,6 +102,13 @@ export const CanonFrontmatter = z.object({
   dimensions: z.array(Dimension).min(1),
   /** From corpus/canon/registers.yaml: work/friend/play + modifiers (e.g. 'late-night'). */
   register: z.array(z.string().min(1)).min(1),
+  /**
+   * Keel marking (ADR-006): a canon file flagged `disposition: true` nominates
+   * into the disposition tier regardless of kind, alongside `kind: statement`
+   * files. Meaningful for canon only — the slot is canon-only and the flag is
+   * Diego's hand, not a pipeline decision. Unset = no claim on the keel slot.
+   */
+  disposition: z.boolean().optional(),
   /** Sparse deviation-coordinate signature over the 12 affect dims, each in [-1, 1]. */
   affect: SparseAffect.default({}),
   /** One-line situation the body demonstrates. */

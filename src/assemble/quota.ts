@@ -84,8 +84,30 @@ export const isSelected = (sel: Selection, id: string): boolean =>
 // Character quota fill
 // ---------------------------------------------------------------------------
 
-const takeSorted = (pool: ReadonlyArray<Scored>, n: number): { members: Scored[]; runners: Scored[] } => {
-  const sorted = [...pool].sort(byScoreThenId);
+/**
+ * Register strictness (Round 3 prep). `mode_exclusive` itself lives in
+ * rules.ts (`modeCompatible`) — not a quota-owned file — so the dial and its
+ * consumption land here, at the fill. `strict !== false` (the default) keeps
+ * the shipped law: mode-incompatible candidates are INELIGIBLE for every
+ * non-disposition slot. `strict: false` demotes instead of excluding: the
+ * penalty is a total order inside the group — every register-compatible
+ * candidate outranks an incompatible one, then score desc, id asc — so
+ * determinism is untouched and PacketRecord.baseScore stays the caller's
+ * credit-truth (the penalty never rewrites a score). Round 3 decides whether
+ * "prefer-not-exclude" becomes a graded score term; that edit belongs in
+ * score.ts, and this comment marks the seam.
+ */
+export interface RegisterStrictness {
+  strict?: boolean | undefined;
+}
+export type FillConfig = AssembleConfig & RegisterStrictness;
+
+const takeSorted = (
+  pool: ReadonlyArray<Scored>,
+  n: number,
+  cmp: (a: Scored, b: Scored) => number = byScoreThenId,
+): { members: Scored[]; runners: Scored[] } => {
+  const sorted = [...pool].sort(cmp);
   return { members: sorted.slice(0, n), runners: sorted.slice(n) };
 };
 
@@ -111,7 +133,7 @@ const groupOf = (sel: Selection, kind: GroupKind): Group => {
  *
  * An unmet floor sets `scarcity`; nothing is ever padded.
  */
-export const fillCharacter = (pool: ReadonlyArray<Scored>, q: TurnQuery, cfg: AssembleConfig): Selection => {
+export const fillCharacter = (pool: ReadonlyArray<Scored>, q: TurnQuery, cfg: FillConfig): Selection => {
   const { quotas } = cfg;
   const sel: Selection = {
     groups: [
@@ -125,10 +147,17 @@ export const fillCharacter = (pool: ReadonlyArray<Scored>, q: TurnQuery, cfg: As
     scarcity: false,
   };
   const queryText = `${q.text ?? ''} ${q.goal ?? ''}`.toLowerCase();
-  const modeOk = (s: Scored): boolean => modeCompatible(s.c, q.register, cfg);
+  const strict = cfg.strict !== false;
+  const modeOk = (s: Scored): boolean => (strict ? modeCompatible(s.c, q.register, cfg) : true);
+  // The strict:false penalty: out-of-register material sorts behind every
+  // register-compatible candidate in its group (then score desc, id asc).
+  const fillOrder = (x: Scored, y: Scored): number =>
+    Number(modeCompatible(y.c, q.register, cfg)) - Number(modeCompatible(x.c, q.register, cfg)) || byScoreThenId(x, y);
+  const order = strict ? byScoreThenId : fillOrder;
   const usedIds = (): Set<string> => new Set(characterMembers(sel).map((s) => s.c.id));
 
-  // 1 — disposition: canon-only, permanently (ADR-006).
+  // 1 — disposition: canon-only, permanently (ADR-006). Exempt from the mode
+  // filter at any strictness — the keel is present in every packet.
   const disposition = groupOf(sel, 'disposition');
   const dispositionFill = takeSorted(
     pool.filter((s) => s.c.tier === 'disposition' && s.c.source === 'canon'),
@@ -145,6 +174,7 @@ export const fillCharacter = (pool: ReadonlyArray<Scored>, q: TurnQuery, cfg: As
   const patternFill = takeSorted(
     pool.filter((s) => modeOk(s) && !usedIds().has(s.c.id) && patternEligible(s)),
     quotas.pattern,
+    order,
   );
   pattern.members = patternFill.members;
   pattern.runners = patternFill.runners;
@@ -153,15 +183,18 @@ export const fillCharacter = (pool: ReadonlyArray<Scored>, q: TurnQuery, cfg: As
   const episodeMemory = groupOf(sel, 'episodeMemory');
   const liveMemory = pool
     .filter((s) => modeOk(s) && !usedIds().has(s.c.id) && (s.c.tier === 'episode' || s.c.tier === 'memory'))
-    .sort(byScoreThenId);
+    .sort(order);
   const backfill = pool
     .filter((s) => modeOk(s) && !usedIds().has(s.c.id) && patternEligible(s))
-    .sort(byScoreThenId);
+    .sort(order);
   const combined = [...liveMemory, ...backfill];
   episodeMemory.members = combined.slice(0, quotas.episodeMemoryMax);
   episodeMemory.runners = combined.slice(quotas.episodeMemoryMax);
 
-  // 4 — contrast: the max-dissimilar candidate that still passes register constraints.
+  // 4 — contrast: the max-dissimilar candidate that still passes register
+  // constraints. Its rank stays dissimilarity-first at any strictness (the slot
+  // exists to pull against the packet, and coherence already exempts it) —
+  // strict:false only widens the eligibility pool it draws from.
   const contrast = groupOf(sel, 'contrast');
   const selected = characterMembers(sel);
   const mean = meanDenseOf(selected.map((s) => s.c.sig));

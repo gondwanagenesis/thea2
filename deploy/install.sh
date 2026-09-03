@@ -21,20 +21,42 @@ command -v zstd >/dev/null || { echo "zstd missing (apt install zstd)"; exit 1; 
 # --- user + tree ------------------------------------------------------------
 id -u thea2 >/dev/null 2>&1 || useradd --system --home-dir "$PREFIX" --shell /usr/sbin/nologin thea2
 
-mkdir -p "$PREFIX" "$PREFIX/var" /var/backups/thea2 /etc/thea2
+# Deploy only from a clean, committed tree: what runs must be what git has
+# (the 2026-09-02 review found the box one commit behind plus 49 uncommitted
+# files, and the docs describing the working tree instead of the deploy).
+# Not a git checkout (or no git): the rule cannot be enforced, so it degrades
+# to a loud warning rather than either blocking the install or passing silent.
+if git -C "$SRC" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [ -n "$(git -C "$SRC" status --porcelain 2>/dev/null)" ]; then
+    echo ">> $SRC has uncommitted changes — commit or stash first (deploy/ops.md §2)"; exit 1
+  fi
+else
+  echo ">> WARNING: $SRC is not a git checkout — deploying WITHOUT the clean-tree guarantee (deploy/ops.md §2)"
+fi
+
+mkdir -p "$PREFIX" /etc/thea2
+install -d -m 0750 "$PREFIX/var" /var/backups/thea2
+# Runtime-written paths survive a redeploy: rsync --delete must never wipe
+# what the box learned (lived scenes, proposals, the probe baseline).
 rsync -a --delete \
       --exclude node_modules --exclude var --exclude scratch --exclude .claude \
+      --exclude corpus/lived --exclude corpus/proposals --exclude probes/baseline.json \
       "$SRC/" "$PREFIX/"
 mkdir -p "$PREFIX/node_modules"
 npm ci --prefix "$PREFIX" --no-audit --no-fund
 
-install -d -o thea2 -g thea2 "$PREFIX/var" /var/backups/thea2
+install -d -m 0750 -o thea2 -g thea2 "$PREFIX/var" /var/backups/thea2
 chown -R thea2:thea2 "$PREFIX"
+
+[ -f "$PREFIX/corpus/derived/manifest.json" ] || \
+  echo ">> WARNING: corpus/derived/manifest.json is absent — she boots on canon alone (ADR-007: derive on a dev machine, commit the output)"
 
 # --- bin wrappers -----------------------------------------------------------
 mkdir -p "$PREFIX/bin"
 install -m 0755 "$PREFIX/deploy/bin/thead"  "$PREFIX/bin/thead"
 install -m 0755 "$PREFIX/deploy/bin/backup" "$PREFIX/bin/backup"
+install -m 0755 "$PREFIX/deploy/bin/thea2"  "$PREFIX/bin/thea2"
+ln -sf "$PREFIX/bin/thea2" /usr/local/bin/thea2
 
 # --- secrets ----------------------------------------------------------------
 # AGENTS rule 7: keys never in the tree. Bot token MUST be a NEW bot — never
@@ -53,10 +75,8 @@ fi
 
 if grep -q 'PLACEHOLDER' "$KEYS"; then
   echo ">> $KEYS still has placeholders: enabling the unit but NOT starting it."
-  START=0
-else
-  START=0   # operator starts explicitly after the S5 smoke (ops.md §3)
 fi
+# The operator starts the unit explicitly (ops.md §3); install never does.
 
 # --- systemd ----------------------------------------------------------------
 install -m 0644 "$PREFIX/deploy/thea2.service"         /etc/systemd/system/thea2.service

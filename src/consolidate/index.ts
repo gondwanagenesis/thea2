@@ -123,3 +123,6 @@ export {
   sortEntries,
 } from './state.js';
 export type { ConsolidateManifest, Destination, ManifestEntry, RecoveredKey } from './state.js';
+
+export { exportProposals } from './export.js';
+export type { ProposalsExportResult } from './export.js';

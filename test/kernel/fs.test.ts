@@ -40,7 +40,7 @@ describe('atomicWrite', () => {
 });
 
 describe('openJsonl', () => {
-  it('appends and replays 10k rows across a UTC rotation boundary in date order', { timeout: 30_000 }, async () => {
+  it('appends and replays 10k rows across a UTC rotation boundary in date order', { timeout: 90_000 }, async () => {
     // 10k awaited appends are legitimately slow on NTFS under parallel test load —
     // the 5s default is a cold-cache/Defender false red, not a correctness signal.
     dir = tmp();

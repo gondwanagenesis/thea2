@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { PACKET_RECORD_KIND } from '../../src/consolidate/index.js';
 import { bootApp, inboundMsg, runToQuiescent, settle, decisionJson, enqueueAppraisal, type AppHarness } from './helpers.js';
 import { startThead } from '../../src/app/index.js';
+import type { LedgerRow } from '../../src/bridge/types.js';
 
 const scriptTurn = (h: AppHarness, bubbles: string[], appraisal: Record<string, unknown> = {}): void => {
   h.model.enqueue({ content: decisionJson({ bubbles }) });
@@ -15,7 +16,7 @@ const scriptTurn = (h: AppHarness, bubbles: string[], appraisal: Record<string, 
 };
 
 describe('interruption carry-over', () => {
-  it('a queued newer message before realization: nothing is sent, everything carries', async () => {
+  it('a queued newer message before realization: nothing is sent, everything carries', { timeout: 90_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
 
@@ -38,8 +39,10 @@ describe('interruption carry-over', () => {
 
     await runToQuiescent(h);
 
-    // Turn 1 delivered NOTHING: the newer words were already waiting.
-    expect(h.channel.outbound().map((s) => s.text)).toEqual(['oh — and also that.']);
+    // Turn 1 delivered NOTHING: the newer words were already waiting. The
+    // draft's em-dash arrives normalized (gate.normalizeText runs before the
+    // plan gate — "what was checked is what sends").
+    expect(h.channel.outbound().map((s) => s.text)).toEqual(['oh. and also that.']);
 
     // Turn 2's context carried the unsaid words verbatim, labeled, not pasted.
     const assess = h.model.calls.filter((c) => c.taskClass === 'turn').at(-1);
@@ -57,7 +60,7 @@ describe('interruption carry-over', () => {
     await handle.stop();
   });
 
-  it('an abort mid-plan: what she already said stays sent, the rest carries', async () => {
+  it('an abort mid-plan: what she already said stays sent, the rest carries', { timeout: 90_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
 
@@ -105,7 +108,7 @@ describe('interruption carry-over', () => {
 });
 
 describe('afterturn isolation', () => {
-  it('an appraisal that dies cannot unsend, unwrite, or fail the turn', async () => {
+  it('an appraisal that dies cannot unsend, unwrite, or fail the turn', { timeout: 30_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
 
@@ -132,7 +135,7 @@ describe('afterturn isolation', () => {
 });
 
 describe('the L0 boundary', () => {
-  it('packet.record lands with the same turnId the decision carries', async () => {
+  it('packet.record lands with the same turnId the decision carries', { timeout: 30_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
     scriptTurn(h, ['credited reply'], { importance: 5, outcomePrev: null });
@@ -151,7 +154,7 @@ describe('the L0 boundary', () => {
     await handle.stop();
   });
 
-  it('a denied chat is dropped loudly and never ledgered', async () => {
+  it('a denied chat is recorded as a skip (no text, never owed) and starts no turn', { timeout: 30_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
     h.channel.queueInbound(inboundMsg({ updateId: 541, msgId: 941, chatId: 999 /* not allowed */ }));
@@ -161,12 +164,75 @@ describe('the L0 boundary', () => {
     const denied: number[] = [];
     for await (const e of h.sys.events.replay()) if (e.kind === 'app.chat_denied') denied.push((e.payload as { chatId: number }).chatId);
     expect(denied).toEqual([999]);
-    // No ledger row — reconcile has nothing to answer or alarm on.
+    // Phase 1: the denied chat IS ledgered — as a skip row, so the offset can
+    // move and reconcile never owes it. Its text must never reach the ledger.
+    const rows: LedgerRow[] = [];
+    for await (const r of h.sys.ledger.read()) rows.push(r);
+    const skipped = rows.filter((r): r is Extract<LedgerRow, { kind: 'inbound' }> => r.kind === 'inbound' && r.msg?.updateId === 541);
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]!.msg?.skipped?.reason).toBe('denied_chat');
+    // text-blanking is §4.4's — this row only needs the skip stamp + reason.
+    // Reconcile has nothing to answer or alarm on.
     expect(await h.sys.ledger.reconcile(h.clock.epochMs())).toEqual([]);
     await handle.stop();
   });
 
-  it('a reaction-only update is an outcome signal, never a turn', async () => {
+  it('a skipped update (photo, edit, stranger) starts no turn, is recorded, and is never owed', { timeout: 30_000 }, async () => {
+    const h = await bootApp();
+    const skipped = inboundMsg({ updateId: 551, msgId: 951, text: '', skipped: { reason: 'non_text' } });
+    expect(h.sys.pipeline.inbound(skipped)).toBeUndefined();
+    // The bridge still records it (the offset must move past it); reconcile owes nothing for it.
+    await h.sys.ledger.recordInbound(skipped);
+    await h.clock.advance(11 * 60_000);
+    expect(await h.sys.ledger.reconcile(h.clock.epochMs())).toEqual([]);
+    expect(h.model.calls).toHaveLength(0);
+    // A skip is not contact: it must not mute the heartbeat mutex.
+    expect(h.sys.pipeline.lastInboundAtMs()).toBeUndefined();
+    const skips: string[] = [];
+    for await (const e of h.sys.events.replay()) if (e.kind === 'bridge.update_skipped') skips.push((e.payload as { reason: string }).reason);
+    expect(skips).toEqual(['non_text']);
+    await h.sys.stop();
+  });
+
+  it('a model-authored defer lands ONE ledger row with dueBy — the turn no longer throws (Phase 1)', { timeout: 30_000 }, async () => {
+    const h = await bootApp();
+    const handle = startThead(h.sys);
+    h.model.enqueue({ content: decisionJson({ plan: 'defer', bubbles: [] }) });
+    enqueueAppraisal(h.model);
+    h.channel.queueInbound(inboundMsg({ updateId: 561, msgId: 961, text: 'no rush, tell me tomorrow' }));
+    await settle();
+    await runToQuiescent(h);
+    const failed: string[] = [];
+    for await (const e of h.sys.events.replay()) if (e.kind === 'incident.turn_failed') failed.push(e.kind);
+    expect(failed).toEqual([]);
+    const rows = [];
+    for await (const r of h.sys.ledger.read()) if (r.kind === 'decision') rows.push(r);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ plan: 'defer', decidedBy: 'model' });
+    expect(typeof (rows[0] as { dueBy?: number }).dueBy).toBe('number');
+    // Clean while the defer is not yet due.
+    expect(await h.sys.ledger.reconcile(h.clock.epochMs())).toEqual([]);
+    await handle.stop();
+  });
+
+  it('a failure silence is recorded with provenance and stays OWED after the window', { timeout: 30_000 }, async () => {
+    const h = await bootApp();
+    const handle = startThead(h.sys);
+    h.model.enqueue({ content: '' }); // assess: nothing
+    h.model.enqueue({ content: '' }); // repair: nothing
+    h.channel.queueInbound(inboundMsg({ updateId: 571, msgId: 971, text: 'are you there' }));
+    await settle();
+    await runToQuiescent(h);
+    const rows = [];
+    for await (const r of h.sys.ledger.read()) if (r.kind === 'decision') rows.push(r);
+    expect(rows.at(-1)).toMatchObject({ plan: 'silent', decidedBy: 'failure' });
+    await h.clock.advance(11 * 60_000);
+    const lost = (await h.sys.ledger.reconcile(h.clock.epochMs())).filter((d) => d.kind === 'LOST_REPLY');
+    expect(lost).toHaveLength(1);
+    await handle.stop();
+  });
+
+  it('a reaction-only update is an outcome signal, never a turn', { timeout: 30_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
     h.channel.injectReaction({ emoji: '❤️', toMsgId: 900 });

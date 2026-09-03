@@ -1,7 +1,7 @@
 ---
 module: M14
 name: realize
-syncedTo: S4 (src/realize + test/realize, 43 tests green)
+syncedTo: S8 (src/realize + test/realize, 43 tests green; voice guarding lives in M06/M10/M12/M19 — see "As built")
 stage: S4
 depends: [M01-kernel, M06-coupling, M15-bridge]
 ---
@@ -89,6 +89,36 @@ export const realize: (d: RealizableDecision, affect: Vec12, rng: Rng, deps: Rea
 - **Whitespace-only bubbles are dropped** — they carry no words and no timing.
 - **45 s compression method** (the spec explicitly leaves it open): every pause/typing step scales by one shared factor with floor rounding, the residual shaved off the longest steps; `totalMs` always equals the exact step sum.
 - Test-side note (upstream trait, not a deviation here): `TestClock.advance` drains only two microtask hops per fired waiter, while the executor's chain to its next registration is 3–4 hops — so tests drive the clock in small slices with settles between (`test/realize/helpers.ts` `drive()`). Exact-time assertions hold because every due instant stays ahead of the clock until it is exactly due.
+
+## As built (S8) — the verbatim invariant stands; voice is guarded, not rewritten
+
+No exception to the S4 invariant exists in the built system: `shapeBubbles`
+performs only whitespace-drops, paragraph/sentence-boundary splits, and
+adjacent merges (char cap outranks count cap). There is no paraphrase,
+restyle, or post-generation voice pass anywhere under `src/realize`.
+
+Voice fidelity is carried and guarded elsewhere:
+
+- **Carried by demonstration** — the packet assembler picks canon voice
+  exemplars per register (M06/M08); the draft prompt (M10) bans the
+  corpus-zero tells.
+- **Vetoed, not edited** — the inhibition gate (M12) rejects and rephrases;
+  the re-entry cap and severity semantics (soft fails open, hard forces
+  silent) live in the loop's gate ladder.
+- **Normalized before the gate** — `gate.normalizeText` (the yaml's
+  `normalize` class: character-only, idempotent) is applied to every bubble
+  in the loop immediately before `checkPlan`, so the gate judges what will
+  actually send and `realize` receives already-final text. Wired
+  2026-09-02 (previously compiled and tested but unwired); regression test in
+  `test/loop/loop.test.ts`.
+- **Measured** — the drift probe (M19) cosines live replies against the
+  canon-voice exemplar centroid; cosine drop > 0.05 from baseline trips
+  yellow.
+
+The Thea1 voice committee's per-turn gear classifier and sentinel-token gate
+are heritage, not current code. If ever ported, they must land as their own
+module with this invariant renegotiated explicitly — never slipped into
+`realize`.
 
 ## Test checklist
 - unit: pure `planDelivery` property tests — monotone in reluctance, arousal shortens, caps hold, determinism per seed, merge/split rules, proportional compression at the 45 s cap, silent/defer emptiness.

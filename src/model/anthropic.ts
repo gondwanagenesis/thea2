@@ -19,7 +19,7 @@
 
 import { modelError } from './errors.js';
 import { EMIT_TOOL_NAME, promptedJsonInstruction } from './json.js';
-import type { ChatMsg, ToolCall } from './types.js';
+import type { ChatMsg, StopReason, ThinkingControl, ToolCall } from './types.js';
 import type { BuildBodyInput, ParsedResponse } from './wire.js';
 import { schemaJsonForPrompt, schemaToJsonSchema } from './wire.js';
 
@@ -56,7 +56,9 @@ export interface AnthropicBody {
   system?: string;
   messages: AnthropicMessage[];
   tools?: AnthropicToolDef[];
-  tool_choice?: { type: 'tool'; name: string };
+  tool_choice?: { type: 'tool'; name: string } | { type: 'auto' } | { type: 'any' };
+  /** Extended-thinking control, passed through verbatim (anthropic protocol only). */
+  thinking?: ThinkingControl;
   stream?: boolean;
 }
 
@@ -64,6 +66,8 @@ export interface AnthropicResponseBody {
   content?: AnthropicContentBlock[];
   usage?: { input_tokens?: number; output_tokens?: number };
   stop_reason?: string;
+  /** A door-side `error` event folded out of an SSE stream (parseAnthropicSSE throws before this matters). */
+  error?: { type?: string; message?: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +138,17 @@ export const buildAnthropicBody = (input: BuildBodyInput): AnthropicBody => {
     toolChoice = { type: 'tool', name: EMIT_TOOL_NAME };
   } else if (schema !== undefined) {
     systemParts.push(promptedJsonInstruction(schemaJsonForPrompt(schema)));
+  } else if (req.toolChoice !== undefined && wireTools !== undefined) {
+    // The ladder did not claim tool_choice, so the caller's explicit control
+    // rides (e.g. the loop's forced `decide`). openai 'required' ("some tool
+    // must be called") is spelled 'any' on this protocol. Absent ⇒ the field
+    // stays out of the body entirely — the pre-Phase-1 bytes, unchanged.
+    toolChoice =
+      req.toolChoice === 'auto'
+        ? { type: 'auto' }
+        : req.toolChoice === 'required'
+          ? { type: 'any' }
+          : { type: 'tool', name: req.toolChoice.name };
   }
 
   return {
@@ -144,6 +159,7 @@ export const buildAnthropicBody = (input: BuildBodyInput): AnthropicBody => {
     messages: toAnthropicMessages(req.messages),
     ...(tools !== undefined ? { tools } : {}),
     ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
+    ...(req.thinking !== undefined ? { thinking: req.thinking } : {}),
   };
 };
 
@@ -151,10 +167,11 @@ export const buildAnthropicBody = (input: BuildBodyInput): AnthropicBody => {
 // Inbound parsing
 // ---------------------------------------------------------------------------
 
-/** Content blocks + usage → the same ParsedResponse the OpenAI path yields. */
+/** Content blocks + usage (+ optional wire stop reason) → the same ParsedResponse the OpenAI path yields. */
 export const parsedFromBlocks = (
   blocks: readonly AnthropicContentBlock[],
   usage: { input_tokens?: number; output_tokens?: number },
+  stopReason?: StopReason,
 ): ParsedResponse => {
   let content = '';
   const toolCalls: ToolCall[] = [];
@@ -178,10 +195,11 @@ export const parsedFromBlocks = (
     malformedToolCalls: [], // args arrive decoded on this protocol — nothing to repair at the wire
     inputTokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
     outputTokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
+    ...(stopReason !== undefined ? { stopReason } : {}),
   };
 };
 
-/** 200-body → domain result. Throws model/bad-json for protocol violations. */
+/** 200-body → domain result. Throws model/bad-json for protocol violations, model/http-error for a folded SSE `error` event. */
 export const parseAnthropicResponse = (raw: unknown): ParsedResponse => {
   if (typeof raw !== 'object' || raw === null) {
     throw modelError('model/bad-json', 'response body is not a JSON object');
@@ -190,7 +208,11 @@ export const parseAnthropicResponse = (raw: unknown): ParsedResponse => {
   if (!Array.isArray(body.content)) {
     throw modelError('model/bad-json', 'response has no content blocks');
   }
-  return parsedFromBlocks(body.content, body.usage ?? {});
+  return parsedFromBlocks(
+    body.content,
+    body.usage ?? {},
+    typeof body.stop_reason === 'string' ? (body.stop_reason as StopReason) : undefined,
+  );
 };
 
 // ---------------------------------------------------------------------------
@@ -201,14 +223,23 @@ interface StreamFold {
   blocks: AnthropicContentBlock[];
   inputTokens: number;
   outputTokens: number;
+  /** The final stop_reason off message_delta's delta, once seen. */
+  stopReason?: string;
+  /** A door-side `error` event — recorded here, thrown by parseAnthropicSSE. */
+  error?: { type: string; message: string };
 }
+
+/** Door error types worth another attempt; everything else fails fast. */
+const RETRYABLE_SSE_ERRORS = new Set(['overloaded_error', 'rate_limit_error', 'api_error']);
 
 /**
  * Folds one SSE `data:` payload into the accumulator. Events per the
  * Messages-Stream spec: message_start (input usage), content_block_start
  * (block typed), content_block_delta (text_delta / input_json_delta),
- * message_delta (output usage), message_stop. Unknown types are ignored so a
- * door-side `ping` or a future event kind degrades to noise, not a crash.
+ * message_delta (output usage + stop_reason), message_stop — and `error`,
+ * which is never noise: it is thrown to the transport's retry policy as a
+ * typed model/http-error. Remaining unknown types are ignored so a door-side
+ * `ping` or a future event kind degrades to noise, not a crash.
  */
 const foldEvent = (acc: StreamFold, event: Record<string, unknown>): void => {
   const type = event['type'];
@@ -232,9 +263,18 @@ const foldEvent = (acc: StreamFold, event: Record<string, unknown>): void => {
   } else if (type === 'message_delta') {
     // z.ai carries BOTH counts here (message_start's usage is often empty on
     // this door) — dropping input_tokens logged every streamed call at 0.
-    const delta = (event['usage'] ?? {}) as { input_tokens?: number; output_tokens?: number };
-    if (typeof delta.input_tokens === 'number') acc.inputTokens = delta.input_tokens;
-    if (typeof delta.output_tokens === 'number') acc.outputTokens = delta.output_tokens;
+    const usage = (event['usage'] ?? {}) as { input_tokens?: number; output_tokens?: number };
+    if (typeof usage.input_tokens === 'number') acc.inputTokens = usage.input_tokens;
+    if (typeof usage.output_tokens === 'number') acc.outputTokens = usage.output_tokens;
+    const delta = (event['delta'] ?? {}) as { stop_reason?: unknown };
+    if (typeof delta.stop_reason === 'string') acc.stopReason = delta.stop_reason;
+  } else if (type === 'error') {
+    // The door pushed an error event mid-stream and closed. Typed failure, not
+    // empty content: the retry ladder above decides by the error type.
+    const err = (event['error'] ?? {}) as { type?: unknown; message?: unknown };
+    const errType = typeof err.type === 'string' ? err.type : 'unknown_error';
+    const errMsg = typeof err.message === 'string' ? err.message : 'no message';
+    acc.error = { type: errType, message: errMsg };
   }
 };
 
@@ -261,6 +301,14 @@ export const parseAnthropicSSE = (sse: string): AnthropicResponseBody => {
     }
     if (typeof event === 'object' && event !== null) foldEvent(acc, event as Record<string, unknown>);
   }
+  if (acc.error !== undefined) {
+    // Thrown INSIDE sendOnce, so the transport's retry policy sees it: an
+    // overloaded door is retried, the caller's own malformed request is not.
+    throw modelError('model/http-error', `sse error event: ${acc.error.type}: ${acc.error.message}`, {
+      cause: { sseError: { type: acc.error.type, message: acc.error.message } },
+      retryable: RETRYABLE_SSE_ERRORS.has(acc.error.type),
+    });
+  }
   const blocks = acc.blocks.flatMap((b) => {
     if (b.type === 'tool_use' && typeof b.input === 'string') {
       try {
@@ -274,5 +322,6 @@ export const parseAnthropicSSE = (sse: string): AnthropicResponseBody => {
   return {
     content: blocks,
     usage: { input_tokens: acc.inputTokens, output_tokens: acc.outputTokens },
+    ...(acc.stopReason !== undefined ? { stop_reason: acc.stopReason } : {}),
   };
 };

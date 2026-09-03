@@ -1,7 +1,7 @@
 ---
 module: M18
 name: siblings
-syncedTo: S8 (implemented — src/siblings + test/siblings, 100 tests; ledger zero-state fix landed with the suite)
+syncedTo: S8 round 2 (2026-09-02 — failure silences + sibling.report delivery row; see "Round 2 as built" at the end)
 stage: S8
 depends: [M01-kernel, M02-events, M03-model, M16-sched, M19-probes]
 ---
@@ -34,14 +34,14 @@ export const proposeRouting: (aggs: LedgerAggregate[], current: RoutingTable) =>
 ```
 
 ## Behavior spec
-- **Ledger** (daily + on-demand): replays `model.call` events from L0 → per-taskClass cost/latency/token aggregates (pure fn, golden-testable) → renders `var/reports/ledger-<date>.md` in a persona-seeded voice (cheap tier; the seed file is a short markdown persona, not a bot). The report is where operational truths surface: lost-reply counts (from `bridge.lost_reply`), chronic gate rejections, `sched.alarm`s, gravity alarms, incident counts — **a chronically over-triggering inhibition rule surfaces here within a day, not a month** (the M12 contract's other half).
+- **Ledger** (daily + on-demand): replays `model.call` events from L0 → per-taskClass cost/latency/token aggregates (pure fn, golden-testable) → renders `var/reports/ledger-<date>.md` in a persona-seeded voice (cheap tier; the seed file is a short markdown persona, not a bot). The report is where operational truths surface: lost-reply counts (from `bridge.lost_reply`), **failure silences** (round 2: `decision.locked` rows with `plan: 'silent'`, `decidedBy: 'failure'` — the loop dying mid-turn; reconcile never accepts these as terminations, so they are counted beside the lost replies), chronic gate rejections, `sched.alarm`s, gravity alarms, incident counts, and the window's model spend — **a chronically over-triggering inhibition rule surfaces here within a day, not a month** (the M12 contract's other half).
 - **Routing proposals, guardrailed** (§5.6): from the aggregates, Ledger may propose tier downgrades for non-user-facing task classes only (`summarize`, `consolidate`, `derive`…). **`turn` is pinned to main tier in code** — a proposal touching `turn` (or any user-facing class) is refused at proposal time and logged, never written. Accepted proposals are written to `var/routing.json` (the file M03's router reads), and **any applied routing change counts as a deploy ⇒ bumps the deploy marker ⇒ Nightingale runs** — a cost save that degrades the character gets caught by the immune system, not by Diego's ears.
 - **Nightingale** (trigger: deploy-marker change, watched every 1 min `catchUp: 'skip'`; or manual `thea2 probe run`): the deploy marker is a content hash over {code version, `var/routing.json`, `corpus/canon/inhibitions.yaml`, `coupling.yaml`, corpus hash} — **a routing change is a change; so is an inhibition or coupling edit** (exactly the configs that can silently alter behavior). On trigger: run the live probe suite via M19's runner (k=3, median-aggregated), compare against `probes/baseline.json`, write `var/reports/nightingale-<ts>.md` + alarm events:
   - any deterministic probe failure ⇒ **red** (alarm);
   - judge median drop > **0.8** ⇒ **red**;
   - drift cosine drop > **0.05** ⇒ **yellow** (watch).
   - On green: recommit `probes/baseline.json` (the new normal). On red: baseline unchanged, alarm event, report names the regressing probes + the marker diff (what changed to cause this).
-- Both jobs emit `sibling.*` events to L0 (`sibling.ledger_report`, `sibling.nightingale_red`, `sibling.baseline_recommitted`, `sibling.routing_refused`). Failure of either job is loud (M16's alarm path) — a dead immune system is worse than none.
+- Both jobs emit `sibling.*` events to L0 (`sibling.ledger_report`, `sibling.nightingale_red`, `sibling.baseline_recommitted`, `sibling.routing_refused`). Round 2 adds **`sibling.report`** — the generic "a report is ready to travel" row (`{sibling, file, date, summary}`) emitted once per finished report; the channel delivery itself is round 3 (no Telegram here). Failure of either job is loud (M16's alarm path) — a dead immune system is worse than none.
 - **Persona seeds** are 10-line markdown files (`personas/*.md`) — voice for reports only. They never receive inbound messages, hold no state, and are rendered by the same M03 door as everything else (cheap tier).
 - The other eight Thea1 sibling bots are **retired, not ported** — no bridge, no token, no code. If a future need emerges, it becomes a job here or it doesn't exist.
 
@@ -66,3 +66,10 @@ export const proposeRouting: (aggs: LedgerAggregate[], current: RoutingTable) =>
 - unit: aggregate goldens (incl. retry/attempt math and parse-failure counting); routing proposal guardrail table (all 9 taskClasses × propose/refuse); deploy-marker hash stability (order-independent inputs, sensitive to each input file).
 - component: TestClock-driven marker watcher → Nightingale cycle; green/red/yellow report snapshots; baseline recommit vs preserve; ledger-report end-to-end from a replayed event fixture.
 - fixtures needed: a mixed `model.call` event fixture day; scripted ProbeRunner results across the gate truth table; marker input file variants; a routing.json before/after pair.
+
+## Round 2 as built (2026-09-02, remediation package F)
+
+1. **Failure silences in the report.** `foldTruths` now counts `decision.locked` rows with `plan: 'silent'` + `decidedBy: 'failure'` into `LedgerTruths.failureSilences`; the report renders them beside the lost replies (`- failure silences: N — decided silent by failure, still owed`). Her own model-decided silences never count — restraint is not an operational truth, the same rule reconcile applies. The count also rides the `sibling.ledger_report` payload. Named test: `ledger report lists lost replies and failure silences` (test/siblings/ledger.test.ts), golden day extended with two failure silences + one model silence.
+2. **`sibling.report`** (types.ts: `SIBLING_REPORT_EVENT`, `SiblingReportEvent {sibling, file, date, summary}`): emitted once per finished ledger report with a one-line machine summary (`lost replies N · failure silences N · sched alarms N · gravity alarms N · incidents N · $X.XX`). This is the delivery seam only — the channel delivery (Telegram) is round 3's wiring; Nightingale can adopt the same row when its delivery lands.
+3. **Routing untouched**: proposals/refusals and the `turn` pin behave exactly as S8 built them; the guard was kept, nothing is auto-applied beyond the existing routing.json write.
+4. **Registration stays round 3**: `ledgerJob` + `nightingaleJob` (`siblingJobs(deps)`) exist and are fully tested but are still absent from compose's job table — M20 registers them when the sibling deps (marker paths, persona dir, probe runner) are composed.

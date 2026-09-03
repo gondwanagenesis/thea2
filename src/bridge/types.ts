@@ -20,7 +20,22 @@ export interface InboundMsg {
   speaker: SpeakerRef;
   /** Present on reaction updates — a free outcome signal for credit (M09), never a request awaiting a reply. */
   reaction?: { emoji: string; toMsgId: number } | undefined;
+  /**
+   * Present on updates the bridge could not or must not turn into a turn (a
+   * photo, an edit, a stranger's chat). Recorded so the offset can move past
+   * them — an unrecorded skip re-polls forever — and never owed a reply.
+   */
+  skipped?: { reason: string } | undefined;
 }
+
+/**
+ * Who decided a silence. `model` — her own locked plan; `gate` — the inhibition
+ * gate forced it after the re-entry cap; `failure` — the loop could not produce
+ * a decision at all (parse failure, budget exhaustion, assembly error). Only the
+ * first two are restraint; the third is a lost reply wearing a decision row, and
+ * reconcile treats it as such (ADR-003: silence by failure is a discrepancy).
+ */
+export type DecidedBy = 'model' | 'gate' | 'failure';
 
 export interface ChannelLimits {
   maxMsgChars: number;
@@ -50,6 +65,8 @@ export interface DecisionSummary {
   at: number;
   /** `plan:'defer'` only — epochMs the deferred turn comes due (ADR-003 bookkeeping). Required for defer, rejected otherwise. */
   dueBy?: number | undefined;
+  /** Provenance of the plan. Absent = 'model' (rows written before provenance existed). */
+  decidedBy?: DecidedBy | undefined;
 }
 
 /**
@@ -64,7 +81,7 @@ export type Discrepancy =
 /** One durable ledger row. The ledger — not the event log — is what reconcile reads. */
 export type LedgerRow =
   | { kind: 'inbound'; ts: number; msg: InboundMsg }
-  | { kind: 'decision'; ts: number; turnId: string; plan: DecisionPlan; at: number; dueBy?: number | undefined }
+  | { kind: 'decision'; ts: number; turnId: string; plan: DecisionPlan; at: number; dueBy?: number | undefined; decidedBy?: DecidedBy | undefined }
   | { kind: 'outbound'; ts: number; turnId: string; msgId: number; text: string }
   | { kind: 'link'; ts: number; updateId: number; turnId: string };
 
@@ -75,7 +92,7 @@ export interface MessageLedger {
   recordOutbound(turnId: string, msgId: number, text: string): Promise<void>;
   /** Binds an inbound to the turn that owns it, so reconcile can name what was lost (and the daily report can follow it). */
   linkTurn(updateId: number, turnId: string): Promise<void>;
-  /** Pure read over the ledger + the T window: inbound with neither outbound nor a recorded silent/deferred decision past T ⇒ LOST_REPLY. */
+  /** Pure read over the ledger + the T window: inbound with neither outbound nor a recorded silent/deferred decision past T ⇒ LOST_REPLY. A `decidedBy:'failure'` silence is NOT a termination. */
   reconcile(now: number): Promise<Discrepancy[]>;
   /** Every durable row, file-date order — for M18's report and test assertions. */
   read(): AsyncIterable<LedgerRow>;

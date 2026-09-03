@@ -1,7 +1,7 @@
 ---
 module: M07
 name: corpus
-syncedTo: S7
+syncedTo: S8 (disposition flag, situation frame, identityBody — 2026-09-02)
 stage: S1
 depends: [M01-kernel, M04-embed]
 ---
@@ -82,3 +82,7 @@ export const corpusNominator: (idx: CorpusIndex) => Nominator;  // Nominator typ
 - **Derived/lived id = masked content hash** (`src/corpus/derived-id.ts`, regression `test/corpus/parse.test.ts`). The spec's "id is the contentHash of the file" is a self-reference paradox as written (the id cannot equal the hash of text containing the id). Convention: the id line is masked to `sha256:pending` before hashing; writers stamp the real id afterwards and the result's masked hash is exactly that id. Originally implemented in M08's keys.ts (which surfaced the bug); moved here 2026-09-01 so parser and writers share one source of the convention. `contentIdFor` (plain unmasked hash) is kept for content addressing only — never id discipline.
 - **`kind: statement` bodies are prose by design** (regression same file). `validateBodyForKind` used to flag every prose line `corpus/body-grammar` regardless of kind — rejecting committed canon statements (`seaglass-jar.md`). The check is now scoped to scene/procedure; statement keeps "no structural rules" as the spec's own comment always said.
 - **Committed-canon smoke** (`test/corpus/parse.test.ts`): every exemplar-shaped file under `corpus/` must parse with zero error-severity issues — the corpus's first direct test suite; both fixes above were caught (and are pinned) here.
+- **As built (Package E, 2026-09-02)** — three additions, each mirrored in `schemas/exemplar.ts` first:
+  - `CanonFrontmatter.disposition: boolean` (optional). A canon file flagged `disposition: true` nominates into the disposition tier regardless of kind (`corpusNominator.tierFor`), alongside `kind: statement` files; the slot stays canon-only and quota-owned (ADR-006). Un-commenting the six canon files carrying `# disposition: true` is the author's hand, not tooling's.
+  - `src/corpus/render.ts` — the packet-side frame: `renderExemplar` renders `situation: <context>` above the body and folds a leading `Setup:` paragraph into that one line (setup text after the context, em-dash separated); no context and no setup ⇒ body verbatim. `corpusNominator`'s `render()` uses it, so every [EXEMPLARS] item ships framed.
+  - `identityBody(raw)` (`src/corpus/frontmatter.ts`): strips `---`-fenced frontmatter and returns the body (CRLF-normalized, leading blank line trimmed; fenceless input returned as-is, never throws). For `corpus/canon/identity.md` — its frontmatter is repo metadata, never prompt text. Adoption call site: `src/app/compose.ts:245` (`identityBlock: readCanon(...)`), wired in Round 3.

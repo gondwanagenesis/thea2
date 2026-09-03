@@ -33,14 +33,22 @@ export const DIM_INDEX: Readonly<Record<AffectDim, number>> = Object.fromEntries
 
 /**
  * The Thea1 baselines in coupling coords, ported verbatim from M05's tables
- * (ticker.py v6): PAD homes from the live state.json baseline block, primaries
- * from PRIMARY_BASELINE. This is the default `Baselines`; injecting a different
+ * (ticker.py v6): PAD homes from the live baseline block, primaries from
+ * PRIMARY_BASELINE. This is the default `Baselines`; injecting a different
  * record is for tests and future re-homing only.
+ *
+ * `dominance` reads DIAL_BASELINE LIVE (a getter, not a snapshot): ADR-004a
+ * makes that home config-backed (`setDominanceBaseline` at composition), and a
+ * table copied at module-import time would freeze the pre-config value for
+ * every coupling consumer. The other eleven homes are still the verbatim
+ * constants.
  */
 export const COUPLING_BASELINES: Baselines = {
   valence: DIAL_BASELINE.pleasure,
   arousal: DIAL_BASELINE.arousal,
-  dominance: DIAL_BASELINE.dominance,
+  get dominance(): number {
+    return DIAL_BASELINE.dominance;
+  },
   joy: PRIMARY_BASELINE.joy,
   anticipation: PRIMARY_BASELINE.anticipation,
   pride: PRIMARY_BASELINE.pride,

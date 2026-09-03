@@ -17,10 +17,17 @@ export interface MessageLayoutInput {
   /** The current turn as the model sees it: his message, or the entry's goal. */
   turnText: string;
   placement: InhibitionPlacement;
+  /**
+   * The [OUTPUT] contract (decide.ts), appended to the head system message after
+   * [PROCEDURAL] — beside the tool it describes. Absent for subprocess workers,
+   * which answer in content.
+   */
+  outputContract?: string | null | undefined;
 }
 
 export const buildMessages = (i: MessageLayoutInput): ChatMsg[] => {
-  const head = withProcedural(i.packet);
+  const base = withProcedural(i.packet);
+  const head = i.outputContract === undefined || i.outputContract === null || i.outputContract === '' ? base : `${base}\n\n${i.outputContract}`;
   const trailer = i.packet.trailerText();
   const msgs: ChatMsg[] = [];
 

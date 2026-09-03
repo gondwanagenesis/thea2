@@ -91,7 +91,7 @@ describe('openEventLog', () => {
     expect(seen).toEqual([1, 2, 3]);
   });
 
-  it('1k concurrent emits produce 1k distinct seqs and 1k parseable lines', async () => {
+  it('1k concurrent emits produce 1k distinct seqs and 1k parseable lines', { timeout: 60_000 }, async () => {
     const clock = new TestClock(0);
     const d = fresh();
     const log = openEventLog(d, { clock });

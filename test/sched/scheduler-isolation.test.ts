@@ -6,7 +6,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import type { Job, JobCtx } from '../../src/sched/index.js';
-import { HOUR, MIN, SchedHarness, T0, makeJob } from './helpers.js';
+import { realSettle,  HOUR, MIN, SchedHarness, T0, makeJob } from './helpers.js';
 
 let harness: SchedHarness | undefined;
 afterEach(async () => {
@@ -160,6 +160,10 @@ describe('timeout isolation', () => {
     const first = harness.start([stuck]);
     await first.ready();
     await harness.clock.advance(10 * MIN + 2_000); // deadline + full grace window
+    // The wedged emit's fs append races this assertion under load: let the
+    // real-event-loop chain (advance's microtasks -> emit -> log append) land
+    // before reading the log. Same device as test/app/helpers settle().
+    await realSettle(25);
 
     const wedged = (await harness.of('sched.wedged')).map((ev) => ev.payload as WedgedPayload);
     expect(wedged).toEqual([{ job: 'stuck', timeoutMs: 1_000, due: T0 + 10 * MIN }]);

@@ -57,16 +57,29 @@ export const derive = async (opts: DeriveRunOptions): Promise<DeriveReport> => {
   const manifestKeys = new Set(manifest.entries.map((e) => e.deriveKey));
   const dirty = enumerated.targets.filter((t) => !manifestKeys.has(t.target.deriveKey));
 
-  for (const expected of dirty) {
-    const accepted = await generateAndJudge(expected, opts, failures);
-    if (accepted.ok) {
-      written.push(await writeAccepted(expected, accepted, opts));
-    } else if (accepted.stage === 'judge') {
-      judgeFailed += 1;
-    } else {
-      parseFailed += 1;
+  // Targets drain through a worker pool of `concurrency` hands (default one —
+  // the historical sequential run). Every mutable accumulator below is touched
+  // only from the single event loop thread between awaits, so no locking is
+  // needed; ordering never matters because files are content-addressed and the
+  // manifest is sorted once after all hands finish.
+  const limit = Math.max(1, Math.min(opts.concurrency ?? 1, dirty.length || 1));
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const expected = dirty[next];
+      next += 1;
+      if (expected === undefined) return;
+      const accepted = await generateAndJudge(expected, opts, failures);
+      if (accepted.ok) {
+        written.push(await writeAccepted(expected, accepted, opts));
+      } else if (accepted.stage === 'judge') {
+        judgeFailed += 1;
+      } else {
+        parseFailed += 1;
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: limit }, worker));
 
   // Orphan GC: entries whose deriveKey left the expected set lose their entry
   // and their file, each loudly. Git history is the recovery path.

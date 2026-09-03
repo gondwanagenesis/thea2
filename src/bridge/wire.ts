@@ -30,6 +30,8 @@ export interface WireMessage {
   /** Epoch SECONDS on the wire; InboundMsg.ts is epochMs. */
   date?: number;
   text?: string;
+  /** Media captions: a photo WITH a caption is a text message whose text is the caption. */
+  caption?: string;
 }
 
 export interface WireReactionUpdated {
@@ -82,7 +84,39 @@ export type ParsedUpdate =
 
 const notOk = (reason: SkipReason, detail: string): ParsedUpdate => ({ ok: false, reason, detail });
 
-/** One `getUpdates` entry → the one inbound it can become, or the typed reason it carries nothing for the pipeline. */
+/**
+ * Deterministic stand-in `ts` for a skipped update whose wire payload carries no
+ * date. Pure parsing cannot read a clock; the poll layer re-stamps nothing — the
+ * ledger row keeps this constant and reconcile only reads the `skipped` mark.
+ */
+export const SKIP_FALLBACK_TS = 1_788_000_000_000;
+
+const UNKNOWN_SPEAKER: SpeakerRef = { person: 'unknown', channel: 'telegram' };
+
+/**
+ * A skip becomes a skip-stamped InboundMsg, not a rejection: the adapter records
+ * it (never turns it), so the offset commits past it and the poll cannot wedge
+ * re-fetching the same update forever. Only an update Telegram never numbered
+ * (no integer update_id) is unparseable — there is nothing to commit past.
+ */
+const skipMsg = (
+  updateId: number,
+  w: { message_id?: number; chat?: WireChat; date?: number } | undefined,
+  reason: SkipReason,
+): ParsedUpdate => ({
+  ok: true,
+  msg: {
+    updateId,
+    msgId: typeof w?.message_id === 'number' ? w.message_id : 0,
+    chatId: typeof w?.chat?.id === 'number' ? w.chat.id : 0,
+    ts: typeof w?.date === 'number' ? w.date * 1000 : SKIP_FALLBACK_TS,
+    text: '',
+    speaker: UNKNOWN_SPEAKER,
+    skipped: { reason },
+  },
+});
+
+/** One `getUpdates` entry → the one inbound it can become, or the placeholder that moves the offset past it. */
 export const parseUpdate = (raw: unknown, speaker: SpeakerResolver = defaultSpeakerResolver): ParsedUpdate => {
   if (typeof raw !== 'object' || raw === null) return notOk('malformed', 'update is not an object');
   const u = raw as WireUpdate;
@@ -90,13 +124,13 @@ export const parseUpdate = (raw: unknown, speaker: SpeakerResolver = defaultSpea
   if (typeof updateId !== 'number' || !Number.isInteger(updateId)) return notOk('malformed', 'update_id missing');
   // Edits are observed (they arrive in allowed_updates) and deliberately ignored:
   // she answers what was said to her, not its post-hoc revision.
-  if (u.edited_message !== undefined) return notOk('edited_message', `update ${updateId} is an edit`);
-  if (u.channel_post !== undefined) return notOk('unsupported', `update ${updateId} is a channel post`);
+  if (u.edited_message !== undefined) return skipMsg(updateId, u.edited_message, 'edited_message');
+  if (u.channel_post !== undefined) return skipMsg(updateId, u.channel_post, 'unsupported');
   const reaction = u.message_reaction;
   if (reaction !== undefined) return parseReaction(updateId, reaction, speaker);
   const message = u.message;
   if (message !== undefined) return parseMessage(updateId, message, speaker);
-  return notOk('unsupported', `update ${updateId} carries no message or reaction`);
+  return skipMsg(updateId, undefined, 'unsupported');
 };
 
 const parseMessage = (updateId: number, m: WireMessage, speaker: SpeakerResolver): ParsedUpdate => {
@@ -104,11 +138,11 @@ const parseMessage = (updateId: number, m: WireMessage, speaker: SpeakerResolver
   const chatId = m.chat?.id;
   const date = m.date;
   if (typeof msgId !== 'number' || typeof chatId !== 'number' || typeof date !== 'number') {
-    return notOk('malformed', `update ${updateId}: message lacks message_id/chat.id/date`);
+    return skipMsg(updateId, m, 'malformed');
   }
-  const text = m.text;
-  // Photo/sticker/sticker-caption arrivals carry no text — nothing for the packet.
-  if (typeof text !== 'string' || text.length === 0) return notOk('non_text', `message ${msgId} has no text`);
+  // A photo WITH a caption is a real message: the caption is what was said.
+  const text = typeof m.text === 'string' && m.text.length > 0 ? m.text : m.caption;
+  if (typeof text !== 'string' || text.length === 0) return skipMsg(updateId, m, 'non_text');
   return {
     ok: true,
     msg: {
@@ -127,10 +161,10 @@ const parseReaction = (updateId: number, r: WireReactionUpdated, speaker: Speake
   const chatId = r.chat?.id;
   const date = r.date;
   if (typeof toMsgId !== 'number' || typeof chatId !== 'number' || typeof date !== 'number') {
-    return notOk('malformed', `update ${updateId}: reaction lacks message_id/chat.id/date`);
+    return skipMsg(updateId, r, 'malformed');
   }
   const emoji = (r.new_reaction ?? []).find((x) => typeof x.emoji === 'string')?.emoji;
-  if (typeof emoji !== 'string') return notOk('non_text', `update ${updateId}: reaction removed or not an emoji`);
+  if (typeof emoji !== 'string') return skipMsg(updateId, r, 'non_text');
   return {
     ok: true,
     // msgId carries the id of the message reacted to: the ledger row stays

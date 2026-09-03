@@ -15,7 +15,7 @@
 // process.env; this module never reads env itself.
 
 import type { Clock, Rng } from '../kernel/index.js';
-import { isModelError, isRetryable, modelError } from './errors.js';
+import { isModelError, isRetryable, modelError, retryAfterMsOf } from './errors.js';
 import { parseAnthropicSSE } from './anthropic.js';
 import {
   ANTHROPIC_ENDPOINT,
@@ -138,12 +138,21 @@ export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
-        // Spec retry policy: 5xx only. 429 (rate-limit) fails fast with its own code.
-        throw modelError(
-          response.status === 429 ? 'model/rate-limit' : 'model/http-error',
-          `HTTP ${response.status} from ${endpoint}: ${truncate(text)}`,
-          { cause: { status: response.status, body: truncate(text) }, retryable: response.status >= 500 },
-        );
+        if (response.status === 429) {
+          // Rate-limit: retryable within the budget, waiting what the server
+          // asked for before anything else (the wire rule the loop enforces).
+          const retryAfterMs = retryAfterOf(response, deps.clock.epochMs());
+          throw modelError('model/rate-limit', `HTTP 429 from ${endpoint}: ${truncate(text)}`, {
+            cause: { status: 429, body: truncate(text), ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) },
+            retryable: true,
+            ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+          });
+        }
+        // Spec retry policy: 5xx only, never other 4xx.
+        throw modelError('model/http-error', `HTTP ${response.status} from ${endpoint}: ${truncate(text)}`, {
+          cause: { status: response.status, body: truncate(text) },
+          retryable: response.status >= 500,
+        });
       }
 
       if (!anthropic) {
@@ -236,7 +245,21 @@ export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
       }
       sse += decoder.decode();
     } finally {
-      reader.releaseLock();
+      // A read() may still be outstanding — the race above can settle via the
+      // idle/total timers while a chunk read is in flight — and releaseLock
+      // throws while one is pending, replacing the typed timeout with a
+      // retryable transport error. cancel() settles it (done) and stops the
+      // download, which is what wire.abort() already meant.
+      try {
+        await reader.cancel();
+      } catch {
+        // already closed or errored — nothing to settle
+      }
+      try {
+        reader.releaseLock();
+      } catch {
+        // the stream died with the reader lock held — the lock dies with it
+      }
     }
     return parseAnthropicSSE(sse);
   };
@@ -251,7 +274,12 @@ export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
       } catch (e) {
         if (isModelError(e) && e.code === 'model/aborted') throw e;
         if (attempt > maxRetries || !isRetryable(e)) throw e;
-        const delay = backoffDelayMs(attempt, () => deps.rng.float(), backoff);
+        // The server's retry-after outranks our backoff: the wait is the max of
+        // the two (a named wait shorter than our jittered spacing stays polite;
+        // a longer one is obeyed).
+        const backoffMs = backoffDelayMs(attempt, () => deps.rng.float(), backoff);
+        const serverMs = retryAfterMsOf(e) ?? 0;
+        const delay = Math.max(backoffMs, serverMs);
         try {
           await deps.clock.waitUntil(deps.clock.epochMs() + delay, call.signal);
         } catch (waitError) {
@@ -263,5 +291,22 @@ export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
 };
 
 const truncate = (text: string): string => (text.length > 400 ? `${text.slice(0, 400)}…` : text);
+
+/** A 429's wait never exceeds this, whatever the header says — a "try again in 2 h" is a refusal wearing a header. */
+const RETRY_AFTER_CAP_MS = 30_000;
+
+/**
+ * Server-stated minimum wait before the next attempt: delta-seconds or an
+ * HTTP-date measured against the INJECTED clock (never the host's). Absent or
+ * unparseable ⇒ undefined, and the loop falls back to plain backoff.
+ */
+const retryAfterOf = (response: Response, clockMs: number): number | undefined => {
+  const raw: string | null | undefined = response.headers?.get?.('retry-after');
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const seconds = Number(raw);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(raw) - clockMs;
+  if (!Number.isFinite(ms)) return undefined;
+  return Math.min(RETRY_AFTER_CAP_MS, Math.max(0, Math.round(ms)));
+};
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));

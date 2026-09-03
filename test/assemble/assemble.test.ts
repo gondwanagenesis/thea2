@@ -60,8 +60,13 @@ describe('fixed section order (byte-exact)', () => {
     );
     // Canon bodies are quoted verbatim, and M07's parsed bodies keep the file's
     // trailing newline — so each exemplar ends with '\n' inside the section.
-    const keel = 'the keel: i keep the servers humming and i say what i checked\n';
-    const body = (line: string): string => `${sceneBody(line)}\n`;
+    // M07's frame adds a `situation:` line above every body (src/corpus/render.ts),
+    // and the contrast slot renders mid-packet under its `elsewhere:` label —
+    // BEFORE the episode-memory exemplars, not after them.
+    const keel =
+      'situation: fixture exemplar keel-one\nthe keel: i keep the servers humming and i say what i checked\n';
+    const body = (slug: string, line: string): string =>
+      `situation: fixture exemplar ${slug}\n${sceneBody(line)}\n`;
     const expected = [
       `[IDENTITY]\n${IDENTITY}`,
       `[INTERLOCUTOR]\ndiego on telegram (register: play)`,
@@ -69,12 +74,12 @@ describe('fixed section order (byte-exact)', () => {
       `[REGISTER]\nplay`,
       '[EXEMPLARS]\n' + [
         keel,
-        body('MORNING-A first exchange of the day slow wake'),
-        body('PLAIN-A the plain everyday texture of a shared afternoon'),
-        body('QUIET-A quiet green lights all down the closet'),
-        body('FAR-AB the far texture — something she genuinely finds revolting'),
-        body('CURL-C wanting the small planned thing to go right'),
-        body('BANTER-B one word worlds and quick teasing'),
+        body('pat-morning', 'MORNING-A first exchange of the day slow wake'),
+        body('pat-plain', 'PLAIN-A the plain everyday texture of a shared afternoon'),
+        `elsewhere:\n${body('pat-banter', 'BANTER-B one word worlds and quick teasing')}`,
+        body('pat-quiet', 'QUIET-A quiet green lights all down the closet'),
+        body('pat-far', 'FAR-AB the far texture — something she genuinely finds revolting'),
+        body('pat-curl', 'CURL-C wanting the small planned thing to go right'),
       ].join('\n\n'),
     ].join('\n\n');
     expect(packet.systemText()).toBe(expected);
@@ -103,14 +108,16 @@ describe('fixed section order (byte-exact)', () => {
     expect(record.flags).toEqual({ scarcity: false, staleDerived: false });
     expect(record.affectSig).toHaveLength(12);
     expect(record.affectSig.every((v) => v === 0)).toBe(true);
+    // Appearance order: disposition, pattern, CONTRAST, then episodes — the
+    // record's slot list follows the rendered order, not the fill order.
     expect(slotIds(packet)).toEqual([
       'canon/voice/keel-one',
       'canon/emotional-range/pat-morning',
       'canon/voice/pat-plain',
+      'canon/voice/pat-banter',
       'canon/voice/pat-quiet',
       'canon/taste/pat-far',
       'canon/taste/pat-curl',
-      'canon/voice/pat-banter',
     ]);
     // Per-slot scoring snapshot: baseScore carries gravity (canon pattern × 1.4),
     // modulation is M06's term (0 under the zero coupling).
@@ -189,14 +196,15 @@ describe('coherence through assemble (default thresholds)', () => {
     // {play, banter}, so pat-quiet's 'quiet' offends; pat-late is the only
     // episodeMemory runner and takes the slot. Round 2 — L3: pat-curl sits at
     // 90° to both the query vector and the packet centroid, and no runner is
-    // left, so it drops instead of being replaced.
+    // left, so it drops instead of being replaced. The slot list follows the
+    // RENDER order: disposition, pattern, contrast, then episodes.
     expect(slotIds(packet)).toEqual([
       'canon/voice/keel-one',
       'canon/emotional-range/pat-morning',
       'canon/voice/pat-plain',
+      'canon/voice/pat-banter',
       'canon/taste/pat-far',
       'canon/voice/pat-late',
-      'canon/voice/pat-banter',
     ]);
   });
 });
@@ -268,21 +276,26 @@ describe('determinism', () => {
 
 describe('coupling at neutral affect', () => {
   it('a θ ≥ 0 document is byte-identical to no coupling at all — modulation exactly 0', async () => {
-    const thetaNonNeg = compileConfig({ ...COMMITTED.cfg, formRules: COMMITTED.cfg.formRules.filter((r) => r.when.min >= 0) });
+    const thetaNonNeg = compileConfig({
+      ...COMMITTED.cfg,
+      formRules: COMMITTED.cfg.formRules.flatMap((r) =>
+        r.when.max !== undefined ? [] : [{ ...r, when: { dim: r.when.dim, min: Math.max(0, r.when.min) } }],
+      ),
+    });
     const plain = await assemble(query({ queryVec: QVEC, turnId: 'turn-c' }), FLAT, corpusDeps({}, {}, zeroCoupling()));
     const withCoupling = await assemble(query({ queryVec: QVEC, turnId: 'turn-c' }), FLAT, corpusDeps({}, {}, thetaNonNeg));
     expect(packetKey(withCoupling)).toBe(packetKey(plain));
     for (const s of withCoupling.record().slots) expect(s.modulation).toBe(0);
   });
 
-  it('the committed document’s quiet rules (θ = −0.4) move exactly the quiet-tagged slots by +0.072', async () => {
+  it('the committed document (v2) modulates EXACTLY 0 at neutral — the quiet rules fire only below θ now', async () => {
+    // v1 pinned +0.072 here (the quiet rules' min: −0.4 fired always-on at flat
+    // affect). v2 expresses them as max rules — strictly below θ — so the
+    // committed document as shipped satisfies the neutral ⇒ 0 law end to end.
     const packet = await assemble(query({ queryVec: QVEC, turnId: 'turn-q' }), FLAT, corpusDeps({}, {}, COMMITTED));
+    for (const s of packet.record().slots) expect(s.modulation, s.exemplarId).toBe(0);
     const quietIds = new Set(['canon/voice/keel-one', 'canon/voice/pat-quiet']);
-    for (const s of packet.record().slots) {
-      if (quietIds.has(s.exemplarId)) expect(s.modulation).toBeCloseTo(0.072, 9);
-      else expect(s.modulation).toBe(0);
-    }
-    // The boost is visible in the record because the caller emits it for credit.
+    // The quiet-tagged slots are still in the packet — they just take no boost at neutral.
     expect(packet.record().slots.some((s) => quietIds.has(s.exemplarId))).toBe(true);
   });
 });

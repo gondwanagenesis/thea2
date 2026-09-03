@@ -7,11 +7,12 @@ import { describe, expect, it } from 'vitest';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { atomicWriteJson } from '../../src/kernel/index.js';
+import { atomicWriteJson, makeRng, type Clock } from '../../src/kernel/index.js';
 import { makeHashEmbedder } from '../../src/embed/index.js';
 import { TestClock } from '../../src/kernel/clock.js';
-import { MockModel, type ScriptedResponse } from '../../src/model/index.js';
+import { MockModel, modelError, type ChatRequest, type ChatResponse, type ModelClient, type ScriptedResponse } from '../../src/model/index.js';
 import { parseExemplar } from '../../src/corpus/parse.js';
+import { rateLimitPatient } from '../../src/app/derive-cli.js';
 import {
   derivedFileId,
   fileBaseName,
@@ -29,6 +30,7 @@ import {
 } from '../../src/derive/index.js';
 import { cliMain, NOT_BUILT } from '../../src/app/index.js';
 import { deriveVerb } from '../../src/app/derive-cli.js';
+import { openEventLog, type EventEnvelope } from '../../src/events/index.js';
 import { HERMETIC_ENV } from './helpers.js';
 
 const io = () => {
@@ -116,7 +118,12 @@ const install = (): { dir: string; derivedDir: string; back: () => void } => {
   mkdirSync(join(canon, 'voice'), { recursive: true });
   writeFileSync(join(canon, 'voice', 'quiet-server.md'), SCENE_MD, 'utf8');
 
+  // The repo's own corpus/derived (a spun flywheel is COMMITTED, ADR-007) must
+  // not ride into the fixture: every one of its files would be an orphan of
+  // the one-scene canon. Each test starts from an empty derived directory.
   const derivedDir = join(dir, 'corpus', 'derived');
+  rmSync(derivedDir, { recursive: true, force: true });
+  mkdirSync(derivedDir, { recursive: true });
   process.chdir(dir);
   return { dir, derivedDir, back: () => process.chdir(cwd) };
 };
@@ -189,6 +196,14 @@ const stagedModel = (): MockModel => {
     toolCalls: [{ id: 'e1', name: 'emit', args: { score: 5, reason: 'notes survive' } }],
   }));
   return model;
+};
+
+/** The L0 envelopes of one kind from the fixture's event log (compose prod: var/ is the cwd). */
+const eventKinds = async (dir: string, kind: string): Promise<EventEnvelope[]> => {
+  const log = openEventLog(join(dir, 'var', 'events'), { clock: new TestClock(0) });
+  const found: EventEnvelope[] = [];
+  for await (const ev of log.replay({ kinds: [kind] })) found.push(ev);
+  return found;
 };
 
 describe('corpus:check', () => {
@@ -268,6 +283,32 @@ describe('derive', () => {
       expect(secondCode).toBe(0);
       expect(second.text().out).toContain('derive: 0/0 written');
       expect(model.calls.length).toBe(calls);
+
+      // no override, no marker: a derive that never touched a live thead's
+      // lock must not write derive.live_override (negative control)
+      expect(await eventKinds(install1.dir, 'derive.live_override')).toEqual([]);
+    } finally {
+      install1.back();
+    }
+  });
+
+  it('--allow-live-derive runs beside a live thead and marks the override on L0', async () => {
+    const install1 = install();
+    try {
+      const capture = io();
+      // main.ts sets this only after --allow-live-derive overrode a live lock;
+      // the value it passes is the thead pid (test/app/main.test.ts covers that
+      // gate — this proves the loud L0 marker on the derive side).
+      const env = { ...HERMETIC_ENV, THEA2_ALLOW_LIVE_DERIVE: '4242' };
+      const code = await deriveVerb(configPath(), env, capture, { model: stagedModel() });
+
+      expect(code).toBe(0);
+      expect(capture.text().err).toContain('LIVE OVERRIDE');
+      expect(capture.text().err).toContain('derive.live_override');
+
+      const overrides = await eventKinds(install1.dir, 'derive.live_override');
+      expect(overrides).toHaveLength(1);
+      expect(overrides[0]!.payload).toMatchObject({ theadPid: 4242, lock: expect.stringMatching(/thead\.pid$/) });
     } finally {
       install1.back();
     }
@@ -278,5 +319,76 @@ describe('verb surface', () => {
   it('NOT_BUILT no longer names derive or corpus:check', () => {
     expect(NOT_BUILT['derive']).toBeUndefined();
     expect(NOT_BUILT['corpus:check']).toBeUndefined();
+  });
+});
+
+describe('rateLimitPatient — batch politeness over the fail-fast transport', () => {
+  /** Clock stub whose waits resolve instantly while advancing the injected TestClock by the requested delay. */
+  const stepClock = (waits: number[]): Clock => {
+    const base = new TestClock(0);
+    return {
+      epochMs: () => base.epochMs(),
+      now: () => base.now(),
+      waitUntil: async (until: number) => {
+        waits.push(until - base.epochMs());
+        await base.advance(until - base.epochMs());
+      },
+    };
+  };
+  const REQ: ChatRequest = {
+    taskClass: 'derive',
+    tier: 'main',
+    messages: [{ role: 'user', content: 'x' }],
+    maxTokens: 64,
+    temperature: 0,
+  };
+  /** A ChatResponse of the request's own content type — the fake must honor ModelClient's generic. */
+  const ok = <T,>(_req: ChatRequest<T>): ChatResponse<T> => ({
+    content: 'ok' as unknown as T,
+    model: 'test',
+    usage: { inputTokens: 1, outputTokens: 1, latencyMs: 0, attempts: 3 },
+  });
+
+  it('waits out consecutive 429s with a growing delay, then the call lands', async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const flaky: ModelClient = {
+      chat: async <T,>(req: ChatRequest<T>): Promise<ChatResponse<T>> => {
+        calls += 1;
+        if (calls <= 2) throw modelError('model/rate-limit', 'HTTP 429');
+        return ok(req);
+      },
+    };
+    const patient = rateLimitPatient(flaky, stepClock(waits), makeRng(1));
+    const res = await patient.chat(REQ);
+    expect(res.content).toBe('ok');
+    expect(calls).toBe(3);
+    expect(waits.length).toBe(2);
+    expect(waits[0]).toBeGreaterThanOrEqual(20_000); // base
+    expect(waits[1]!).toBeGreaterThan(waits[0]!); // doubling
+  });
+
+  it('a non-rate-limit model error passes through with no wait at all', async () => {
+    const waits: number[] = [];
+    const broken: ModelClient = {
+      chat: async () => {
+        throw modelError('model/http-error', 'HTTP 503');
+      },
+    };
+    const patient = rateLimitPatient(broken, stepClock(waits), makeRng(1));
+    await expect(patient.chat(REQ)).rejects.toMatchObject({ code: 'model/http-error' });
+    expect(waits).toEqual([]);
+  });
+
+  it('a hard-capped key gives up after the total-wait budget instead of hanging forever', async () => {
+    const waits: number[] = [];
+    const capped: ModelClient = {
+      chat: async () => {
+        throw modelError('model/rate-limit', 'HTTP 429');
+      },
+    };
+    const patient = rateLimitPatient(capped, stepClock(waits), makeRng(1));
+    await expect(patient.chat(REQ)).rejects.toMatchObject({ code: 'model/rate-limit' });
+    expect(waits.length).toBeGreaterThanOrEqual(5); // 20+40+80+160+300+300s ≈ the 15 min budget
   });
 });

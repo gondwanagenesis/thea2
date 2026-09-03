@@ -38,9 +38,12 @@ export const LIFE_INCIDENT = 'incident.life_failed';
 // ---------------------------------------------------------------------------
 
 export const HeartbeatPrePayload = z.object({
+  /** Local (configured-zone) fractional hour of the fire. */
   nowH: z.number(),
   canText: z.boolean(),
   reason: z.string(),
+  /** LOST_REPLY count reconcile reported at fire time — the 'owed' gate's input. */
+  owedInbound: z.number().int(),
   sentToday: z.number().int(),
   unanswered: z.number().int(),
   lastUnansweredAgeH: z.number(),

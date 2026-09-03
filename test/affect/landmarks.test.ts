@@ -111,11 +111,23 @@ describe('the blend — exact centres win outright, per band', () => {
     expect(landmarkBlend(near)[0]!.word).toBe('happy');
   });
 
-  it('never has no opinion: a flat baseline state still returns words', () => {
+  it('never has no opinion: the BLEND still names regions on a flat field (weatherLine is the part that goes quiet)', () => {
     const blend = landmarkBlend(freshState());
     expect(blend.length).toBeGreaterThanOrEqual(2);
     for (const b of blend) expect(b.weight).toBeGreaterThan(0);
-    expect(weatherLine(freshState())).not.toBe('');
+  });
+
+  it('affect line absent at baseline, present when deviated', () => {
+    // At her baseline there is no weather: '' — and the assembler's
+    // render-if-nonempty logic keeps the [AFFECT] block out of the packet.
+    expect(weatherLine(freshState())).toBe('');
+    // A real deviation names the region — wording unchanged.
+    const moved = atCenter({ joy: HI, sadness: DN });
+    expect(weatherLine(moved)).toContain('mostly happy');
+    // A flat field with a named cause still speaks — the cause is the weather.
+    const silent = freshState();
+    silent.lastContactAt = T0 - 7 * H(1);
+    expect(weatherLine(silent)).toBe("he's been gone 7 hours");
   });
 
   it('weights normalise to 1 across the field', () => {

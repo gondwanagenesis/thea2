@@ -49,10 +49,20 @@ export const ModelDecisionSchema = z.object({
   completeness: unit,
 });
 
+/**
+ * Who decided. 'model' — her locked plan (a `decide` call, a parsed reply, or
+ * a prose fold); 'gate' — the inhibition gate forced silence after the cap;
+ * 'failure' — no decision could be produced (parse failure, budget exhaustion,
+ * assembly error). The ledger and reconcile read this: only the first two are
+ * restraint; a failure silence stays an owed reply.
+ */
+export const DecidedBySchema = z.enum(['model', 'gate', 'failure']);
+
 /** The locked decision object. */
 export const DecisionObjectSchema = z.object({
   turnId: z.string().min(1),
   plan: z.enum(['reply', 'silent', 'defer']),
+  decidedBy: DecidedBySchema,
   bubbles: z.array(z.string()),
   confidence: unit,
   weight: unit,
@@ -108,3 +118,7 @@ export const DECISION_PARSE_INCIDENT = 'incident.parse_failed';
 export const SPAWN_REFUSED_INCIDENT = 'incident.spawn_refused';
 /** A wedged tool was cut at its timeout; the loop survived. */
 export const TOOL_TIMEOUT_INCIDENT = 'incident.tool_timeout';
+/** Context assembly threw — the turn locks a failure silence and says so. */
+export const ASSEMBLE_FAILED_INCIDENT = 'incident.assemble_failed';
+/** The model answered in prose instead of calling `decide`; the prose was folded deterministically. */
+export const DECISION_PROSE_FOLDED = 'decision.prose_folded';

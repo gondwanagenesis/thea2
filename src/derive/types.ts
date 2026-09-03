@@ -170,6 +170,14 @@ export interface DeriveRunOptions {
   clock: Clock;
   /** Directory holding the derived population + manifest.json (corpus/derived). */
   outDir: string;
+  /**
+   * How many targets generate concurrently. Default 1: the historical strictly
+   * sequential run. Anything above 1 is safe by construction — rng is forked
+   * per target, writes are content-addressed, the manifest is sorted once at
+   * the end — and exists because a full re-derive is hundreds of sequential
+   * model round-trips (observed ~6 min/target on the real backend).
+   */
+  concurrency?: number | undefined;
 }
 
 export interface DeriveFailure {

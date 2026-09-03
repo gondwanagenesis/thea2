@@ -1,7 +1,7 @@
 ---
 module: M15
 name: bridge
-syncedTo: S3 (implemented — src/bridge, test/bridge; ingestUpdates + thead wire-in at S5)
+syncedTo: Phase 1 as-built (2026-09-02 — src/bridge, test/bridge; ingestUpdates + thead wire-in at S5; reconcile provenance table, deliberate real-timer deviation recorded)
 stage: S2
 depends: [M01-kernel, M02-events]
 ---
@@ -79,3 +79,8 @@ export const FakeChannel: (opts?: { limits?: Partial<ChannelLimits> }) => Channe
 - unit: ledger dedupe on update_id; reconcile truth table incl. T-boundary (T−1s vs T+1s via TestClock); limits defaults; parse-layer goldens over recorded fixtures.
 - component: poll loop with TestClock (backoff on errors, clean abort via signal); crash-replay cycle with fault injection at every ordering seam; FakeChannel/real-parser conformance matrix.
 - fixtures needed: recorded `getUpdates` payload fixtures (message, reaction, edited_message, non-text); a scripted ledger spanning the three reconciliation outcomes; a 429 response fixture.
+
+## As built (Phase 1)
+
+- Reconcile provenance is pinned by truth table (test/bridge/ledger.test.ts): a `decidedBy:'failure'` silence stays LOST_REPLY past T (silence by failure is a discrepancy); a `'gate'` silence is clean; a legacy silent row WITHOUT `decidedBy` reads clean (absent provenance predates the failure marker); a skipped inbound is never lost; `recordDecision` persists `decidedBy` durably.
+- **DELIBERATE DEVIATION from the determinism law (owner's decision, kept — record, do not copy):** src/bridge/telegram.ts arms a real-timer `AbortSignal.timeout(HTTP_TIMEOUT_MS)` (60 s) on every Telegram HTTP call — the one `setTimeout`-class device in module code. It is a host-network backstop: a getUpdates socket that never answers would otherwise hang the poll loop forever; 60 s sits far above the 25 s long-poll. Hermetic tests never take this path (FakeChannel); this pattern is forbidden everywhere else.

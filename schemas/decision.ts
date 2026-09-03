@@ -60,6 +60,8 @@ export const SpawnRecord = z.object({
 export type SpawnRecord = z.infer<typeof SpawnRecord>;
 
 export const DecisionObject = z.object({
+  /** Provenance (Phase 1): 'model' | 'gate' | 'failure'. Optional here so pre-Phase-1 fixtures still validate. */
+  decidedBy: z.enum(['model', 'gate', 'failure']).optional(),
   turnId: z.string().min(1),
   plan: z.enum(['reply', 'silent', 'defer']),
   /** The only text that can reach the channel. Empty unless plan === 'reply'. */

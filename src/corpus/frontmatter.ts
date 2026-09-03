@@ -61,6 +61,20 @@ export const splitExemplarFile = (raw: string, file?: string): SplitExemplarFile
   return { frontmatterText: match[1] ?? '', body: text.slice(match[0].length) };
 };
 
+/**
+ * Body-only view of a canon file that is NOT an exemplar but carries exemplar
+ * furniture — today that is exactly one file: corpus/canon/identity.md, whose
+ * `---`-fenced frontmatter (id/role/note) is repo metadata, never prompt text.
+ * Strips a leading frontmatter block and returns what follows (leading blank
+ * lines trimmed so the [IDENTITY] section starts on content); text without
+ * fences is returned as-is. Never throws — a fenceless identity is all body.
+ */
+export const identityBody = (raw: string): string => {
+  const text = raw.replace(/\r\n/g, '\n');
+  const match = /^---\n[\s\S]*?\n---(?:\n|$)/.exec(text);
+  return (match === null ? text : text.slice(match[0].length)).replace(/^\n+/, '');
+};
+
 export interface CanonParse {
   frontmatter: CanonFrontmatterT;
   body: string;

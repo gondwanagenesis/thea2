@@ -22,6 +22,12 @@ EnvironmentFile=/etc/thea2/keys.env
 ExecStart=/opt/thea2/bin/thead
 Restart=on-failure
 RestartSec=5s
+# The tsx wrapper relays SIGTERM and exits 143 while main.ts drains and exits
+# 0 underneath it; without this a clean stop is logged as a failure.
+SuccessExitStatus=143
+# Drain budget: an in-flight turn (model call + ≤45 s realizer pacing) settles
+# before the process goes — a half-said reply is worse than a late one.
+TimeoutStopSec=120
 
 # Start only when S5★ has landed — before that bin/thead fails loudly by design
 # (no silent stubs, AGENTS rule 5). `systemctl start` before then is the operator's

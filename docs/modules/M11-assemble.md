@@ -1,7 +1,7 @@
 ---
 module: M11
 name: assemble
-syncedTo: S4 (implemented; src/assemble + test/assemble, 67 tests green)
+syncedTo: S8 (contrast placement/label, register-strictness dial — 2026-09-02)
 stage: S4
 depends: [M01-kernel, M04-embed, M06-coupling, M07-corpus, M09-memory]
 ---
@@ -117,6 +117,10 @@ Layout: `src/assemble/{types,errors,score,rules,quota,coherence,budget,render,as
 - Layer inventory is five scanners (forbidden-pairs, dimension-caps, register-tags, signature-spread, embedding-sanity) under the spec's "three layers" — the spec's layer 1 was three separate rules; splitting them makes each swap rule individually pinnable. Round accounting is unchanged (≤3).
 - `dimensionCaps` defaults ship in code, mirrored from the committed `exclusions.yaml`; `assembleConfigFromControls` wires loaded controls so a yaml edit is not silently outrun.
 - KNOWN, upstream: the committed `coupling.yaml` quiet rules have θ = −0.4, so at flat affect a quiet-tagged candidate takes modulation **+0.072 exactly** ((0.10+0.08)·0.4). The "neutral affect ⇒ exactly 0" law holds for θ ≥ 0 documents; a θ ≥ 0 filter is tested byte-identical to no coupling.
+- **As built (Package E, 2026-09-02)**:
+  - **Contrast placement + label** (`render.ts`): the contrast slot renders BEFORE the episode-memory exemplars — `[disposition, pattern, contrast, episodes]` — under the one-word label `elsewhere:` on its own line above the item (`CONTRAST_LABEL`). The foreign body lands mid-packet, named, where it can still bend generation. `record().slots` follows the rendered order.
+  - **Register strictness dial** (`quota.ts`): `mode_exclusive` itself lives in `rules.ts` (`modeCompatible`, not quota-owned), so the `strict?: boolean` config flag and its consumption land in `quota.ts` (`FillConfig = AssembleConfig & RegisterStrictness`). Default (`strict !== false`) keeps the shipped exclusion law; `strict: false` admits out-of-register candidates at a fill-time penalty — a total order (register-compatible first, then score desc, id asc) that never rewrites `baseScore`. Round 3 owns: promoting the flag into `AssembleConfig`/`DEFAULT_ASSEMBLE_CONFIG` (`types.ts`) and deciding whether the penalty becomes a graded score term in `score.ts`.
+  - Exemplar items render through M07's frame (`situation: <context>` above each body — see M07), so the byte-exact golden in `test/assemble/assemble.test.ts` was deliberately updated (frame lines + contrast placed before episodes).
 
 ## Not this module's job
 - Affect state, weather-line computation — M05-affect.

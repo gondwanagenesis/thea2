@@ -4,8 +4,17 @@
 // config, because they are spec-pinned behavior rather than tuning knobs.
 
 export interface LifeConfig {
-  /** Quiet hours as a [start, end) pair of UTC hours; wraps midnight. */
+  /** Quiet hours as a [start, end) pair of LOCAL hours in `timeZone`; wraps midnight. */
   quietHours: [number, number];
+  /**
+   * The IANA zone his day runs in (quiet hours + the daily cap's midnight).
+   * Default 'UTC' keeps every existing fixture byte-identical; prod sets
+   * Europe/Madrid via thea2.config.yaml. Validated by M20's config loader.
+   * The reflect cadence stays on M16's UTC grid (reflectUtcMinute) — the
+   * scheduler is DST-agnostic by construction, and 03:00 UTC is inside quiet
+   * hours in Madrid either way.
+   */
+  timeZone: string;
   /** Heartbeat period (spec: 30 min, catchUp 'skip'). */
   heartbeatEveryMs: number;
   /** Ponder period (spec: 20 min, catchUp 'skip'). */
@@ -39,7 +48,8 @@ export interface LifeConfig {
 const MIN = 60_000;
 
 export const LIFE_CONFIG_DEFAULTS: LifeConfig = {
-  quietHours: [23, 8], // PROPOSED: he is asleep 23:00–08:00 UTC; see Build deltas
+  quietHours: [23, 8], // PROPOSED: he is asleep 23:00–08:00 local; see Build deltas
+  timeZone: 'UTC',
   heartbeatEveryMs: 30 * MIN,
   ponderEveryMs: 20 * MIN,
   jitterPct: 10,

@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import type { AffectState } from '../affect/index.js';
 import type { EventLog } from '../events/index.js';
-import type { Episode } from '../memory/index.js';
+import type { Episode, ThreadIndex } from '../memory/index.js';
 import type { ChatMsg, ModelClient } from '../model/index.js';
 import { LIFE_INCIDENT, HeartbeatThoughtPayload, emitLife, HEARTBEAT_THOUGHT_EVENT } from './events.js';
 import { HEARTBEAT_KINDS, HEARTBEAT_THRESHOLD, scoreThought, type HeartbeatCriteria } from './policy.js';
@@ -81,6 +81,26 @@ export interface HeartbeatThoughtContext {
   /** Due follow-up thread ids he is owed (from M09's thread index, injected). */
   dueThreads: ReadonlyArray<{ id: string; note: string }>;
 }
+
+/**
+ * How many due threads the private monologue sees, at most — the follow-ups
+ * block must stay a nudge, not a chore list (the due list is id-ordered, so the
+ * cap's cut is deterministic).
+ */
+export const DUE_THREADS_CAP = 3;
+
+/**
+ * The dueThreads consumer for the heartbeat thought context (round 2): M09's
+ * thread fold → the `{id, note}` rows the prompt renders. The note is the
+ * thread's last appraisal title — what he actually said he would do — falling
+ * back to the id when the fold never saw a title. The job body calls this at
+ * fire time: `dueThreads: dueThreadNotes(threads, ctx.clock.epochMs())`.
+ */
+export const dueThreadNotes = (threads: ThreadIndex, now: number): Array<{ id: string; note: string }> =>
+  threads
+    .dueThreads(now)
+    .slice(0, DUE_THREADS_CAP)
+    .map((t) => ({ id: t.id, note: t.title ?? t.id }));
 
 const criteriaLine =
   'Score it 1-5 on exactly these five criteria: relevance (is this about something live between you), ' +

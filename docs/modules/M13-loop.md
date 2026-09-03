@@ -1,7 +1,7 @@
 ---
 module: M13
 name: loop
-syncedTo: src/loop @ S4 (code landed; see Build deltas)
+syncedTo: Phase 1 as-built (2026-09-02; code landed S4 — see Build deltas; assessMaxTokens 3072, forced-decide toolChoice)
 stage: S4
 depends: [M01-kernel, M02-events, M03-model, M09-memory, M12-inhibit]
 ---
@@ -125,3 +125,8 @@ export const runLoop: (entry: LoopEntry, deps: LoopDeps) => Promise<DecisionObje
 - unit: registry behavior (schema validation, unknown tool), cap math, message-array builder for both inhibitionPlacement modes, composition rule per spawn kind, decision zod schema.
 - component: scripted MockModel conversations — 0/1/n hops; malformed decision -> repair -> silent fallback; gate-rejection re-entry to the cap; committee DAG execution incl. a ponder-shaped spec; timeout injection via TestClock.
 - fixtures needed: MockModel scripts (FIFO + rule-based), a stub `assemble` returning canned Packets (both channel masks), fake tools including a deliberately wedged one, CommitteeSpec fixtures with and without `requiresObservation`.
+
+## As built (Phase 1)
+
+- **`assessMaxTokens` 2048 → 3072** (config.ts, starvation family): a thinking model draws its invisible reasoning trace from the same max_tokens budget, and a 2048 cap let the trace burn the whole call before any visible content — starved ⇒ empty reply ⇒ parse failure ⇒ repair ⇒ often failure silence.
+- **`assess` forces the decision** (turn.ts): when the offered defs are EXACTLY `[decide]`, the call carries `toolChoice:{name:'decide'}` (mapped per protocol by M03); any wider set (decide + registry tools, workers) leaves it unset. This covers the fail-open branch's final `[decideToolDef]` call in loop.ts without touching that file, and any tool-less registry's main assess. Tests: test/model/toolchoice.test.ts.

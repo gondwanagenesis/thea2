@@ -16,7 +16,7 @@ import { atomicWriteText } from '../kernel/index.js';
 import type { Job, JobCtx } from '../sched/index.js';
 import type { RoutingTable } from '../model/index.js';
 import type { LedgerAggregate, RoutingProposal, SiblingDeps, SiblingRunCtx } from './types.js';
-import { LEDGER_JOB_NAME, LEDGER_TIMEOUT_MS, LEDGER_UTC_MINUTE, LEDGER_WINDOW_MS, runCtx } from './types.js';
+import { LEDGER_JOB_NAME, LEDGER_TIMEOUT_MS, LEDGER_UTC_MINUTE, LEDGER_WINDOW_MS, SIBLING_REPORT_EVENT, runCtx } from './types.js';
 import { aggregateWindow, type WindowStats } from './aggregate.js';
 import { applyRouting, proposeRouting, readRoutingTable } from './routing.js';
 import { loadPersonaSeed } from './persona.js';
@@ -30,10 +30,23 @@ const lostReplyShape = z.object({ updateId: z.number(), chatId: z.number(), ageM
 const gateLoopShape = z.object({ ruleIds: z.array(z.string()), reentries: z.number() });
 const schedAlarmShape = z.object({ job: z.string() });
 const gravityShape = z.object({ alarms: z.array(z.string()) });
+/** M13's decision.locked row (loop.ts): the provenance reconcile reads. */
+const decisionLockedShape = z.object({
+  turnId: z.string(),
+  plan: z.string(),
+  decidedBy: z.string().optional(),
+});
 
 export interface LedgerTruths {
   lostReplies: number;
   lostReplyMaxAgeMs: number;
+  /**
+   * Turns the loop FORCED silent by failing (`decidedBy: 'failure'` on a
+   * `decision.locked` plan-silent row). Reconcile does not accept these as
+   * terminations — the inbound stays owed — so the report counts them beside
+   * the lost replies: a spike here is the loop dying mid-turn, not restraint.
+   */
+  failureSilences: number;
   gateLoops: number;
   gateLoopReentries: number;
   gateRules: Array<{ key: string; count: number }>;
@@ -69,6 +82,7 @@ const foldTruths = async (
   const gateRuleIds: string[] = [];
   let gateLoops = 0;
   let gateLoopReentries = 0;
+  let failureSilences = 0;
   const schedAlarmJobNames: string[] = [];
   const gravityAlarmNames: string[] = [];
   let consolidateAlarms = 0;
@@ -86,6 +100,11 @@ const foldTruths = async (
         gateLoopReentries += p.data.reentries;
         gateRuleIds.push(...p.data.ruleIds);
       }
+    } else if (ev.kind === 'decision.locked') {
+      // Only FAILURE silences count — her own decided silences are restraint,
+      // not an operational truth (the same rule reconcile applies).
+      const p = decisionLockedShape.safeParse(ev.payload);
+      if (p.success && p.data.plan === 'silent' && p.data.decidedBy === 'failure') failureSilences += 1;
     } else if (ev.kind === 'sched.alarm') {
       const p = schedAlarmShape.safeParse(ev.payload);
       if (p.success) schedAlarmJobNames.push(p.data.job);
@@ -121,6 +140,7 @@ const foldTruths = async (
   return {
     lostReplies: lostReplyAges.length,
     lostReplyMaxAgeMs: lostReplyAges.length > 0 ? Math.max(...lostReplyAges) : 0,
+    failureSilences,
     gateLoops,
     gateLoopReentries,
     gateRules: countBy(gateRuleIds),
@@ -193,6 +213,11 @@ export const renderLedgerBody = (data: LedgerReportData): string => {
     t.lostReplies > 0
       ? `- lost replies: ${t.lostReplies} (oldest ${minutes(t.lostReplyMaxAgeMs)})`
       : '- lost replies: 0',
+  );
+  L.push(
+    t.failureSilences > 0
+      ? `- failure silences: ${t.failureSilences} — decided silent by failure, still owed`
+      : '- failure silences: 0',
   );
   L.push(
     t.gateLoops > 0
@@ -381,6 +406,7 @@ export const runLedgerReport = async (
     costUsd: stats.costUsd,
     parseFailures: stats.aggs.reduce((acc, a) => acc + a.parseFailures, 0) + stats.parseFailuresUnattributed,
     lostReplies: truths.lostReplies,
+    failureSilences: truths.failureSilences,
     gateLoops: truths.gateLoops,
     schedAlarms: truths.schedAlarms,
     gravityAlarms: truths.gravityAlarms.reduce((acc, a) => acc + a.count, 0),
@@ -390,6 +416,18 @@ export const runLedgerReport = async (
       refused: refused.map((r) => r.taskClass),
       changed: applied.changed,
     },
+  });
+
+  // The delivery seam (round 2): the report is on disk and summarized on L0;
+  // round 3's channel deliverer consumes `sibling.report` rows.
+  await c.events.emit(SIBLING_REPORT_EVENT, {
+    sibling: 'ledger',
+    file,
+    date: data.date,
+    summary:
+      `lost replies ${truths.lostReplies} · failure silences ${truths.failureSilences} · ` +
+      `sched alarms ${truths.schedAlarms} · gravity alarms ${truths.gravityAlarms.reduce((acc, a) => acc + a.count, 0)} · ` +
+      `incidents ${truths.incidents.reduce((acc, i) => acc + i.count, 0)} · ${usd(stats.costUsd)}`,
   });
 
   return {

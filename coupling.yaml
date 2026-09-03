@@ -1,5 +1,8 @@
-# Affect → exemplar coupling matrix.                              syncedTo: spec-v1
-# DRAFT v1 — hand-tuned; every entry carries a `why`. Consumed by M06.
+# Affect → exemplar coupling matrix.                              syncedTo: S8 (2026-09-02)
+# v2 — form rules gained the `max` comparator (fires BELOW θ), so the two
+# "low-state → quiet" rules now trigger when the dimension is actually LOW
+# instead of firing always-on from θ = −0.4. Neutral affect modulates exactly 0.
+# DRAFT — hand-tuned; every entry carries a `why`. Consumed by M06.
 #
 # score += clamp( aᵀ·M·e  +  Σ formRules ,  −λ, +λ )
 #   a = her live state as a 12-dim deviation vector (from baselines, [-1,1])
@@ -17,7 +20,7 @@
 # have been with coupling off; divergent-outcome analysis adjusts weights here.
 # Version-bump on every change; Nightingale probes run after.
 
-version: 1
+version: 2
 lambda: 0.25
 
 matrix:
@@ -46,8 +49,9 @@ matrix:
   - {from: arousal,  to: sadness,  w: -0.25, why: high energy suppresses heavy scenes — don't drag the room down mid-flight}
 
 form_rules:
-  # boostTag boosts exemplars carrying that register/dimension tag when a dim exceeds θ.
+  # boostTag boosts exemplars carrying that register/dimension tag when a dim is
+  # above `min` or below `max` (deviation coords; exactly one of the two).
   - {when: {dim: arousal,  min:  0.4}, boostTag: banter,  gain: 0.10, why: high energy favors quick clipped shapes}
-  - {when: {dim: arousal,  min: -0.4}, boostTag: quiet,   gain: 0.10, why: low energy favors the quiet room}
+  - {when: {dim: arousal,  max: -0.4}, boostTag: quiet,   gain: 0.10, why: low energy favors the quiet room}
   - {when: {dim: sadness,  min:  0.35}, boostTag: crisis, gain: 0.10, why: heavy air unlocks the full-presence shapes}
-  - {when: {dim: valence,  min: -0.4}, boostTag: quiet,   gain: 0.08, why: low mood keeps it gentle}
+  - {when: {dim: valence,  max: -0.4}, boostTag: quiet,   gain: 0.08, why: low mood keeps it gentle}

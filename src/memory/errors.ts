@@ -14,7 +14,8 @@ export type MemoryErrorCode =
   | 'memory/index-orphan' // the vector index holds ids the row log does not
   | 'memory/window-role' // a non user/assistant message tried to enter the window
   | 'memory/window-corrupt' // persisted window state is unusable
-  | 'memory/window-not-booted'; // sync window read before the load landed
+  | 'memory/window-not-booted' // sync window read before the load landed
+  | 'memory/threads-log'; // the durable thread log could not be appended
 
 export class MemoryError extends KernelErrorImpl {
   constructor(code: MemoryErrorCode, message: string, cause?: unknown) {

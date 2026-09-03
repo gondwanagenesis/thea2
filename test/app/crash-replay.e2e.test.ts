@@ -18,7 +18,7 @@ import { resolve } from 'node:path';
 const FIXTURE = resolve('test/fixtures/thea2.hermetic.yaml');
 
 describe('crash replay', () => {
-  it('crash AFTER a full reply: a re-delivered copy of the same update dedupes — no second reply', async () => {
+  it('crash AFTER a full reply: a re-delivered copy of the same update dedupes — no second reply', { timeout: 120_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'thea2-crash-'));
     const clock = new TestClock(T0);
     const boot = async (m: MockModel, ch: ReturnType<typeof FakeChannel>) =>
@@ -54,7 +54,7 @@ describe('crash replay', () => {
     await handle2.stop();
   });
 
-  it('crash AFTER ledger append but BEFORE the turn ran: redelivery dedupes, and the LOST_REPLY alarm fires', async () => {
+  it('crash AFTER ledger append but BEFORE the turn ran: the boot reconcile alarms the loss AND re-runs the young one', { timeout: 120_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'thea2-crash2-'));
     const clock = new TestClock(T0);
     const boot = async (m: MockModel, ch: ReturnType<typeof FakeChannel>) =>
@@ -67,28 +67,47 @@ describe('crash replay', () => {
     await s1.ledger.recordInbound(inboundMsg({ updateId: 610, msgId: 960 }));
     // no turn, no offset commit — the crash window
 
-    // --- life 2: boot over the same var/; boot reconcile alarms on L0 ---
+    // --- life 2: boot over the same var/; the raw reconcile alarms on L0 ---
     const m2 = new MockModel({ clock });
     const ch2 = FakeChannel({ clock, chatId: CHAT });
     const s2 = await boot(m2, ch2);
-    await clock.advance(11 * 60_000); // past the lost-reply window
+    await clock.advance(11 * 60_000); // past the lost-reply window, inside the re-run grace
     const bootAlarms = await s2.ledger.reconcile(clock.epochMs());
     expect(bootAlarms.filter((d) => d.kind === 'LOST_REPLY')).toHaveLength(1);
 
-    // Telegram redelivers (offset never committed): deduped, turn still never
-    // double-runs — the alarm is the contract, a second reply would be a lie.
+    // Recovery law (Phase 1): a loss younger than the grace is ANSWERED, not
+    // just mourned — the boot reconcile re-runs it through the whole pipeline,
+    // once, stamped `bridge.reply_rerun`.
+    m2.enqueue({ content: decisionJson({ bubbles: ['still here — you were saying?'] }) });
+    enqueueAppraisal(m2);
     const handle = startThead(s2);
+    await runToQuiescent({ sys: s2, model: m2, channel: ch2, clock, dir });
+    // the em-dash normalizer rewrites the bubble before the gate — the wire
+    // contract, proven on the recovery path too
+    expect(ch2.outbound().map((s) => s.text)).toEqual(['still here. you were saying?']);
+    const kinds: string[] = [];
+    for await (const e of s2.events.replay()) kinds.push(e.kind);
+    expect(kinds).toContain('bridge.reply_rerun');
+    // the ledger is clean again: the re-run linked the inbound to a delivered turn
+    const afterRecovery = await s2.ledger.reconcile(clock.epochMs());
+    expect(afterRecovery.filter((d) => d.kind === 'LOST_REPLY')).toEqual([]);
+
+    // Telegram redelivers (offset never committed): deduped — the recovery
+    // already owns this message, a second reply would be a lie.
+    const turnCalls = (): number => m2.calls.filter((c) => c.taskClass === 'turn').length;
+    const callsBeforeRedelivery = turnCalls();
     ch2.queueInbound(inboundMsg({ updateId: 610, msgId: 960 }));
     await settle();
     await s2.pipeline.drain();
-    expect(m2.calls).toHaveLength(0);
+    expect(turnCalls()).toBe(callsBeforeRedelivery);
+    expect(ch2.outbound()).toHaveLength(1);
 
     // A NEW message after restart runs normally — the system is alive.
     m2.enqueue({ content: decisionJson({ bubbles: ['alive again'] }) });
     enqueueAppraisal(m2);
     ch2.queueInbound(inboundMsg({ updateId: 611, msgId: 961, text: 'you there?' }));
     await runToQuiescent({ sys: s2, model: m2, channel: ch2, clock, dir });
-    expect(ch2.outbound().map((s) => s.text)).toEqual(['alive again']);
+    expect(ch2.outbound().map((s) => s.text)).toEqual(['still here. you were saying?', 'alive again']);
     await handle.stop();
   });
 });

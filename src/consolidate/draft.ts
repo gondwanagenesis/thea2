@@ -99,8 +99,8 @@ export const renderLivedDraft = (meta: LivedDraftMeta, body: string): string => 
  * caught at write time"). Takes a freshly rendered draft — id still at the
  * pending placeholder — stamps the real content id first, and validates THE
  * STAMPED text against the lived schema INCLUDING id discipline, under a
- * synthetic corpus/lived path so the same check would fire for a file the human
- * later moves into lived/ by hand. Validating the unstamped render would be a
+ * synthetic lived path so the same check would fire for a file the human
+ * later moves into the corpus by hand. Validating the unstamped render would be a
  * contradiction: analyzeFile enforces id == masked content hash, and a
  * placeholder id can never satisfy that. Any id line OTHER than the placeholder
  * is validated as-is — a tampered id must fail the gate, never be silently
@@ -110,7 +110,7 @@ export const validateLived = (text: string): void => {
   const id = derivedFileId(text);
   const declared = /^id:[ \t]*([^\n]*)$/m.exec(text)?.[1]?.trim();
   const stamped = declared === DERIVED_ID_PLACEHOLDER ? withFileId(text, id) : text;
-  const path = `corpus/lived/${fileBaseName(id)}.md`;
+  const path = `var/lived/${fileBaseName(id)}.md`;
   const analysis = analyzeFile({ path, raw: stamped }, 'lived');
   const first = analysis.issues.find((i) => i.severity === 'error');
   if (first !== undefined) {

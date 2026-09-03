@@ -15,10 +15,13 @@
 // state, never a crash.
 //
 // Deliberate non-duplications (the thought call and the committee own their
-// events): thinkHeartbeatThought already emits `life.heartbeat.thought` (its
-// payload's `passed` field IS the fired/not-fired bit) and its own
-// `incident.life_failed` on a parse or transport failure — the job adds the
-// `life.heartbeat.pre` verdict and the selfEntry, not a second copy.
+// events): `life.heartbeat.thought` is emitted by thinkHeartbeatThought, but the
+// job holds the row until the fire's OUTCOME is known and lands it once,
+// augmented with `sent` (Phase 1, 2026-09-02: passed:true + sent:false is the
+// log's answer to "the thought passed — why didn't she text?"). Its
+// `life.heartbeat.sent` additive row is the job's alone (a heartbeat entry
+// actually reached the channel), and the job adds the `life.heartbeat.pre`
+// verdict and the selfEntry, not a second copy of either.
 
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
@@ -33,6 +36,9 @@ import type { Job, JobCtx } from '../sched/index.js';
 import {
   HEARTBEAT_PRE_EVENT,
   HeartbeatPrePayload,
+  HEARTBEAT_SENT_EVENT,
+  HeartbeatSentPayload,
+  HEARTBEAT_THOUGHT_EVENT,
   LIFE_INCIDENT,
   LifeIncidentPayload,
   PONDER_ARTIFACT_EVENT,
@@ -57,7 +63,8 @@ import {
   ponderGate,
   ponderScore,
   silencePressure,
-  utcHourOfDay,
+  localDateOf,
+  localHourOfDay,
   type PonderAbout,
 } from './policy.js';
 import {
@@ -76,7 +83,12 @@ import { thinkHeartbeatThought, type HeartbeatThoughtContext } from './thought.j
 export interface LifeJobDeps {
   model: ModelClient;
   events: EventLog;
-  /** Read-only: jobs call current()/weather() and never mutate the store. */
+  /**
+   * Read-only in the single-writer sense: jobs never apply events. They DO call
+   * `snapshot()` before reading — it only advances the decay engine to now and
+   * persists (no semantic write; M05's ticker stays the only dial writer), so a
+   * heartbeat sees the drives as they are, not as they were after the last turn.
+   */
   affect: AffectStore;
   episodes: EpisodeStore;
   cfg: LifeConfig;
@@ -84,8 +96,20 @@ export interface LifeJobDeps {
   interactiveMutex: () => boolean;
   /** Epoch ms of Diego's last inbound message, or undefined if none. */
   lastInboundTs: () => number | undefined;
-  /** Enqueue a self-initiated turn; returns its turnId. Fire-and-forget: the pipeline owns realization. */
-  selfEntry: (kind: 'heartbeat' | 'ponder', goal: string) => string;
+  /**
+   * How many of his inbound messages reconcile currently reports as LOST_REPLY
+   * (compose closes over the ledger). While > 0 the heartbeat refuses to text
+   * about anything else and ponder stands down — a question of his comes
+   * first, and M20's reconcile job is re-running it.
+   */
+  owedInbound: () => Promise<number>;
+  /**
+   * Enqueue a self-initiated turn; the handle carries its turnId and the
+   * heartbeat-outcome hook. Fire-and-forget for ponder; the heartbeat AWAITS
+   * `sent` (Phase 1, 2026-09-02): sentToday/unanswered move only when the
+   * turn's realization actually delivered ≥ 1 bubble — never at enqueue time.
+   */
+  selfEntry: (kind: 'heartbeat' | 'ponder', goal: string) => SelfEntryHandle;
   /** Directory for the jobs' persisted state (files var/life/*.json). */
   stateDir: string;
   /**
@@ -103,6 +127,32 @@ export interface LifeJobDeps {
    * and this module never imports consolidate (the DAG stays a DAG).
    */
   reflect: (kind: 'nightly' | 'weekly') => Promise<ReflectOutcome>;
+  /**
+   * The durable thread index (Round 3), structurally mirrored - the heartbeat
+   * reads its due list, ponder files her `next` into it. Optional for the same
+   * reason the pipeline's is: hermetic tests that never touch threads omit it.
+   */
+  threads?:
+    | {
+        apply(
+          updates: readonly { id: string; title?: string | undefined; status: 'open' | 'touched' | 'closed' }[],
+          ts: number,
+        ): void;
+        dueThreads(now: number): Array<{ id: string; title?: string | undefined; status: 'open' | 'touched' | 'closed' }>;
+      }
+    | undefined;
+}
+
+/**
+ * The pipeline's self-entry handle, mirrored structurally (life cannot import
+ * app — the DAG runs one way; the same device as the Vec12 mirror below).
+ * `sent` settles exactly once with the number of bubbles the turn delivered:
+ * 0 on an in-loop silent/defer, an aborted send, or a dead turn — the pipeline
+ * settles every exit path, so awaiting it cannot hang.
+ */
+export interface SelfEntryHandle {
+  turnId: string;
+  sent: Promise<number>;
 }
 
 /** The verdict vocabulary of `life.reflected`. 'absent' = the run had nothing
@@ -140,7 +190,7 @@ const incident = async (events: EventLog, job: string, stage: string, error: str
 
 export interface HeartbeatJobState {
   version: 1;
-  /** UTC date the sentToday census belongs to (YYYY-MM-DD). */
+  /** LOCAL (cfg.timeZone) date the sentToday census belongs to (YYYY-MM-DD). */
   date: string;
   sentToday: number;
   lastSentTs?: number | undefined;
@@ -185,13 +235,51 @@ const readHeartbeatState = async (filePath: string, today: string): Promise<Hear
 const heartbeatGoal = (t: { thought: string; reason: string; kind: string }): string =>
   `[heartbeat:${t.kind}] ${t.thought} — ${t.reason}`;
 
+/**
+ * Holds the `life.heartbeat.thought` row until the fire's OUTCOME is known, then
+ * lands it exactly once — augmented with `sent` when an outcome was awaited
+ * (passed:true + sent:false is the log's answer to "the thought passed, so why
+ * didn't she text?": an in-loop silence, not a decision to speak). Every other
+ * kind the thought call emits (its own incident on failure) forwards untouched,
+ * and a fire that exits without landing still lands the row verbatim — the why
+ * is never lost.
+ */
+const gateThoughtRow = (events: EventLog): { log: EventLog; land: (sent?: boolean) => Promise<void> } => {
+  let held: { payload: unknown; turnId?: string } | null = null;
+  const land = async (sent?: boolean): Promise<void> => {
+    if (held === null) return;
+    const row = held;
+    held = null;
+    // The payload is the thought call's already-validated payload plus one
+    // boolean. `sent` rides a raw emit because HeartbeatThoughtPayload's wall
+    // (events.ts, outside this package's Phase-1 surface) would strip an
+    // unknown key instead of landing it.
+    const payload =
+      sent === undefined ? row.payload : { ...(row.payload as Record<string, unknown>), sent };
+    await events.emit(HEARTBEAT_THOUGHT_EVENT, payload, row.turnId);
+  };
+  return {
+    log: {
+      emit: async (kind, payload, turnId) => {
+        if (kind === HEARTBEAT_THOUGHT_EVENT && held === null && payload !== null && typeof payload === 'object') {
+          held = { payload, ...(turnId !== undefined ? { turnId } : {}) };
+          return;
+        }
+        await events.emit(kind, payload, turnId);
+      },
+      replay: (filter) => events.replay(filter),
+    },
+    land,
+  };
+};
+
 const runHeartbeat = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
   const now = ctx.clock.epochMs();
-  const today = ctx.clock.now().toISOString().slice(0, 10);
+  const today = localDateOf(now, deps.cfg.timeZone);
   const statePath = path.join(deps.stateDir, 'heartbeat.json');
 
   let state = await readHeartbeatState(statePath, today);
-  // A new UTC day resets the daily cap.
+  // A new LOCAL day resets the daily cap — his midnight, not Greenwich's.
   if (state.date !== today) state = { ...state, date: today, sentToday: 0 };
   // He replied since her last text — the no-reply backoff debt is paid.
   const inbound = deps.lastInboundTs();
@@ -199,11 +287,13 @@ const runHeartbeat = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
     state = { ...state, unanswered: 0 };
   }
 
-  const nowH = utcHourOfDay(now);
+  const nowH = localHourOfDay(now, deps.cfg.timeZone);
   const lastUnansweredAgeH =
     state.lastUnansweredTs !== undefined ? Math.max(0, (now - state.lastUnansweredTs) / HOUR) : 0;
   const mutexActive = deps.interactiveMutex();
+  const owedInbound = await deps.owedInbound();
   const pre = heartbeatPrecondition({
+    owedInbound,
     nowH,
     quietHours: deps.cfg.quietHours,
     sentToday: state.sentToday,
@@ -215,6 +305,7 @@ const runHeartbeat = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
     nowH,
     canText: pre.canText,
     reason: pre.reason,
+    owedInbound,
     sentToday: state.sentToday,
     unanswered: state.unanswered,
     lastUnansweredAgeH,
@@ -224,6 +315,9 @@ const runHeartbeat = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
 
   // The gate is open: build the private monologue's inputs and make the call.
   const silenceH = inbound !== undefined ? (now - inbound) / HOUR : NEVER_SILENCE_H;
+  // Tick decay to now before reading: current() alone hands back the state as
+  // of the last write, which after a quiet afternoon is hours stale.
+  await deps.affect.snapshot();
   const affect = deps.affect.current();
   const pressure = silencePressure(silenceH, affect.drives);
   const recent = deps.episodes.recent(deps.cfg.contextEpisodes).map((e) => ({
@@ -239,33 +333,72 @@ const runHeartbeat = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
     weather: deps.affect.weather(),
     drives: affect.drives,
     recent,
-    dueThreads: [], // v1: the thread index is not wired to the jobs yet
+    // Standing intent (Round 3): open threads older than the due window come
+    // back here, unbidden - the whole point of the index.
+    dueThreads:
+      deps.threads !== undefined
+        ? deps.threads.dueThreads(now).map((t) => ({ id: t.id, note: t.title ?? t.id }))
+        : [],
   };
+  const gate = gateThoughtRow(ctx.events);
   const outcome = await thinkHeartbeatThought(thoughtCtx, pressure, {
     model: deps.model,
-    events: ctx.events,
+    events: gate.log,
     maxTokens: deps.cfg.thoughtMaxTokens,
     temperature: deps.cfg.thoughtTemperature,
     tier: deps.cfg.thoughtTier,
   });
   // A failed thought already landed its own incident (stage 'thought'); the
   // counters stay untouched and the slot ends quietly — not with a second copy.
-  if (!outcome.ok) return;
-
-  if (outcome.score >= HEARTBEAT_THRESHOLD) {
-    deps.selfEntry('heartbeat', heartbeatGoal(outcome.thought));
-    const next: HeartbeatJobState = {
-      version: 1,
-      date: today,
-      sentToday: state.sentToday + 1,
-      lastSentTs: now,
-      unanswered: state.unanswered + 1,
-      lastUnansweredTs: now,
-    };
-    await atomicWriteJson(statePath, next);
+  if (!outcome.ok) {
+    await gate.land(); // nothing can be held here; a no-op, kept as the structural guarantee
+    return;
   }
-  // Sub-threshold: the thought call already kept the thought as data
-  // (life.heartbeat.thought with passed:false) — nothing is sent, nothing owed.
+
+  // Every path below lands the held thought row exactly once; the finally
+  // covers an unexpected exit by landing it verbatim (outcome unknown).
+  let landed = false;
+  const landOnce = async (sent?: boolean): Promise<void> => {
+    if (landed) return;
+    landed = true;
+    await gate.land(sent);
+  };
+  try {
+    if (outcome.score >= HEARTBEAT_THRESHOLD) {
+      const entry = deps.selfEntry('heartbeat', heartbeatGoal(outcome.thought));
+      // Phase 1: the counters move on the OUTCOME, not the enqueue. An in-loop
+      // silent/defer spends neither the daily cap nor the backoff ladder — the
+      // pipeline settles every exit (0 = nothing sent), so this await ends.
+      const sent = await entry.sent;
+      await landOnce(sent > 0);
+      if (sent > 0) {
+        await emitLife(
+          ctx.events,
+          HEARTBEAT_SENT_EVENT,
+          HeartbeatSentPayload,
+          { turnId: entry.turnId, kind: outcome.thought.kind, bubbles: sent },
+          entry.turnId,
+        );
+        const next: HeartbeatJobState = {
+          version: 1,
+          date: today,
+          sentToday: state.sentToday + 1,
+          lastSentTs: now,
+          unanswered: state.unanswered + 1,
+          lastUnansweredTs: now,
+        };
+        await atomicWriteJson(statePath, next);
+      }
+      // sent === 0: the thought row above landed {passed:true, sent:false} and
+      // the counters stay as they were — the fire is fully accounted for.
+    } else {
+      // Sub-threshold: the thought call already kept the thought as data
+      // (life.heartbeat.thought with passed:false) — nothing is sent, nothing owed.
+      await landOnce();
+    }
+  } finally {
+    await landOnce();
+  }
 };
 
 export const heartbeatJob = (deps: LifeJobDeps): Job => ({
@@ -356,7 +489,17 @@ const runPonder = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
   const statePath = path.join(deps.stateDir, 'ponder.json');
   const state = await readPonderState(statePath);
 
-  // The gate is a mood computed from state — pure, no model call in it.
+  // A question of his is owed (reconcile says LOST_REPLY): pondering stands
+  // down until it is answered — the same precondition the heartbeat holds.
+  const owed = await deps.owedInbound();
+  if (owed > 0) {
+    await emitLife(ctx.events, PONDER_SKIPPED_EVENT, PonderSkippedPayload, { reason: 'owed', detail: String(owed) });
+    return;
+  }
+
+  // The gate is a mood computed from state — pure, no model call in it. The
+  // snapshot ticks decay to now first (see LifeJobDeps.affect).
+  await deps.affect.snapshot();
   const affect = deps.affect.current();
   const novelty = affect.drives['novelty'];
   const arousal = affect.dials['arousal'];
@@ -473,9 +616,14 @@ const runPonder = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
       (artifact.data.next === '' ? '' : ` next: ${artifact.data.next}`),
     importance: importanceOf(artifact.data.saliency),
     emotions: [], // no appraisal ran — a ponder is not a turn, and no emotion is invented for it
-    threads: [],
+    threads: artifact.data.next === '' ? [] : ['ponder'],
     affectAtEncoding: Array.from(deps.vec12()),
   });
+  // Her own `next` is a standing intent (Round 3): filed so the heartbeat
+  // can follow up unbidden. One id on purpose - a new ponder re-arms it.
+  if (artifact.data.next !== '' && deps.threads !== undefined) {
+    deps.threads.apply([{ id: 'ponder', title: artifact.data.next, status: 'open' }], now);
+  }
   await atomicWriteJson(statePath, { version: 1, recentAbouts, lastArtifactTs: now });
   await emitLife(
     ctx.events,

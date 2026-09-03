@@ -7,7 +7,9 @@ import { z } from 'zod';
 import type { InboundMsg } from '../../src/loop/index.js';
 import type { DecisionObject } from '../../src/loop/index.js';
 import { GATE_LOOP_INCIDENT, DECISION_PARSE_INCIDENT, TOOL_TIMEOUT_INCIDENT } from '../../src/loop/schema.js';
+import { compileGate, type GateConfig } from '../../src/inhibit/index.js';
 import {
+  LOOP_YAML,
   enqueueDecision,
   enqueueToolRound,
   makeHarness,
@@ -179,10 +181,33 @@ describe('gate re-entry (MAX_GATE_REENTRIES = 2)', () => {
   });
 });
 
+describe('normalize runs before the plan gate (what is checked is what sends)', () => {
+  it('the locked decision carries the normalize-class substitutions, not the raw draft', async () => {
+    const yaml = `${LOOP_YAML}
+
+normalize:
+  - id: em-dash
+    why: test fixture mirrors canon/inhibitions.yaml
+    replace: { from: '\\s*—\\s*', to: '. ' }
+  - id: smart-ellipsis
+    replace: { from: '…', to: '...' }
+`;
+    const gate = compileGate(yaml, {
+      ownerChatId: 'chat-diego',
+      knownTools: ['web_search', 'echo', 'wedged', 'never', 'fork', 'task', 'committee'],
+    } satisfies GateConfig);
+    const h = makeHarness({ gate });
+    enqueueDecision(h.model, { bubbles: ['wait — really — ok… done'] });
+    const d = await h.run(entry());
+    expect(d.plan).toBe('reply');
+    expect(d.bubbles).toEqual(['wait. really. ok... done']);
+  });
+});
+
 describe('the decision repair ladder (exactly ONE cheap-tier repair)', () => {
-  it('malformed assess response -> one repair -> locked decision', async () => {
+  it('JSON-shaped malformed assess response -> one repair -> locked decision', async () => {
     const h = makeHarness();
-    h.model.enqueue({ content: 'I think I will just say hi in prose, not json.' });
+    h.model.enqueue({ content: '{"plan": "reply", "bubbles": ["hi"], "confidence": ' });
     enqueueDecision(h.model, { bubbles: ['repaired'] });
     const d = await h.run(entry());
     expect(d.bubbles).toEqual(['repaired']);
@@ -194,12 +219,22 @@ describe('the decision repair ladder (exactly ONE cheap-tier repair)', () => {
     expect(h.events.kinds(DECISION_PARSE_INCIDENT)).toHaveLength(0);
   });
 
+  it('plain prose is NOT a malformation: it folds into bubbles with no repair call (Phase 1)', async () => {
+    const h = makeHarness();
+    h.model.enqueue({ content: 'I think I will just say hi in prose, not json.' });
+    const d = await h.run(entry());
+    expect(d.bubbles).toEqual(['I think I will just say hi in prose, not json.']);
+    expect(d.decidedBy).toBe('model');
+    expect(h.model.calls).toHaveLength(1);
+  });
+
   it('a repair that also fails is the typed failure: silent + incident, no third call', async () => {
     const h = makeHarness();
-    h.model.enqueue({ content: 'nope' });
-    h.model.enqueue({ content: 'still nope' });
+    h.model.enqueue({ content: '' });
+    h.model.enqueue({ content: '' });
     const d = await h.run(entry());
     expect(d.plan).toBe('silent');
+    expect(d.decidedBy).toBe('failure');
     expect(d.completeness).toBe(1); // not truncation — a parse failure
     expect(h.model.calls).toHaveLength(2);
     const incidents = h.events.kinds(DECISION_PARSE_INCIDENT);

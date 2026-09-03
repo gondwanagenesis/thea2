@@ -39,6 +39,7 @@ import type {
   ModelRouter,
   ParseFailedEvent,
   ParseRung,
+  StopReason,
   ToolCall,
   Tier,
   Usage,
@@ -57,6 +58,8 @@ export interface CoreOutcome {
   attempts: number;
   model: string;
   tier: Tier;
+  /** Wire stop reason, when the door reported one (Phase 1: truncation is loud). */
+  stopReason?: StopReason;
 }
 
 // `any` here is deliberate: the core only shapes/forwards the request — it never
@@ -82,11 +85,23 @@ export const chatCore =
     if (deps.protocol === 'anthropic') {
       const body = buildAnthropicBody({ req, model: routed.model, rung, seedSupported: false });
       const sent = await deps.send({ body: body as unknown as WireBody, signal: ctx?.signal });
+      const parsed = parseAnthropicResponse(sent.response as unknown);
+      // The starvation family: thinking drew the whole budget and NOTHING
+      // visible came back. That is never an empty decision — it is a typed,
+      // non-retryable failure naming the budget (a max_tokens cut WITH content
+      // or a tool call is just a cut-off reply and passes).
+      if (parsed.stopReason === 'max_tokens' && parsed.content === '' && parsed.toolCalls.length === 0) {
+        throw modelError(
+          'model/truncated',
+          `stop_reason max_tokens with no visible content — the ${req.maxTokens}-token budget was consumed by thinking or a torn stream; raise maxTokens`,
+          { retryable: false },
+        );
+      }
       return {
         model: routed.model,
         tier: routed.tier,
         attempts: sent.attempts,
-        ...parseAnthropicResponse(sent.response as unknown),
+        ...parsed,
       };
     }
     const body = buildWireBody({ req, model: routed.model, rung, seedSupported: deps.capabilities?.seed === true });
@@ -163,6 +178,7 @@ export const createModelClient = (deps: ModelClientDeps): ModelClient => {
       return {
         content: result.content,
         ...(result.toolCalls !== undefined ? { toolCalls: result.toolCalls } : {}),
+        ...(result.stopReason !== undefined ? { stopReason: result.stopReason } : {}),
         usage: usage(),
         model,
       };
@@ -179,7 +195,7 @@ export const createModelClient = (deps: ModelClientDeps): ModelClient => {
 // Paths
 // ---------------------------------------------------------------------------
 
-type ChatResult<T> = { content: T; toolCalls?: ToolCall[] };
+type ChatResult<T> = { content: T; toolCalls?: ToolCall[]; stopReason?: StopReason };
 type Note = (r: CoreOutcome) => void;
 type EmitParseFailed = (
   req: ChatRequest<any>,
@@ -198,7 +214,11 @@ const plain = async <T>(
   const r = await core(req, ctx, 'auto');
   note(r);
   const toolCalls = await finishToolCalls(r.toolCalls, r, req, ctx, core, note, emitParseFailed);
-  return { content: r.content as T, ...(toolCalls.length > 0 ? { toolCalls } : {}) };
+  return {
+    content: r.content as T,
+    ...(r.stopReason !== undefined ? { stopReason: r.stopReason } : {}),
+    ...(toolCalls.length > 0 ? { toolCalls } : {}),
+  };
 };
 
 /**
@@ -243,7 +263,11 @@ const structured = async <T>(
   // Malformed tool-call arguments: ONE cheap repair, independent of the content path.
   const toolCalls = await finishToolCalls(visibleCalls, first, req, ctx, core, note, emitParseFailed);
 
-  return { content, ...(toolCalls.length > 0 ? { toolCalls } : {}) };
+  return {
+    content,
+    ...(first.stopReason !== undefined ? { stopReason: first.stopReason } : {}),
+    ...(toolCalls.length > 0 ? { toolCalls } : {}),
+  };
 };
 
 /**

@@ -2,7 +2,9 @@
 // Verbs live or name their stage (AGENTS rule 5) — an unbuilt verb prints
 // `not built yet (stage SX)` and exits nonzero, it never pretends.
 
+import * as path from 'node:path';
 import { emitLostReplyAlarms, type Discrepancy } from '../bridge/index.js';
+import { exportProposals } from '../consolidate/index.js';
 import { loadConfig } from './config.js';
 import { compose, type System } from './compose.js';
 import { startThead, type TheadHandle } from './thead.js';
@@ -19,6 +21,7 @@ const USAGE = `thea2 — usage:
   thea2 status [--config ...]                boot and report live state
   thea2 derive [--config ...]                spin the corpus flywheel (real model)
   thea2 corpus:check                         hermetic derived-corpus check (no model)
+  thea2 proposals:export <dir> [--config ...]  copy var/proposals out for review
   thea2 probe|import                         (not built yet — staged S8/S9)`;
 
 export interface CliIo {
@@ -66,6 +69,8 @@ export const cliMain = async (
       return deriveVerb(configPath, env, io);
     case 'corpus:check':
       return corpusCheckVerb(io); // hermetic: no config, no env, no model
+    case 'proposals:export':
+      return proposalsExportVerb(configPath, env, io, rest, configIdx);
     default:
       io.err(`unknown verb '${verb}'\n${USAGE}`);
       return 1;
@@ -74,6 +79,50 @@ export const cliMain = async (
 
 const loadCompose = async (configPath: string, env: Record<string, string | undefined>): Promise<System> =>
   compose(loadConfig(configPath, env), 'prod');
+
+/**
+ * The verb's positional argument: the first argv entry that is neither the
+ * `--config` flag nor its value (`configIdx` is -1 when the flag is absent).
+ * Exported for the verb's hermetic tests.
+ */
+export const firstPositional = (rest: readonly string[], configIdx: number): string | undefined =>
+  rest.filter((a, i) => a !== '--config' && (configIdx < 0 || i !== configIdx + 1))[0];
+
+/**
+ * `thea2 proposals:export <dir>` — copies var/proposals (the consolidators'
+ * runtime-state output, round 2) into `<dir>` for Diego's review. Booting the
+ * system keeps the path decision in compose's hands; a missing/unreadable
+ * source is a typed error the verb renders and exits nonzero on.
+ */
+const proposalsExportVerb = async (
+  configPath: string,
+  env: Record<string, string | undefined>,
+  io: CliIo,
+  rest: string[],
+  configIdx: number,
+): Promise<number> => {
+  const target = firstPositional(rest, configIdx);
+  if (target === undefined) {
+    io.err('proposals:export requires a target directory — thea2 proposals:export <dir> [--config ...]');
+    return 1;
+  }
+  const sys = await loadCompose(configPath, env);
+  try {
+    const source = path.resolve(sys.paths.base, 'var', 'proposals');
+    const result = await exportProposals(source, target);
+    io.out(
+      result.copied.length === 0
+        ? `no proposals yet — nothing to export (looked in ${source})`
+        : `exported ${result.copied.length} file(s) from ${source} to ${result.targetDir}`,
+    );
+    return 0;
+  } catch (e) {
+    io.err(`proposals:export failed: ${(e as Error).message}`);
+    return 1;
+  } finally {
+    await sys.stop();
+  }
+};
 
 const reconcileVerb = async (configPath: string, env: Record<string, string | undefined>, io: CliIo): Promise<number> => {
   const sys = await loadCompose(configPath, env);
@@ -108,7 +157,7 @@ const statusVerb = async (configPath: string, env: Record<string, string | undef
     io.out(`procedures    ${sys.procedures.all().length}`);
     io.out(`affect        ${sys.affect.weather()}`);
     io.out(`tg offset     ${offset.committed}`);
-    io.out(`sched jobs    ${sys.jobCount} (heartbeat, ponder, reflect)`);
+    io.out(`sched jobs    ${sys.jobCount} (${sys.jobNames.join(', ')})`);
     return 0;
   } finally {
     await sys.stop();

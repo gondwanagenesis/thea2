@@ -248,11 +248,16 @@ describe('known tools — deny by default, and what makes a tool known', () => {
 
 describe('renderPromptBlock — one artifact, one budget', () => {
   it('a block over the 300-token packet budget refuses to compile', () => {
-    const longWhy = 'x'.repeat(300);
+    // The block renders rule IDS only (prompt.test.ts pins the no-why law), so
+    // budget pressure now comes from the rule COUNT, not from why-text length:
+    // 60 ids x ~43 chars ≈ 650 tokens, far past the 300-token packet budget.
     const yaml = [
       'version: 1',
       'plan:',
-      ...[1, 2, 3, 4, 5, 6].map((i) => `  - id: rule-${i}\n    severity: hard\n    why: ${longWhy}\n    reject_patterns: ["${i}"]`),
+      ...Array.from({ length: 60 }, (_, i) => {
+        const id = `rule-${String(i).padStart(3, '0')}-${'x'.repeat(32)}`;
+        return `  - id: ${id}\n    severity: hard\n    why: short\n    reject_patterns: ["${i}"]`;
+      }),
       '',
     ].join('\n');
     const e = compileErrorOf(yaml, {});

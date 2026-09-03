@@ -17,9 +17,22 @@ export interface MatrixEntry {
   why: string;
 }
 
+/**
+ * A form rule fires on ONE side of a threshold (θ) in deviation coords:
+ * `min` fires ABOVE θ (`gain · max(0, a−θ)`), `max` fires BELOW θ
+ * (`gain · max(0, θ−a)`). Exactly one of the two is present — a rule with
+ * both (or neither) is rejected at compile. `max` is how "when the dimension
+ * is LOW" rules are expressed (the v2 quiet rules); with only `min`, a
+ * below-threshold rule degenerated into an always-on boost that fired even at
+ * the neutral vector.
+ */
+export type FormRuleWhen =
+  | { dim: AffectDim; min: number; max?: undefined }
+  | { dim: AffectDim; min?: undefined; max: number };
+
 export interface FormRule {
-  /** Fires above the `min` threshold (θ) on the live deviation vector. */
-  when: { dim: AffectDim; min: number };
+  /** The threshold side: above `min` or below `max`, in deviation coords. */
+  when: FormRuleWhen;
   /** Candidates carrying this tag get the boost. */
   boostTag: string;
   gain: number;
@@ -44,7 +57,7 @@ export interface CompiledCoupling {
 const TOP_KEYS = ['version', 'lambda', 'matrix', 'form_rules'] as const;
 const MATRIX_KEYS = ['from', 'to', 'w', 'why'] as const;
 const RULE_KEYS = ['when', 'boostTag', 'gain', 'why'] as const;
-const WHEN_KEYS = ['dim', 'min'] as const;
+const WHEN_KEYS = ['dim', 'min', 'max'] as const;
 
 type Rec = Record<string, unknown>;
 
@@ -146,14 +159,31 @@ const parseFormRules = (raw: unknown): Array<FormRule> => {
     const whenRec = requireObject(rec['when'], `${path}.when`);
     checkKeys(whenRec, WHEN_KEYS, `${path}.when`);
     const dim = requireDim(whenRec['dim'], `${path}.when.dim`);
-    const min = requireNumber(whenRec['min'], `${path}.when.min`);
-    if (min < -1 || min > 1) {
+    const min = whenRec['min'];
+    const max = whenRec['max'];
+    if (min !== undefined && max !== undefined) {
+      throw new CouplingError(
+        'coupling/schema',
+        `${path} (${dim}): 'when' carries both min and max — a rule fires on ONE side of one threshold`,
+        { field: `${path}.when` },
+      );
+    }
+    if (min === undefined && max === undefined) {
+      throw new CouplingError(
+        'coupling/schema',
+        `${path} (${dim}): 'when' needs exactly one of min (fires above θ) or max (fires below θ)`,
+        { field: `${path}.when` },
+      );
+    }
+    const side = min !== undefined ? 'min' : 'max';
+    const theta = requireNumber(min !== undefined ? min : max, `${path}.when.${side}`);
+    if (theta < -1 || theta > 1) {
       // θ lives in deviation coords: outside [-1,1] the rule is provably dead or
       // always-on, which is config rot wearing a rule's clothes.
       throw new CouplingError(
         'coupling/threshold-range',
-        `${path} (${dim}): θ min = ${min} outside [-1,1] — the rule could never fire`,
-        { field: `${path}.when.min` },
+        `${path} (${dim}): θ ${side} = ${theta} outside [-1,1] — the rule could never fire`,
+        { field: `${path}.when.${side}` },
       );
     }
     const gain = requireNumber(rec['gain'], `${path}.gain`);
@@ -171,7 +201,12 @@ const parseFormRules = (raw: unknown): Array<FormRule> => {
     }
     const why = requireString(rec['why'], `${path}.why`);
     const boostTag = requireString(rec['boostTag'], `${path}.boostTag`);
-    return { when: { dim, min }, boostTag, gain, why };
+    return {
+      when: min !== undefined ? { dim, min: theta } : { dim, max: theta },
+      boostTag,
+      gain,
+      why,
+    };
   });
 };
 

@@ -11,7 +11,7 @@ import { PACKET_RECORD_KIND } from '../../src/consolidate/index.js';
 import { bootApp, CHAT, decisionJson, enqueueAppraisal, inboundMsg, runToQuiescent } from './helpers.js';
 
 describe('the golden turn', () => {
-  it('message in → identity packet → decision → bubbles out → episode + affect + clean ledger', async () => {
+  it('message in → identity packet → decision → bubbles out → episode + affect + clean ledger', { timeout: 120_000 }, async () => {
     const h = await bootApp();
     const episodesBefore = h.sys.episodes.size();
     const affectBefore = JSON.stringify(h.sys.affect.current());

@@ -29,6 +29,12 @@ export interface TurnQuery {
   text?: string | undefined;
   goal?: string | undefined;
   speaker: SpeakerRef;
+  /**
+   * The person's name from the registry (Round 3's people map), when the
+   * speaker resolves to one — the [INTERLOCUTOR] line carries a name instead
+   * of a raw `tg:<id>`. Absent ⇒ the raw person id renders, as before.
+   */
+  personLabel?: string | undefined;
   register: 'work' | 'friend' | 'play';
   queryVec: Float32Array;
   /** Turn ids already verbatim in the rolling window — for nominators to suppress, not for the assembler. */

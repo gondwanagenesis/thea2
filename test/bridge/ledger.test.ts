@@ -54,6 +54,8 @@ interface TruthCase {
   /** Reconcile time, in ms after the inbound landed. */
   at: number;
   expect: Discrepancy[];
+  /** Overrides the initial arrival (default: a plain inbound, updateId 401). */
+  arrival?: { updateId: number; skipped?: { reason: string } };
 }
 
 const TRUTH_TABLE: TruthCase[] = [
@@ -73,6 +75,40 @@ const TRUTH_TABLE: TruthCase[] = [
       await l.recordDecision('turn-2', { turnId: 'turn-2', plan: 'silent', at: T0 + 50 });
     },
     at: T + 1,
+    expect: [],
+  },
+  {
+    name: 'failure silence ⇒ LOST_REPLY (decidedBy failure stays owed past the window)',
+    script: async (l) => {
+      await l.linkTurn(401, 'turn-f');
+      await l.recordDecision('turn-f', { turnId: 'turn-f', plan: 'silent', at: T0 + 50, decidedBy: 'failure' });
+    },
+    at: T + 1,
+    expect: lost(401, T + 1, 'turn-f'),
+  },
+  {
+    name: 'gate silence ⇒ clean (the gate forced the silence after the re-entry cap — restraint, not failure)',
+    script: async (l) => {
+      await l.linkTurn(401, 'turn-g');
+      await l.recordDecision('turn-g', { turnId: 'turn-g', plan: 'silent', at: T0 + 50, decidedBy: 'gate' });
+    },
+    at: T + 1,
+    expect: [],
+  },
+  {
+    name: 'legacy silent row without decidedBy ⇒ clean (absent provenance predates the failure marker — read as restraint)',
+    script: async (l) => {
+      await l.linkTurn(401, 'turn-l');
+      await l.recordDecision('turn-l', { turnId: 'turn-l', plan: 'silent', at: T0 + 50 });
+    },
+    at: T + 1,
+    expect: [],
+  },
+  {
+    name: 'skipped inbound ⇒ never lost',
+    arrival: { updateId: 401, skipped: { reason: 'photo without caption' } },
+    script: async () => undefined,
+    at: T * 10, // far past any window: a skip owes nothing, ever
     expect: [],
   },
   {
@@ -154,7 +190,7 @@ describe('reconciliation truth table', () => {
   for (const c of TRUTH_TABLE) {
     it(`AC: ${c.name}`, async () => {
       const { ledger } = open(fresh());
-      expect(await ledger.recordInbound(msg({ updateId: 401 }))).toBe(true);
+      expect(await ledger.recordInbound(msg({ updateId: 401, ...(c.arrival?.skipped !== undefined ? { skipped: c.arrival.skipped } : {}) }))).toBe(true);
       await c.script(ledger);
       const verdict = await ledger.reconcile(T0 + c.at);
       // "Exactly one verdict" is structural: an inbound produces at most one
@@ -234,6 +270,24 @@ describe('ledger write guards (failure must be loud)', () => {
     await expect(
       ledger.recordDecision('turn-a', { turnId: 'turn-a', plan: 'defer', at: T0 }),
     ).rejects.toMatchObject({ code: 'bridge/decision-mismatch' });
+  });
+
+  it('recordDecision persists decidedBy (the provenance reconcile reads — a failure silence must survive the restart)', async () => {
+    const { ledger } = open(fresh());
+    await ledger.recordDecision('turn-a', { turnId: 'turn-a', plan: 'silent', at: T0, decidedBy: 'failure' });
+    await ledger.recordDecision('turn-b', { turnId: 'turn-b', plan: 'silent', at: T0, decidedBy: 'gate' });
+    await ledger.recordDecision('turn-c', { turnId: 'turn-c', plan: 'silent', at: T0 }); // absent = legacy row
+
+    const rows: string[] = [];
+    const provenance: Array<string | undefined> = [];
+    for await (const row of ledger.read()) {
+      if (row.kind === 'decision') {
+        rows.push(row.turnId);
+        provenance.push(row.decidedBy);
+      }
+    }
+    expect(rows).toEqual(['turn-a', 'turn-b', 'turn-c']);
+    expect(provenance).toEqual(['failure', 'gate', undefined]);
   });
 });
 

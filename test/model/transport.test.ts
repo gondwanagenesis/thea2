@@ -1,6 +1,7 @@
-// M03 model — the Z.ai transport: retry policy (5xx + transport errors only,
-// never 4xx/aborts), per-call timeout, caller aborts — all hermetic over an
-// injected fetchImpl + TestClock. Zero-backoff config makes retries instant.
+// M03 model — the Z.ai transport: retry policy (5xx, 429 honoring retry-after,
+// transport errors; never other 4xx, never aborts), per-call timeout, caller
+// aborts — all hermetic over an injected fetchImpl + TestClock. Zero-backoff
+// config makes retries instant.
 
 import { describe, expect, it } from 'vitest';
 import { TestClock } from '../../src/kernel/clock.js';
@@ -23,6 +24,7 @@ interface FakeResponse {
   ok: boolean;
   status: number;
   text: () => Promise<string>;
+  headers?: { get: (name: string) => string | null };
 }
 
 const okResponse = (body: Record<string, unknown>): FakeResponse => ({
@@ -89,8 +91,8 @@ describe('zaiTransport — retry policy', () => {
     expect(statuses).toEqual([400]);
   });
 
-  it('429 is model/rate-limit and fails fast — the spec retries 5xx only', async () => {
-    const { fetchImpl, statuses } = scriptedFetch([statusResponse(429)]);
+  it('429 × (maxRetries + 1) exhausts the budget and fails with model/rate-limit', async () => {
+    const { fetchImpl, statuses } = scriptedFetch([statusResponse(429), statusResponse(429), statusResponse(429)]);
     const send = zaiTransport({
       apiKey: 'k',
       clock: new TestClock(0),
@@ -101,7 +103,98 @@ describe('zaiTransport — retry policy', () => {
     const err = await send({ body: BODY }).catch((e: unknown) => e);
     expect(isModelError(err)).toBe(true);
     expect((err as { code: string }).code).toBe('model/rate-limit');
+    expect((err as { retryable: boolean }).retryable).toBe(true);
+    expect(statuses).toEqual([429, 429, 429]); // 1 + maxRetries(2)
+  });
+});
+
+describe('zaiTransport — 429 retry honors retry-after (TestClock-driven)', () => {
+  /** Drains the microtask chain between fetch settling and the backoff waiter registering. */
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+  const rateLimited = (retryAfter: string | undefined): FakeResponse => ({
+    ok: false,
+    status: 429,
+    text: async () => 'rate limited',
+    ...(retryAfter !== undefined ? { headers: { get: (name: string) => (name === 'retry-after' ? retryAfter : null) } } : {}),
+  });
+
+  it('429 then 200 succeeds with attempts=2 after waiting retry-after when it exceeds the backoff', async () => {
+    const { fetchImpl, statuses } = scriptedFetch([rateLimited('5'), okResponse(wireOk({ content: 'after' }))]);
+    const clock = new TestClock(0);
+    const send = zaiTransport({ apiKey: 'k', clock, rng: makeRng('transport/429-ra'), fetchImpl, backoff: ZERO_BACKOFF });
+    const pending = send({ body: BODY });
+    await flush();
+    await clock.advance(4_999);
+    await flush();
+    expect(statuses).toEqual([429]); // still waiting on the server's retry-after
+    await clock.advance(1);
+    const res = await pending;
+    expect(res.attempts).toBe(2);
+    expect(statuses).toEqual([429, 200]);
+  });
+
+  it('waits the backoff when it exceeds retry-after (max of the two)', async () => {
+    const cfg: BackoffConfig = { baseMs: 4_000, capMs: 8_000 }; // attempt 1 ⇒ [2000, 6000)
+    const expected = backoffDelayMs(1, () => makeRng('transport/429-bo').float(), cfg);
+    expect(expected).toBeGreaterThan(1_000);
+    const { fetchImpl, statuses } = scriptedFetch([rateLimited('1'), okResponse(wireOk({ content: 'after' }))]);
+    const clock = new TestClock(0);
+    const send = zaiTransport({ apiKey: 'k', clock, rng: makeRng('transport/429-bo'), fetchImpl, backoff: cfg });
+    const pending = send({ body: BODY });
+    await flush();
+    await clock.advance(expected - 1);
+    await flush();
     expect(statuses).toEqual([429]);
+    await clock.advance(1);
+    const res = await pending;
+    expect(res.attempts).toBe(2);
+  });
+
+  it('parses an HTTP-date retry-after against the injected clock and caps at 30 s', async () => {
+    // 1_700_000_000_000 ms = Tue, 14 Nov 2023 22:13:20 GMT; the header names +7 s.
+    const clock = new TestClock(1_700_000_000_000);
+    const httpDate = 'Tue, 14 Nov 2023 22:13:27 GMT';
+    const { fetchImpl: f1, statuses: s1 } = scriptedFetch([rateLimited(httpDate), okResponse(wireOk({ content: 'x' }))]);
+    const send1 = zaiTransport({ apiKey: 'k', clock, rng: makeRng('t'), fetchImpl: f1, backoff: ZERO_BACKOFF });
+    const p1 = send1({ body: BODY });
+    await flush();
+    await clock.advance(6_999);
+    await flush();
+    expect(s1).toEqual([429]);
+    await clock.advance(1);
+    expect((await p1).attempts).toBe(2);
+
+    const { fetchImpl: f2, statuses: s2 } = scriptedFetch([rateLimited('120'), okResponse(wireOk({ content: 'x' }))]);
+    const send2 = zaiTransport({ apiKey: 'k', clock, rng: makeRng('t'), fetchImpl: f2, backoff: ZERO_BACKOFF });
+    const p2 = send2({ body: BODY });
+    await flush();
+    await clock.advance(29_999);
+    await flush();
+    expect(s2).toEqual([429]);
+    await clock.advance(1);
+    expect((await p2).attempts).toBe(2);
+  });
+
+  it('exposes retryAfterMs on the error and its cause when the budget is exhausted', async () => {
+    const { fetchImpl } = scriptedFetch([rateLimited('3')]);
+    const send = zaiTransport({
+      apiKey: 'k',
+      clock: new TestClock(0),
+      rng: makeRng('t'),
+      fetchImpl,
+      backoff: ZERO_BACKOFF,
+      maxRetries: 0,
+    });
+    const err = (await send({ body: BODY }).catch((e: unknown) => e)) as {
+      code: string;
+      retryAfterMs?: number;
+      cause?: { status?: number; retryAfterMs?: number };
+    };
+    expect(err.code).toBe('model/rate-limit');
+    expect(err.retryAfterMs).toBe(3_000);
+    expect(err.cause?.status).toBe(429);
+    expect(err.cause?.retryAfterMs).toBe(3_000);
   });
 
   it('transport throws are retryable; exhausts maxRetries then model/transport', async () => {

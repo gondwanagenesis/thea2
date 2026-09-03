@@ -7,7 +7,7 @@ import { z, type ZodType } from 'zod';
 import { canonicalJson } from '../kernel/index.js';
 import { modelError } from './errors.js';
 import { EMIT_TOOL_NAME, looseJsonParse, promptedJsonInstruction } from './json.js';
-import type { ChatMsg, ChatRequest, ToolCall, ToolDef } from './types.js';
+import type { ChatMsg, ChatRequest, StopReason, ToolCall, ToolDef } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Wire shapes (only the fields M03 sends or reads; unknown fields are ignored)
@@ -33,12 +33,15 @@ export interface WireBody {
   max_tokens: number;
   seed?: number;
   tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: unknown } }>;
-  tool_choice?: 'auto' | { type: 'function'; function: { name: string } };
+  tool_choice?: 'auto' | 'required' | { type: 'function'; function: { name: string } };
   response_format?: { type: 'json_schema'; json_schema: { name: string; strict: boolean; schema: unknown } };
 }
 
 export interface WireResponse {
-  choices?: Array<{ message?: { role?: string; content?: string | null; tool_calls?: WireToolCall[] } }>;
+  choices?: Array<{
+    message?: { role?: string; content?: string | null; tool_calls?: WireToolCall[] };
+    finish_reason?: string | null;
+  }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
@@ -106,7 +109,17 @@ export interface ParsedResponse {
   malformedToolCalls: MalformedToolCall[];
   inputTokens: number;
   outputTokens: number;
+  /** Anthropic-vocabulary stop reason (openai finish_reason mapped); absent when the wire gave none. */
+  stopReason?: StopReason;
 }
+
+/** OpenAI finish_reason → the Anthropic stop vocabulary the client reasons in. */
+const FINISH_REASON_MAP: Record<string, StopReason> = {
+  stop: 'end_turn',
+  length: 'max_tokens',
+  tool_calls: 'tool_use',
+  function_call: 'tool_use',
+};
 
 /** Parses tool-call entries; throws only for unrepairable protocol violations (missing name). */
 export const parseWireToolCalls = (
@@ -164,12 +177,15 @@ export const parseWireResponse = (raw: unknown): ParsedResponse => {
     prompt_tokens?: unknown;
     completion_tokens?: unknown;
   };
+  const finish = (first as { finish_reason?: unknown }).finish_reason;
+  const stopReason = typeof finish === 'string' ? (FINISH_REASON_MAP[finish] ?? finish) : undefined;
   return {
     content,
     toolCalls,
     malformedToolCalls,
     inputTokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0,
     outputTokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0,
+    ...(stopReason !== undefined ? { stopReason } : {}),
   };
 };
 
@@ -200,7 +216,19 @@ export const buildWireBody = (input: BuildBodyInput): WireBody => {
   const messages = [...toWireMessages(req.messages)];
 
   let responseFormat: WireBody['response_format'];
+  // Legacy default stands when toolChoice is absent (goldens byte-identical):
+  // tools on the wire ⇒ 'auto', no tools ⇒ the field is omitted entirely.
   let toolChoice: WireBody['tool_choice'] = tools !== undefined ? 'auto' : undefined;
+  // The caller's explicit toolChoice (e.g. the loop's forced `decide`) rides
+  // whenever tools do; a bare name maps to the openai forced-function shape.
+  if (req.toolChoice !== undefined && tools !== undefined) {
+    toolChoice =
+      req.toolChoice === 'auto'
+        ? 'auto'
+        : req.toolChoice === 'required'
+          ? 'required'
+          : { type: 'function', function: { name: req.toolChoice.name } };
+  }
   let wireTools = tools;
 
   if (rung === 'json_schema' && schema !== undefined) {

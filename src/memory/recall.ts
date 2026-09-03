@@ -7,8 +7,21 @@
 //   cosine × recency × importance
 // with importance on the appraisal's own 1-10 scale (÷10). Procedures carry no
 // recency or importance term — the store's outcome weighting already applied.
+//
+// Two pieces are mirrored here because the DAG runs one way (assemble may
+// import memory; memory may not import assemble) — canonical definitions in
+// src/assemble/score.ts and src/corpus/nominator.ts, all conformance-pinned:
+//   • rankNormalizeBase — per-nominator, per-packet rank normalization to
+//     (0,1], shipped as `baseScoreNorm` (raw `baseScore` stays the
+//     credit-truth); the assembler's scoring law prefers it, which is what
+//     makes λ mean "a quarter of the score range" across incomparable
+//     nominator scales.
+//   • loadCreditWeights — the M10 credit file reader (var/credit/weights.json,
+//     written nightly by the consolidator). Absent id ⇒ 1.0, missing file ⇒
+//     every id 1.0, malformed file ⇒ loud typed error.
 
-import { canonicalJson, type Clock } from '../kernel/index.js';
+import * as fsp from 'node:fs/promises';
+import { canonicalJson, KernelErrorImpl, type Clock } from '../kernel/index.js';
 import { AFFECT_DIMS, type AffectDim } from '../../schemas/exemplar.js';
 import type { EpisodeStore } from './episodes.js';
 import type { ProcedureRecord, ProceduralStore } from './procedural.js';
@@ -46,6 +59,99 @@ export const SIG_EPSILON = 0.01;
 export const RENDER_ARG_CAP = 240;
 
 // ---------------------------------------------------------------------------
+// Credit weights — the M10 file, read (never written) here. Mirrored from
+// src/corpus/nominator.ts (the DAG gives memory no path to corpus); a
+// conformance test pins both readers equal on the same fixture files.
+// ---------------------------------------------------------------------------
+
+/** Thrown for a weights file that exists but is not a weights file. Loud by design. */
+export class CreditWeightsError extends KernelErrorImpl {
+  constructor(message: string, cause?: unknown) {
+    super('memory/credit-weights', message, cause);
+    this.name = 'CreditWeightsError';
+  }
+}
+
+/** `{ exemplarId: number }` — values finite; range policy ([0.5, 2.0]) is M10's. */
+export interface CreditWeights {
+  readonly [exemplarId: string]: number;
+}
+
+const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/** Strict parse of the consolidator's persisted shape; drift is a loud typed error. */
+export const parseCreditWeightsFile = (raw: string): CreditWeights => {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch (e) {
+    throw new CreditWeightsError(`credit weights file is not valid JSON: ${(e as Error).message}`, e);
+  }
+  const bad = (what: string): CreditWeightsError =>
+    new CreditWeightsError(`credit weights file rejected: ${what} — expected the consolidator's {version:1, lastSeq, decayDay, weights} shape`);
+  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) throw bad('not an object');
+  const rec = doc as Record<string, unknown>;
+  if (rec['version'] !== 1) throw bad(`version ${JSON.stringify(rec['version'])}`);
+  if (!isInt(rec['lastSeq']) || !isInt(rec['decayDay'])) throw bad('lastSeq/decayDay must be non-negative integers');
+  const w = rec['weights'];
+  if (typeof w !== 'object' || w === null || Array.isArray(w)) throw bad('weights must be an object');
+  const out: Record<string, number> = {};
+  for (const [id, v] of Object.entries(w as Record<string, unknown>)) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      throw bad(`weights['${id}'] must be a finite number, got ${String(v)}`);
+    }
+    out[id] = v;
+  }
+  return out;
+};
+
+/** Process-level cache keyed by path, re-validated per call by mtime (see the corpus mirror). */
+const weightsCache = new Map<string, { mtimeMs: number; weights: CreditWeights }>();
+
+/** Missing file ⇒ {} (launch state, neutral credit); malformed file ⇒ loud typed error. */
+export const loadCreditWeights = async (path: string): Promise<CreditWeights> => {
+  let stat: Awaited<ReturnType<typeof fsp.stat>>;
+  try {
+    stat = await fsp.stat(path);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return {};
+    throw new CreditWeightsError(`credit weights file at '${path}' is unreadable: ${code ?? String(e)}`, e);
+  }
+  const cached = weightsCache.get(path);
+  if (cached !== undefined && cached.mtimeMs === stat.mtimeMs) return cached.weights;
+  let raw: string;
+  try {
+    raw = await fsp.readFile(path, 'utf8');
+  } catch (e) {
+    throw new CreditWeightsError(`credit weights file at '${path}' disappeared between stat and read: ${String(e)}`, e);
+  }
+  const weights = parseCreditWeightsFile(raw);
+  weightsCache.set(path, { mtimeMs: stat.mtimeMs, weights });
+  return weights;
+};
+
+/**
+ * M11's per-nominator rank normalization (src/assemble/score.ts rankNormalize),
+ * mirrored for the DAG — conformance-pinned equal, value for value.
+ */
+export const rankNormalizeBase = (values: readonly number[]): number[] => {
+  const n = values.length;
+  if (n === 0) return [];
+  const order = [...values.keys()].sort((x, y) => values[x]! - values[y]! || x - y);
+  const out = new Array<number>(n);
+  let i = 0;
+  while (i < order.length) {
+    let j = i;
+    while (j < order.length && values[order[j]!] === values[order[i]!]) j += 1;
+    const avgRank = (i + 1 + j) / 2;
+    for (let k = i; k < j; k++) out[order[k]!] = avgRank / n;
+    i = j;
+  }
+  return out;
+};
+
+// ---------------------------------------------------------------------------
 // Candidate + query shapes (M09's slice of M11's TurnQuery/Candidate)
 // ---------------------------------------------------------------------------
 
@@ -64,14 +170,17 @@ export type SparseSig = Partial<Record<AffectDim, number>>;
 
 /**
  * M09's slice of M11's Candidate for the memory/procedure tiers: same field
- * names, `source: 'memory'`, `creditW: 1.0` (learned credit is M10's to know —
- * memory never owns it, so it ships the assembler's unknown default).
+ * names, `source: 'memory'`. `creditW` is learned credit (M10's file, read at
+ * `creditPath` — memory never owns the values, it reads them); candidates also
+ * carry `baseScoreNorm`, the per-nominator rank-normalized base (0,1] the
+ * assembler's scoring law prefers over the raw composite.
  */
 export interface MemoryCandidate {
   id: string;
   channel: PacketChannelName;
   tier: 'memory' | 'procedure';
   baseScore: number;
+  baseScoreNorm?: number | undefined;
   creditW: number;
   sig: SparseSig;
   vec?: Float32Array;
@@ -126,9 +235,14 @@ const byScoreThenId = <T>(scoreOf: (x: T) => number, idOf: (x: T) => string) => 
  * The character channel's memory tier. Store separation does the structural
  * work: this nominator holds an EpisodeStore, whose search can only return
  * episodes — a procedure record has no way in (and `proceduralNominator` is
- * its mirror image).
+ * its mirror image). `creditPath` points at the nightly weights file
+ * (conventionally var/credit/weights.json); unset ⇒ neutral credit, exactly
+ * like a missing file. Round 3 (composition) passes the resolved path.
  */
-export const episodicNominator = (store: EpisodeStore, deps: { clock: Clock }): MemoryNominator => ({
+export const episodicNominator = (
+  store: EpisodeStore,
+  deps: { clock: Clock; creditPath?: string | undefined },
+): MemoryNominator => ({
   name: 'memory/episodic',
   channel: 'character',
   nominate: async (q, k) => {
@@ -147,14 +261,17 @@ export const episodicNominator = (store: EpisodeStore, deps: { clock: Clock }): 
       .slice(0, want);
 
     await store.vecsFor(ranked.map((r) => r.e.id));
-    return ranked.map(({ e, score }) => {
+    const credit = deps.creditPath !== undefined ? await loadCreditWeights(deps.creditPath) : undefined;
+    const norms = rankNormalizeBase(ranked.map((r) => r.score));
+    return ranked.map(({ e, score }, i) => {
       const vec = store.vecOf(e.id);
       return {
         id: e.id,
         channel: 'character',
         tier: 'memory',
         baseScore: score,
-        creditW: 1.0,
+        baseScoreNorm: norms[i],
+        creditW: credit === undefined ? 1.0 : credit[e.id] ?? 1.0,
         sig: sigOf(e.affectAtEncoding),
         tags: e.emotions.map((x) => x.tag),
         source: 'memory',
@@ -165,8 +282,13 @@ export const episodicNominator = (store: EpisodeStore, deps: { clock: Clock }): 
   },
 });
 
+/** Options for the procedural channel's nominator. */
+export interface ProceduralNominatorOpts {
+  creditPath?: string | undefined;
+}
+
 /** The procedural channel: situation-keyed, outcome-scored, capped by the assembler's quota. */
-export const proceduralNominator = (store: ProceduralStore): MemoryNominator => ({
+export const proceduralNominator = (store: ProceduralStore, opts: ProceduralNominatorOpts = {}): MemoryNominator => ({
   name: 'memory/procedural',
   channel: 'procedural',
   nominate: async (q, k) => {
@@ -183,14 +305,17 @@ export const proceduralNominator = (store: ProceduralStore): MemoryNominator => 
       .slice(0, k);
 
     await store.vecsFor(ranked.map((r) => r.p.id));
-    return ranked.map(({ p, score }) => {
+    const credit = opts.creditPath !== undefined ? await loadCreditWeights(opts.creditPath) : undefined;
+    const norms = rankNormalizeBase(ranked.map((r) => r.score));
+    return ranked.map(({ p, score }, i) => {
       const vec = store.vecOf(p.id);
       return {
         id: p.id,
         channel: 'procedural',
         tier: 'procedure',
         baseScore: score,
-        creditW: 1.0,
+        baseScoreNorm: norms[i],
+        creditW: credit === undefined ? 1.0 : credit[p.id] ?? 1.0,
         sig: {}, // procedures carry no affect signature — coupling has nothing to modulate here
         tags: [],
         source: 'memory',

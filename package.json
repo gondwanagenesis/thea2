@@ -10,9 +10,23 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "npm run test:a && npm run test:b",
+    "test:c1a": "vitest run test/affect test/app",
+    "test:c1b": "vitest run test/assemble",
+    "test:c1": "npm run test:c1a && npm run test:c1b",
+    "test:c2": "vitest run test/bridge test/consolidate test/coupling test/corpus test/derive test/embed test/events test/inhibit test/kernel",
+    "test:a": "npm run test:c1 && npm run test:c2",
+    "test:b": "vitest run test/life test/loop test/memory test/model test/probes test/realize test/sched test/siblings src",
+    "test:cover": "tsx scripts/test-chunks-cover.ts",
     "depcruise": "depcruise src test",
-    "verify": "tsx scripts/verify-schemas.ts"
+    "verify": "tsx scripts/verify-schemas.ts",
+    "gates": "npm run typecheck && npm run lint && npm run depcruise && npm run verify",
+    "corpus:check": "tsx src/app/main.ts corpus:check"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "tsx": "^4.19.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.4.0",
@@ -20,11 +34,8 @@
     "@typescript-eslint/parser": "^8.0.0",
     "dependency-cruiser": "^16.0.0",
     "eslint": "^9.0.0",
-    "js-yaml": "^4.1.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0",
-    "zod": "^4.0.0"
+    "vitest": "^2.0.0"
   },
-  "//": "Scripts are honest: before S0/S1 code exists they fail loudly (nothing to check) rather than silently passing. No scripts for unbuilt CLI verbs (thead, derive, probe run) — those arrive with M20 and are added then, per the no-silent-stubs rule in AGENTS.md."
+  "//": "Scripts are honest: they fail loudly rather than silently passing. `gates` chains the four static gates (typecheck, lint, depcruise, verify); `corpus:check` is the hermetic derived-corpus gate. The CLI verbs run through the bin wrappers (deploy/bin/thea2, deploy/bin/thead) or tsx directly — `derive` deliberately has no npm script because it spends real model calls and is human-invoked only (ADR-007)."
 }

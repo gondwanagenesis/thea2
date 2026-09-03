@@ -22,6 +22,7 @@ import type { LoopPacket } from '../../src/loop/index.js';
 import type { JobCtx } from '../../src/sched/index.js';
 import {
   HEARTBEAT_PRE_EVENT,
+  HEARTBEAT_SENT_EVENT,
   HEARTBEAT_THOUGHT_EVENT,
   LIFE_INCIDENT,
   PONDER_ARTIFACT_EVENT,
@@ -161,6 +162,9 @@ const harness = (over: {
   episodes?: ReadonlyArray<Pick<Episode, 'summary' | 'importance' | 'ts'>>;
   mutex?: () => boolean;
   lastInboundTs?: () => number | undefined;
+  owedInbound?: () => Promise<number>;
+  /** Bubbles the simulated self-entry turn delivers (Phase 1 outcome hook; default 1 = a real send). */
+  selfEntrySent?: number;
   model?: MockModel;
 } = {}): Harness => {
   const log = recordingLog();
@@ -186,10 +190,13 @@ const harness = (over: {
     cfg: resolveLifeConfig(over.cfg),
     interactiveMutex: over.mutex ?? (() => false),
     lastInboundTs: over.lastInboundTs ?? (() => T0 - 3 * HOUR),
+    owedInbound: over.owedInbound ?? (async () => 0),
     selfEntry: (kind, goal) => {
       const turnId = `turn_${kind}_${selfEntries.length + 1}`;
       selfEntries.push({ kind, goal, turnId });
-      return turnId;
+      // The heartbeat-outcome hook (Phase 1): the simulated turn settles its
+      // delivered-bubble count immediately — 0 simulates an in-loop silence.
+      return { turnId, sent: Promise.resolve(over.selfEntrySent ?? 1) };
     },
     stateDir,
     vec12: () => new Float64Array(12),
@@ -239,6 +246,9 @@ const seedState = async (filePath: string, state: unknown): Promise<void> => {
 const readJson = async (filePath: string): Promise<unknown> => JSON.parse(await fsp.readFile(filePath, 'utf8'));
 
 const LOW_SCORES = { relevance: 1, information_gap: 1, expected_impact: 1, urgency: 1, coherence: 1 } as const;
+
+/** The thought row as Phase 1 lands it: the events.ts payload plus the job's outcome augmentation. */
+type ThoughtRow = HeartbeatThoughtPayload & { sent?: boolean };
 
 // ---------------------------------------------------------------------------
 // heartbeatJob — the job table M16 wires
@@ -377,10 +387,15 @@ describe('heartbeatJob — the thought, the send, the counters', () => {
     expect(h.selfEntries[0]?.goal).toContain('[heartbeat:followup]');
     expect(h.selfEntries[0]?.goal).toContain('the crates shipped and he never said how they landed');
 
-    expect(h.log.kinds()).toEqual([HEARTBEAT_PRE_EVENT, HEARTBEAT_THOUGHT_EVENT]); // pre lands BEFORE the thought
-    const thought = h.log.rows[1]?.payload as HeartbeatThoughtPayload;
+    expect(h.log.kinds()).toEqual([HEARTBEAT_PRE_EVENT, HEARTBEAT_THOUGHT_EVENT, HEARTBEAT_SENT_EVENT]); // pre lands BEFORE the thought
+    const thought = h.log.rows[1]?.payload as ThoughtRow;
     expect(thought.passed).toBe(true);
+    expect(thought.sent).toBe(true); // the row lands with the fire's outcome (Phase 1)
     expect(thought.score).toBeGreaterThanOrEqual(HEARTBEAT_THRESHOLD);
+
+    // the additive sent row: the turn's real ids and the delivered count
+    expect(h.log.rows[2]?.payload).toEqual({ turnId: h.selfEntries[0]?.turnId, kind: 'followup', bubbles: 1 });
+    expect(h.log.rows[2]?.turnId).toBe(h.selfEntries[0]?.turnId);
 
     const state = (await readJson(h.heartbeatPath)) as HeartbeatJobState;
     expect(state).toEqual({
@@ -390,6 +405,37 @@ describe('heartbeatJob — the thought, the send, the counters', () => {
       lastSentTs: T0,
       unanswered: 1,
       lastUnansweredTs: T0,
+    });
+  });
+
+  it('an in-loop silence does not spend the daily cap or start backoff', async () => {
+    const h = harness({ model: thoughtModel(), selfEntrySent: 0 }); // the turn goes silent in-loop
+    await seedState(h.heartbeatPath, {
+      version: 1,
+      date: dayOf(h),
+      sentToday: 2,
+      lastSentTs: T0 - 9 * HOUR,
+      unanswered: 1,
+      lastUnansweredTs: T0 - 9 * HOUR, // the 6h ladder is expired, but the debt is on the books
+    });
+    await heartbeatJob(h.deps).run(jobCtx(h));
+
+    expect(h.selfEntries).toHaveLength(1); // the turn ran…
+    expect(h.log.kinds()).toEqual([HEARTBEAT_PRE_EVENT, HEARTBEAT_THOUGHT_EVENT]); // …and no life.heartbeat.sent landed
+    const thought = h.log.rows[1]?.payload as ThoughtRow;
+    expect(thought.passed).toBe(true); // the thought crossed the threshold
+    expect(thought.sent).toBe(false); // but the log says plainly: nothing was sent
+
+    // The pre-existing counters are byte-identical: no cap spent (still 2 of 3),
+    // no new unanswered/backoff debt (still 1, its timestamp unmoved).
+    const state = (await readJson(h.heartbeatPath)) as HeartbeatJobState;
+    expect(state).toEqual({
+      version: 1,
+      date: dayOf(h),
+      sentToday: 2,
+      lastSentTs: T0 - 9 * HOUR,
+      unanswered: 1,
+      lastUnansweredTs: T0 - 9 * HOUR,
     });
   });
 
@@ -493,7 +539,7 @@ describe('ponderJob — through the committee to a landed artifact', () => {
     expect(ep.diaryLine).toContain('pondered slot math (world)');
     expect(ep.importance).toBe(7); // saliency 0.7
     expect(ep.emotions).toEqual([]); // no appraisal ran — none invented
-    expect(ep.threads).toEqual([]);
+    expect(ep.threads).toEqual(['ponder']); // her `next` is filed as standing intent (Round 3)
     expect(ep.affectAtEncoding).toHaveLength(12);
     expect(ep.turnId).toBe(h.log.rows[2]?.turnId);
 

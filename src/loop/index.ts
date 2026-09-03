@@ -4,6 +4,16 @@
 export { runLoop, TRUNCATED_COMPLETENESS_CAP, parseDecision } from './loop.js';
 export type { DecisionParse } from './loop.js';
 
+export {
+  DECIDE_TOOL_NAME,
+  OUTPUT_CONTRACT,
+  PROSE_FOLD_DEFAULTS,
+  decideToolDef,
+  isDecideCall,
+  looksJsonShaped,
+  proseToDecision,
+} from './decide.js';
+
 export type {
   Vec12,
   InboundMsg,
@@ -12,6 +22,7 @@ export type {
   LoopEntry,
   ToolStep,
   SpawnRecord,
+  DecidedBy,
   DecisionObject,
   ModelDecision,
   InhibitionMeta,
@@ -53,4 +64,7 @@ export {
   DECISION_PARSE_INCIDENT,
   SPAWN_REFUSED_INCIDENT,
   TOOL_TIMEOUT_INCIDENT,
+  ASSEMBLE_FAILED_INCIDENT,
+  DECISION_PROSE_FOLDED,
+  DecidedBySchema,
 } from './schema.js';

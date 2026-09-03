@@ -11,11 +11,13 @@ import { AFFECT_DIMS, DIM_INDEX, type SparseVec12, type Vec12 } from './space.js
 import type { CompiledCoupling } from './config.js';
 
 /**
- * `clamp(aᵀMe + Σ gain·max(0, a_dim − θ)·hasTag, −λ, +λ)` for one candidate.
+ * `clamp(aᵀMe + Σ ruleTerms, −λ, +λ)` for one candidate.
  * `a` is her live deviation vector, `e` the candidate's sparse signature, `tags`
  * its tag set. Matrix terms are summed over the sparse entries (equivalent to
- * the dense M, pinned by test); each form rule adds `gain · max(0, a_dim − min)`
- * when the tag set contains its boostTag. The cap is the config's λ.
+ * the dense M, pinned by test); each form rule adds, when the tag set contains
+ * its boostTag, `gain · max(0, a_dim − min)` for a `min` rule (fires ABOVE θ)
+ * or `gain · max(0, max − a_dim)` for a `max` rule (fires BELOW θ — the
+ * "when the dimension is LOW" shape). The cap is the config's λ.
  */
 export const modulate = (a: Vec12, e: SparseVec12, tags: string[], compiled: CompiledCoupling): number => {
   if (a.length !== AFFECT_DIMS.length) {
@@ -31,7 +33,9 @@ export const modulate = (a: Vec12, e: SparseVec12, tags: string[], compiled: Com
   for (const rule of compiled.cfg.formRules) {
     if (!tags.includes(rule.boostTag)) continue;
     const aDim = a[DIM_INDEX[rule.when.dim]]!;
-    total += rule.gain * Math.max(0, aDim - rule.when.min);
+    total += rule.when.max !== undefined
+      ? rule.gain * Math.max(0, rule.when.max - aDim)
+      : rule.gain * Math.max(0, aDim - rule.when.min!);
   }
   const lambda = compiled.cfg.lambda;
   return Math.min(lambda, Math.max(-lambda, total));

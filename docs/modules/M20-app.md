@@ -1,7 +1,7 @@
 ---
 module: M20
 name: app
-syncedTo: S8 (implemented — src/app + test/app; golden-turn + crash-replay e2e green; S6-S8 wiring landed: life jobs incl. reflect, derive verbs, probe target, sibling routing; see "As built" at the end)
+syncedTo: Phase 1 as-built (2026-09-02 — src/app + test/app implemented; golden-turn + crash-replay e2e green; S6-S8 wiring landed: life jobs incl. reflect, derive verbs, probe target, sibling routing; heartbeat-outcome hook + tested maintenance jobs; see "As built" at the end)
 stage: S5
 depends: [M01-kernel, M02-events, M03-model, M04-embed, M05-affect, M06-coupling, M07-corpus, M08-derive, M09-memory, M10-consolidate, M11-assemble, M12-inhibit, M13-loop, M14-realize, M15-bridge, M16-sched, M17-life, M18-siblings, M19-probes]
 ---
@@ -99,3 +99,24 @@ src/app: config.ts, compose.ts, pipeline.ts, embedder.ts, thead.ts, cli.ts, inde
 8. **Probe bridge casts.** probes' Vec12/Episode mirrors are structural; `probeTarget().state()` bridges with `Array.from(signature(...))` and `as never[]` — S8 aligns the types for real.
 9. **One shared SessionWindow instance** across pipeline + System — a second open over the same dir held a divergent in-memory copy (caught in review of the first compose draft).
 10. **`resolveLoopConfig({ turnTokenBudget })` only** — `budgetMs` stays at the wall-clock defaults; the packet token budget is honored in the assemble config.
+
+## As built (Phase 1)
+
+- **Heartbeat-outcome hook (pipeline.ts).** `Pipeline.selfEntry` returns `{turnId, sent: Promise<number>}`; every turn exit settles exactly once — in-loop silent/defer ⇒ 0, abort-with-carry ⇒ 0, a throwing turn ⇒ 0 (in pump's catch, so the awaiting job never hangs), a realized reply ⇒ `report.sent.length`. M17's heartbeat counts only real deliveries.
+- **Maintenance jobs are tested** (test/app/maintenance-jobs.test.ts — the file had zero tests): rerun-once-per-process inside the 60-min grace, alarm-only past grace, the busy-defer taken on the next pass, the ledger link that makes a later reconcile clean (real ledger), and both loud-failure shapes.
+- **Timezone config pinned** (test/app/config.test.ts): `timezone` defaults to UTC, an unknown IANA zone is rejected, a wrapping quietHours window is accepted, equal endpoints are rejected.
+
+## As built (Round 3, 2026-09-02 afternoon)
+
+compose.ts closes the learning loop and the social frame; every wire below has a named test:
+
+- **Lived/proposals live in var/** — the consolidators write `var/lived` + `var/proposals`, the corpus index SELECTS from `var/lived` (was `corpus/lived`: the sandbox was right, runtime state never belonged in the repo tree). `install.sh`'s corpus excludes are thereby moot-but-harmless; `var/` was always excluded.
+- **The flywheel closes on consolidation**: `onConsolidated` (M10's new hook) reloads the corpus index and writes the projections (`var/journal.md`, `var/threads.json`) — no restart, and a rejecting hook fails the run loudly AFTER outputs are durable.
+- **Standing intent is real**: `openPersistedThreadIndex(var/memory)` is folded by the afterturn (each appraisal's `threads[]`, `incident.thread_fold_failed` on throw), the heartbeat's `dueThreads` comes from `dueThreadNotes` (6 h due window, cap 3), and ponder files her `next` as the `ponder` thread (one id by design — a new ponder re-arms it).
+- **Register is inferred, not constant** (src/app/register.ts): strong lexical cues (code fences, links, versions, stacktraces) or two weak ones pick `work` — bounded by HIS clock (machine talk outside 08:00–21:00 Madrid stays `play`); explicit friend cues win. `mode_exclusive` still enforces; quota `strict:false` (Round 2) is the relaxation lever.
+- **People registry v1** (config `people:`): the `[INTERLOCUTOR]` line carries his NAME instead of `tg:<id>`.
+- **[IDENTITY] renders body-only** (`identityBody`): frontmatter and the author's draft note never ship in the packet.
+- **Credit is live**: the corpus nominator reads `var/credit/weights.json` (mtime-cached; missing file = neutral) — the γ term finally moves selection.
+- **Dominance home is config-backed** (ADR-004a): `setDominanceBaseline` runs at boot before any state read; default 0.0 (zero change) until Diego sets the value.
+- **gravityWeek counts from first boot**: `var/first-boot` (epoch-ms stamp, written once) feeds `gravityWeekOf` — the not-integrating alarm starts at week zero, not week 2957.
+- **The Ledger is registered** — six jobs on a real boot. Nightingale stays unregistered (Phase 4 gates it); its ProbeRunner seat is a loud `probes/not-built` refusal that nothing wired can invoke.

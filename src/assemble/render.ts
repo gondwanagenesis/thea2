@@ -4,9 +4,12 @@
 // [INHIBITION] is the trailer, passed through verbatim from M12 (its renderer
 // already emits the header — prefixing another would ship a doubled tag).
 //
-// Within [EXEMPLARS] the order is stability → volatility: disposition (the
-// keel), patterns, episodes, then the contrast slot last — it is the foreign
-// body of the packet and reads best at the end.
+// Within [EXEMPLARS] the order is stability → volatility with one deliberate
+// interruption: disposition (the keel), patterns, then the CONTRAST slot —
+// labeled `elsewhere:`, the packet's one foreign body — placed BEFORE the
+// episode-memory exemplars. The slot's job is anti-convergence (THESIS §6):
+// a scene unlike the rest lands mid-packet, where it can still bend the
+// generation, not as a tail note the model has already finished imitating.
 
 import { compareStrings } from '../corpus/types.js';
 import { CHARACTER_SECTIONS, type CharacterSection, type Packet, type PacketRecord, type Section, type TurnQuery } from './types.js';
@@ -32,6 +35,11 @@ const groupByKind = (sel: Selection, kind: 'disposition' | 'pattern' | 'episodeM
 /** Score desc, id asc — the render order inside every tier class. */
 const byRenderOrder = (x: Scored, y: Scored): number => y.score - x.score || compareStrings(x.c.id, y.c.id);
 
+/** The contrast slot's one-word label — the packet names the foreign body. */
+export const CONTRAST_LABEL = 'elsewhere:';
+
+const labelContrast = (members: Scored[]): string[] => members.map((m) => `${CONTRAST_LABEL}\n${m.c.render()}`);
+
 export interface RenderedPacket {
   sections: Partial<Record<Section, string>>;
   itemIds: string[];
@@ -49,7 +57,13 @@ export const renderPacket = (sel: Selection, input: RenderInput): RenderedPacket
   const pattern = groupByKind(sel, 'pattern').sort(byRenderOrder);
   const episodes = groupByKind(sel, 'episodeMemory').filter((m) => m.c.tier !== 'memory').sort(byRenderOrder);
   const contrast = groupByKind(sel, 'contrast').sort(byRenderOrder);
-  const exemplars = [...disposition, ...pattern, ...episodes, ...contrast];
+  const exemplarTexts = [
+    ...disposition.map((m) => m.c.render()),
+    ...pattern.map((m) => m.c.render()),
+    ...labelContrast(contrast),
+    ...episodes.map((m) => m.c.render()),
+  ];
+  const exemplars = [...disposition, ...pattern, ...contrast, ...episodes];
   const procedural = [...sel.procedural].sort(byRenderOrder);
 
   const sections: Partial<Record<Section, string>> = {};
@@ -62,7 +76,7 @@ export const renderPacket = (sel: Selection, input: RenderInput): RenderedPacket
     }
     sections['INTERLOCUTOR'] = sectionText(
       'INTERLOCUTOR',
-      `${input.q.speaker.person} on ${input.q.speaker.channel} (register: ${input.q.register})`,
+      `${input.q.personLabel ?? input.q.speaker.person} on ${input.q.speaker.channel} (register: ${input.q.register})`,
     );
     if (memory.length > 0) {
       sections['MEMORY'] = sectionText('MEMORY', memory.map((m) => m.c.render()).join('\n'));
@@ -71,8 +85,8 @@ export const renderPacket = (sel: Selection, input: RenderInput): RenderedPacket
       sections['AFFECT'] = sectionText('AFFECT', input.weatherLine);
     }
     sections['REGISTER'] = sectionText('REGISTER', input.q.register);
-    if (exemplars.length > 0) {
-      sections['EXEMPLARS'] = sectionText('EXEMPLARS', exemplars.map((m) => m.c.render()).join('\n\n'));
+    if (exemplarTexts.length > 0) {
+      sections['EXEMPLARS'] = sectionText('EXEMPLARS', exemplarTexts.join('\n\n'));
     }
   } else if (input.q.goal !== undefined && input.q.goal.trim() !== '') {
     // Task/cast worker: procedural + brief only — no character channel, no affect line (ADR-009).

@@ -70,9 +70,18 @@ export interface CreditWeights {
 // ---------------------------------------------------------------------------
 
 export interface ConsolidateConfig {
-  /** corpus/lived — the only directory L2 may write exemplars into. */
+  /**
+   * var/lived — the only directory L2 may write exemplars into. Runtime state
+   * under the injected var dir (round 2, 2026-09-02): lived scenes are
+   * machine-written memory, not code-reviewed corpus, so they no longer land in
+   * corpus/lived. The corpus index's lived root points here too.
+   */
   livedDir: string;
-  /** corpus/proposals — drafts for the human; never canon, never auto-promoted. */
+  /**
+   * var/proposals — drafts for the human; never canon, never auto-promoted.
+   * Runtime state under the injected var dir (round 2); `thea2 proposals:export`
+   * copies it out for review.
+   */
   proposalsDir: string;
   /** var/reports — the status.md projection (nightly) + relationship baseline. */
   reportsDir: string;
@@ -108,6 +117,17 @@ export interface ConsolidateDeps {
   clock: Clock;
   rng: Rng;
   cfg: ConsolidateConfig;
+  /**
+   * Optional post-run hook (round 2): invoked ONCE per completed consolidation
+   * run — after the outputs are durable and the `consolidate.run` row is on L0 —
+   * with the finished report. This is the seam that makes the new lived/proposal
+   * files visible to the running corpus index: round 3's compose wires
+   * `onConsolidated: (report) => corpus.reload()`. Kept narrow on purpose (the
+   * consolidator may not drive the corpus beyond this one call), and undefined
+   * by default = the pre-round-2 behavior. A rejection propagates — the run
+   * itself is already durable and idempotent, and M16 must count the failure.
+   */
+  onConsolidated?: ((report: ConsolidateReport) => Promise<void>) | undefined;
 }
 
 // ---------------------------------------------------------------------------

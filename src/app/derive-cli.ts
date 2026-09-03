@@ -9,8 +9,8 @@
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
-import { asError } from '../kernel/index.js';
-import { createZaiClient, makeRouter, type ModelClient } from '../model/index.js';
+import { asError, type Clock, type Rng } from '../kernel/index.js';
+import { createZaiClient, isModelError, makeRouter, modelError, type ModelClient } from '../model/index.js';
 import { readRoutingTable } from '../siblings/index.js';
 import { makeHashEmbedder } from '../embed/index.js';
 import { openCorpusIndex, type OpenedCorpus } from '../corpus/corpus-index.js';
@@ -36,6 +36,7 @@ import {
 import { loadConfig, type Thea2Config } from './config.js';
 import { compose, type System } from './compose.js';
 import { makeEmbedder } from './embedder.js';
+import { THEAD_LOCK_PATH } from './lock.js';
 import type { CliIo } from './cli.js';
 
 // ---------------------------------------------------------------------------
@@ -126,6 +127,12 @@ const problemCount = (report: CheckReport): number =>
   report.caps.scenesOver.length +
   (report.caps.derivedCount > report.caps.maxDerived ? 1 : 0);
 
+/** Undefined unless the string is a positive integer (derive's worker-pool size). */
+const positiveInt = (raw: string | undefined): number | undefined => {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
+
 // ---------------------------------------------------------------------------
 // derive — the flywheel spin (real model, dev/scheduled)
 // ---------------------------------------------------------------------------
@@ -148,7 +155,23 @@ export const deriveVerb = async (
   const cfg = loadConfig(configPath, env);
   const sys = await compose(cfg, 'prod', opts.model !== undefined ? { model: opts.model } : {});
   try {
-    const model = opts.model ?? (await prodModel(cfg, sys));
+    // main.ts sets this ONLY when `--allow-live-derive` overrode a live-thead
+    // lock (value: the holder's pid). Running beside thead is exactly what the
+    // lock forbids, so the override names itself on L0 — failure must be loud,
+    // and a run that shares the event log with thead is a failure waiting.
+    const overridePid = Number.parseInt(env['THEA2_ALLOW_LIVE_DERIVE'] ?? '', 10);
+    if (env['THEA2_ALLOW_LIVE_DERIVE'] !== undefined) {
+      await sys.events.emit('derive.live_override', {
+        lock: THEAD_LOCK_PATH,
+        ...(Number.isInteger(overridePid) && overridePid > 0 ? { theadPid: overridePid } : {}),
+      });
+      io.err('derive: LIVE OVERRIDE — thead is running; derive is writing beside it (derive.live_override emitted)');
+    }
+
+    // The same patient client serves generation AND judging: both are batch
+    // calls, both charge the same per-key request budget.
+    const raw = opts.model ?? (await prodModel(cfg, sys));
+    const model = rateLimitPatient(raw, sys.clock, sys.rng.fork('derive-backoff'));
     const inputs = await runInputs(sys);
     const embedderId = makeEmbedder(cfg.embedder, {
       baseUrl: cfg.models.endpoint,
@@ -172,6 +195,10 @@ export const deriveVerb = async (
       events: sys.events,
       clock: sys.clock,
       outDir,
+      // Opt-in fan-out for real runs (THEA2_DERIVE_CONCURRENCY=8 turns a
+      // multi-hour sequential re-derive into ~1/8th of one). Tests keep the
+      // default 1: their MockModel scripts are FIFO-ordered per target.
+      concurrency: positiveInt(env['THEA2_DERIVE_CONCURRENCY']) ?? 1,
     });
 
     for (const f of report.failures) {
@@ -217,6 +244,44 @@ const prodModel = async (cfg: Thea2Config, sys: System): Promise<ModelClient> =>
     clock: sys.clock,
     rng: sys.rng.fork('model'),
   });
+};
+
+/**
+ * Rate-limit patience for BATCH callers. The transport fails fast on HTTP 429
+ * by spec — a live turn must never hang on a rate wall — but a derive run
+ * charging that wall at concurrency N burns both ladder attempts within the
+ * same second and loses targets wholesale (proven live: 12 hands → 377/382
+ * parse-failed). This shim waits the wall out instead: 20 s base, doubling
+ * per consecutive hit with jitter, capped at 5 min per wait and 15 min total
+ * per call before the error propagates. Concurrency becomes self-throttling
+ * rather than target-burning.
+ */
+export const rateLimitPatient = (model: ModelClient, clock: Clock, rng: Rng): ModelClient => {
+  const BASE_MS = 20_000;
+  const CAP_MS = 300_000;
+  const TOTAL_MS = 900_000;
+  return {
+    chat: async (req, ctx) => {
+      let hit = 0;
+      let waited = 0;
+      for (;;) {
+        try {
+          return await model.chat(req, ctx);
+        } catch (e) {
+          if (!isModelError(e) || e.code !== 'model/rate-limit') throw e;
+          if (waited >= TOTAL_MS) throw e; // a hard-capped key is not a wait
+          hit += 1;
+          const delay = Math.min(CAP_MS, BASE_MS * 2 ** (hit - 1)) + Math.floor(rng.float() * 5_000);
+          waited += delay;
+          try {
+            await clock.waitUntil(clock.epochMs() + delay, ctx?.signal);
+          } catch (waitError) {
+            throw modelError('model/aborted', 'chat aborted while waiting out a rate limit', { cause: waitError });
+          }
+        }
+      }
+    },
+  };
 };
 
 /** The run's canon comes from the composed index — canon population only, never derived or lived. */

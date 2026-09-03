@@ -1,7 +1,7 @@
 ---
 module: M17
 name: life
-syncedTo: S6 complete (implemented — src/life + test/life, 145 tests; the reflect job wires M10's consolidators through a compose-side provider — src/life never imports src/consolidate)
+syncedTo: Phase 1 as-built (2026-09-02 — src/life + test/life implemented; the reflect job wires M10's consolidators through a compose-side provider — src/life never imports src/consolidate; heartbeat counters move on the self-entry OUTCOME)
 stage: S6
 depends: [M01-kernel, M02-events, M03-model, M05-affect, M09-memory, M13-loop, M16-sched]
 ---
@@ -77,3 +77,8 @@ export const reflectJob: (deps: LifeDeps) => Job;
 - property: balance rule over seeded histories; heartbeat cap + backoff interaction (never texts on the 4th send of a day regardless of score).
 - component: heartbeat e2e at 3.1/3.3 (MockModel + FakeChannel + TestClock); ponder committee over a forced-avoid history; artifact landing → gate cooldown; reflection across a missed-night gap.
 - fixtures needed: canned affect/drive states for scorer tables; scripted heartbeat-thought outputs across the score boundary; seeded ponder-saliency histories; a FakeChannel session.
+
+## As built (Phase 1)
+
+- **Heartbeat counters move on OUTCOME, not enqueue.** `LifeJobDeps.selfEntry` returns a handle whose `sent` promise settles with the number of bubbles the turn delivered (0 = in-loop silent/defer, aborted send, or dead turn; the pipeline settles every exit path). sentToday/unanswered/lastSentTs advance only on >= 1 delivered bubble — an in-loop silence spends neither the daily cap nor the backoff ladder, and `owedInbound` outranks every other gate (owned → quiet hours → cap → backoff → mutex → ok).
+- **The thought row carries its outcome.** The job holds `life.heartbeat.thought` until the fire's outcome is known and lands it exactly once, augmented with `sent` — `passed:true, sent:false` is the log's answer to "the thought passed, so why didn't she text?". `life.heartbeat.sent` (turnId/kind/bubbles) is emitted by the job alone, on a real send. Note: the `sent` augmentation rides a raw `events.emit` because `HeartbeatThoughtPayload` (events.ts, outside Phase 1's file surface) would strip an unknown key at the schema wall; promote `sent` into that schema when events.ts is next owned.

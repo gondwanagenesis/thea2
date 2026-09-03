@@ -1,0 +1,8 @@
+#!/bin/sh
+# Thea2 CLI wrapper (installed to /opt/thea2/bin/thea2 by install.sh).
+# The runbook's verbs — `thea2 status`, `thea2 reconcile`, `thea2 corpus:check`,
+# `thea2 derive` — resolve here. Run from the install root so canon and var/
+# resolve from cwd, exactly as thead does.
+set -eu
+cd /opt/thea2
+exec ./node_modules/.bin/tsx src/app/main.ts "$@"

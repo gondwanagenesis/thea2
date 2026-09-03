@@ -6,16 +6,32 @@
 
 import { describe, expect, it } from 'vitest';
 import { TestClock } from '../../src/kernel/clock.js';
-import { SystemClock } from '../../src/kernel/clock.js';
 import { makeRng } from '../../src/kernel/index.js';
 import {
   buildAnthropicBody,
   parseAnthropicResponse,
   parseAnthropicSSE,
 } from '../../src/model/anthropic.js';
-import { zaiTransport } from '../../src/model/index.js';
+import {
+  chatCore,
+  createModelClient,
+  makeRouter,
+  zaiTransport,
+  type ModelCallEvent,
+  type Transport,
+  type WireResponse,
+} from '../../src/model/index.js';
 import { z } from 'zod';
 import type { ChatRequest } from '../../src/model/types.js';
+import { memoryLog, TEST_TIERS } from './helpers.js';
+import {
+  SSE_END_TURN,
+  SSE_ERROR_INVALID_REQUEST,
+  SSE_ERROR_OVERLOADED,
+  SSE_MAX_TOKENS_EMPTY,
+  SSE_MAX_TOKENS_WITH_CONTENT,
+  sseResponse,
+} from './sse-fixtures.js';
 
 // `any` mirrors BuildBodyInput: the body builder shapes requests it never parses.
 const req = (over: Partial<ChatRequest<any>> = {}): ChatRequest<any> => ({
@@ -108,6 +124,29 @@ describe('buildAnthropicBody', () => {
       { type: 'tool_result', tool_use_id: 'c2', content: 'result two' },
     ]);
   });
+
+  it('sends no thinking key when the request does not set one (wire bodies unchanged)', () => {
+    const body = buildAnthropicBody({ req: req(), model: 'glm-5.3-flash', rung: 'auto', seedSupported: false });
+    expect('thinking' in body).toBe(false);
+    expect(Object.keys(body).sort()).toEqual(['max_tokens', 'messages', 'model', 'temperature']);
+  });
+
+  it('passes req.thinking through verbatim as the Anthropic thinking parameter', () => {
+    const enabled = buildAnthropicBody({
+      req: req({ thinking: { type: 'enabled', budget_tokens: 1024 } }),
+      model: 'glm-5.3-flash',
+      rung: 'auto',
+      seedSupported: false,
+    });
+    expect(enabled.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
+    const disabled = buildAnthropicBody({
+      req: req({ thinking: { type: 'disabled' } }),
+      model: 'glm-5.3-flash',
+      rung: 'auto',
+      seedSupported: false,
+    });
+    expect(disabled.thinking).toEqual({ type: 'disabled' });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -134,6 +173,12 @@ describe('parseAnthropicResponse', () => {
 
   it('refuses a body without content blocks', () => {
     expect(() => parseAnthropicResponse({})).toThrowError(expect.objectContaining({ code: 'model/bad-json' }));
+  });
+
+  it('reads the non-streaming stop_reason into stopReason', () => {
+    const r = parseAnthropicResponse({ content: [{ type: 'text', text: 'x' }], stop_reason: 'max_tokens' });
+    expect(r.stopReason).toBe('max_tokens');
+    expect(parseAnthropicResponse({ content: [] }).stopReason).toBeUndefined();
   });
 });
 
@@ -195,6 +240,183 @@ describe('parseAnthropicSSE', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Recorded SSE fixtures — error events, stop_reason, truncation
+// ---------------------------------------------------------------------------
+
+describe('parseAnthropicSSE — recorded fixtures', () => {
+  it('normal end_turn: text folded, stopReason end_turn, usage from message_delta', () => {
+    const r = parseAnthropicResponse(parseAnthropicSSE(SSE_END_TURN));
+    expect(r.content).toBe("hey. you're up late.");
+    expect(r.stopReason).toBe('end_turn');
+    expect(r.inputTokens).toBe(812);
+    expect(r.outputTokens).toBe(41);
+  });
+
+  it('max_tokens with content still parses, stopReason max_tokens', () => {
+    const r = parseAnthropicResponse(parseAnthropicSSE(SSE_MAX_TOKENS_WITH_CONTENT));
+    expect(r.content).toBe('the thing about sea glass is that it takes about');
+    expect(r.stopReason).toBe('max_tokens');
+  });
+
+  it('max_tokens with only thinking parses to empty content + stopReason max_tokens (the guard lives above)', () => {
+    const r = parseAnthropicResponse(parseAnthropicSSE(SSE_MAX_TOKENS_EMPTY));
+    expect(r.content).toBe('');
+    expect(r.toolCalls).toEqual([]);
+    expect(r.stopReason).toBe('max_tokens');
+    expect(r.outputTokens).toBe(2048);
+  });
+
+  it('an overloaded `error` event is a retryable model/http-error carrying the door\'s type + message', () => {
+    const err = (() => {
+      try {
+        parseAnthropicSSE(SSE_ERROR_OVERLOADED);
+        return undefined;
+      } catch (e) {
+        return e as { code?: string; retryable?: boolean; message?: string; cause?: unknown };
+      }
+    })();
+    expect(err?.code).toBe('model/http-error');
+    expect(err?.retryable).toBe(true);
+    expect(err?.message).toContain('overloaded_error');
+    expect(err?.message).toContain('Overloaded');
+    expect(err?.cause).toEqual({ sseError: { type: 'overloaded_error', message: 'Overloaded' } });
+  });
+
+  it('rate_limit_error and api_error events are retryable; invalid_request_error is not', () => {
+    const event = (type: string): string =>
+      `data: {"type":"error","error":{"type":"${type}","message":"m"}}\n\n`;
+    for (const t of ['rate_limit_error', 'api_error']) {
+      expect(() => parseAnthropicSSE(event(t))).toThrowError(
+        expect.objectContaining({ code: 'model/http-error', retryable: true }),
+      );
+    }
+    expect(() => parseAnthropicSSE(SSE_ERROR_INVALID_REQUEST)).toThrowError(
+      expect.objectContaining({ code: 'model/http-error', retryable: false }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The truncation guard: an empty max_tokens reply is never a decision
+// ---------------------------------------------------------------------------
+
+const router = makeRouter({ tiers: { ...TEST_TIERS } });
+
+/** Transport double handing back an already-folded SSE body, like consumeSSE does. */
+const foldedSend = (sse: string): Transport => async () => ({
+  response: parseAnthropicSSE(sse) as unknown as WireResponse,
+  attempts: 1,
+});
+
+describe('chatCore — anthropic stop_reason handling', () => {
+  it('throws model/truncated (non-retryable, names the budget) for max_tokens with nothing visible', async () => {
+    const core = chatCore({ router, protocol: 'anthropic', send: foldedSend(SSE_MAX_TOKENS_EMPTY) });
+    const err = (await core(req({ maxTokens: 2048 }), undefined, 'auto').catch((e: unknown) => e)) as {
+      code?: string;
+      retryable?: boolean;
+      message?: string;
+    };
+    expect(err.code).toBe('model/truncated');
+    expect(err.retryable).toBe(false);
+    expect(err.message).toContain('2048');
+    expect(err.message).toContain('max_tokens');
+  });
+
+  it('returns a max_tokens reply that has visible content, with stopReason set', async () => {
+    const core = chatCore({ router, protocol: 'anthropic', send: foldedSend(SSE_MAX_TOKENS_WITH_CONTENT) });
+    const r = await core(req(), undefined, 'auto');
+    expect(r.content).toBe('the thing about sea glass is that it takes about');
+    expect(r.stopReason).toBe('max_tokens');
+  });
+
+  it('a normal end_turn reply carries stopReason end_turn', async () => {
+    const core = chatCore({ router, protocol: 'anthropic', send: foldedSend(SSE_END_TURN) });
+    const r = await core(req(), undefined, 'auto');
+    expect(r.stopReason).toBe('end_turn');
+  });
+
+  it('max_tokens with a tool call but no text is NOT a truncation (the call is the decision)', async () => {
+    const withTool = SSE_MAX_TOKENS_EMPTY.replace(
+      'event: message_delta',
+      [
+        'event: content_block_start',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"emit","input":{}}}',
+        '',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"a\\":1}"}}',
+        '',
+        'event: message_delta',
+      ].join('\n'),
+    );
+    const core = chatCore({ router, protocol: 'anthropic', send: foldedSend(withTool) });
+    const r = await core(req(), undefined, 'auto');
+    expect(r.toolCalls).toEqual([{ id: 't1', name: 'emit', args: { a: 1 } }]);
+    expect(r.stopReason).toBe('max_tokens');
+  });
+});
+
+describe('createModelClient — truncation is loud', () => {
+  it('emits model.call outcome=error and rethrows model/truncated; stopReason rides ChatResponse otherwise', async () => {
+    const { log, events } = memoryLog();
+    const starved = createModelClient({
+      core: chatCore({ router, protocol: 'anthropic', send: foldedSend(SSE_MAX_TOKENS_EMPTY) }),
+      log,
+      clock: new TestClock(0),
+    });
+    await expect(starved.chat(req())).rejects.toThrowError(expect.objectContaining({ code: 'model/truncated' }));
+    const calls = events.filter((e) => e.kind === 'model.call');
+    expect(calls).toHaveLength(1);
+    expect((calls[0]!.payload as ModelCallEvent).outcome).toBe('error');
+
+    const fine = createModelClient({
+      core: chatCore({ router, protocol: 'anthropic', send: foldedSend(SSE_END_TURN) }),
+      log,
+      clock: new TestClock(0),
+    });
+    const res = await fine.chat(req());
+    expect(res.stopReason).toBe('end_turn');
+    expect(res.content).toBe("hey. you're up late.");
+  });
+});
+
+describe('zaiTransport — SSE error events ride the retry policy', () => {
+  it('an overloaded error event is retried; the next clean stream wins with attempts=2', async () => {
+    const queue = [SSE_ERROR_OVERLOADED, SSE_END_TURN];
+    const fetchImpl = (async (): Promise<Response> => sseResponse(queue.shift() ?? '')) as unknown as typeof fetch;
+    const transport = zaiTransport({
+      apiKey: 'k',
+      clock: new TestClock(0),
+      rng: makeRng('t'),
+      fetchImpl,
+      protocol: 'anthropic',
+      backoff: { baseMs: 0, capMs: 0 },
+    });
+    const result = await transport({ body: { model: 'm', messages: [], temperature: 0, max_tokens: 10 } });
+    expect(result.attempts).toBe(2);
+    expect(parseAnthropicResponse(result.response as unknown).stopReason).toBe('end_turn');
+  });
+
+  it('an invalid_request error event fails fast', async () => {
+    let calls = 0;
+    const fetchImpl = (async (): Promise<Response> => {
+      calls += 1;
+      return sseResponse(SSE_ERROR_INVALID_REQUEST);
+    }) as unknown as typeof fetch;
+    const transport = zaiTransport({
+      apiKey: 'k',
+      clock: new TestClock(0),
+      rng: makeRng('t'),
+      fetchImpl,
+      protocol: 'anthropic',
+      backoff: { baseMs: 0, capMs: 0 },
+    });
+    await expect(transport({ body: { model: 'm', messages: [], temperature: 0, max_tokens: 10 } })).rejects.toThrowError(
+      expect.objectContaining({ code: 'model/http-error', retryable: false }),
+    );
+    expect(calls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Transport protocol switch
 // ---------------------------------------------------------------------------
 
@@ -208,21 +430,6 @@ const SSE_BODY = [
   'data: {"type":"message_delta","usage":{"output_tokens":1}}',
   '',
 ].join('\n');
-
-const sseResponse = (sse: string): Response => {
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(sse));
-      controller.close();
-    },
-  });
-  return {
-    ok: true,
-    status: 200,
-    body: stream,
-    text: async () => sse,
-  } as unknown as Response;
-};
 
 describe('zaiTransport — anthropic protocol', () => {
   it('posts to /v1/messages with x-api-key headers and stream:true, parses the SSE', async () => {
@@ -274,18 +481,18 @@ describe('zaiTransport — anthropic protocol', () => {
   it('a wedged stream that keeps dribbling dies at the total cap, not retryable', async () => {
     // The live-proven hang: keepalive-sized chunks keep resetting the idle
     // deadline while the model never actually produces. The total cap is the
-    // bound. Real SystemClock — the dribble is real-time, the TestClock cannot
-    // express "time passes while chunks keep arriving".
+    // bound. The dribble is paced on the same TestClock the transport races
+    // against: every 20 simulated ms a keepalive lands, the idle deadline
+    // (1000) never trips, the total cap (250) does.
+    const clock = new TestClock(0);
+    let keepalives = 0;
     const dribble = (): Response => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
       const stream = new ReadableStream<Uint8Array>({
         pull(controller) {
-          timer = setTimeout(() => {
+          return clock.waitUntil(clock.epochMs() + 20).then(() => {
+            keepalives += 1;
             controller.enqueue(new TextEncoder().encode(': keepalive\n\n'));
-          }, 20);
-        },
-        cancel() {
-          if (timer !== undefined) clearTimeout(timer);
+          });
         },
       });
       return { ok: true, status: 200, body: stream, text: async () => '' } as unknown as Response;
@@ -293,7 +500,7 @@ describe('zaiTransport — anthropic protocol', () => {
     const fetchImpl = (async (): Promise<Response> => dribble()) as unknown as typeof fetch;
     const transport = zaiTransport({
       apiKey: 'k',
-      clock: new SystemClock(),
+      clock,
       rng: makeRng('t'),
       fetchImpl,
       protocol: 'anthropic',
@@ -301,9 +508,20 @@ describe('zaiTransport — anthropic protocol', () => {
       streamTotalMs: 250,
       maxRetries: 2,
     });
-    const err = (await transport({ body: { model: 'm', messages: [], temperature: 0, max_tokens: 5 } }).catch(
+    const pending = transport({ body: { model: 'm', messages: [], temperature: 0, max_tokens: 5 } }).catch(
       (e: unknown) => e,
-    )) as { code?: string; retryable?: boolean; message?: string };
+    );
+    // Step the clock in dribble-sized increments, draining the stream's
+    // microtask chain between steps so each keepalive really resets the idle race.
+    // The total cap arms when the RESPONSE lands — t=20, after the first
+    // advance's microtask drain — so it fires at t=270 and the loop must step
+    // past that, not merely past the nominal 250.
+    for (let i = 0; i < 16; i += 1) {
+      await clock.advance(20);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const err = (await pending) as { code?: string; retryable?: boolean; message?: string };
+    expect(keepalives).toBeGreaterThanOrEqual(10); // the idle deadline was fed the whole way
     expect(err.code).toBe('model/timeout');
     expect(err.retryable).toBe(false);
     expect(err.message).toContain('total cap');

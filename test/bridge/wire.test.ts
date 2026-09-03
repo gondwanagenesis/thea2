@@ -5,7 +5,13 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalJson } from '../../src/kernel/index.js';
 import { parseUpdate, personFromWire } from '../../src/bridge/index.js';
-import { EXPECTED_INBOUND, EXPECTED_SKIPS, DIEGO_TG_ID, fixture, parseFixture } from './helpers.js';
+import {
+  EXPECTED_INBOUND,
+  EXPECTED_SKIPPED_INBOUND,
+  DIEGO_TG_ID,
+  fixture,
+  parseFixture,
+} from './helpers.js';
 
 describe('parseUpdate over recorded fixtures', () => {
   for (const [name, expected] of Object.entries(EXPECTED_INBOUND)) {
@@ -16,12 +22,21 @@ describe('parseUpdate over recorded fixtures', () => {
     });
   }
 
-  for (const [name, reason] of Object.entries(EXPECTED_SKIPS)) {
-    it(`AC: ${name} is skipped as ${reason}`, () => {
+  for (const [name, expected] of Object.entries(EXPECTED_SKIPPED_INBOUND)) {
+    it(`AC: ${name} is skipped as ${expected.skipped?.reason} — as a skip-stamped inbound the offset can move past`, () => {
       const parsed = parseFixture(name);
-      expect(parsed).toEqual({ ok: false, reason, detail: expect.any(String) });
+      if (!parsed.ok) throw new Error(`fixture '${name}' should skip-parse, got ${parsed.reason}`);
+      expect(canonicalJson(parsed.msg)).toBe(canonicalJson(expected));
     });
   }
+
+  it('malformed_no_update_id is the one unparseable shape: nothing can be committed past an unnumbered update', () => {
+    expect(parseFixture('malformed_no_update_id')).toEqual({
+      ok: false,
+      reason: 'malformed',
+      detail: expect.any(String),
+    });
+  });
 
   it('AC: speaker provenance is stamped from the sender — never from text', () => {
     const parsed = parseFixture('text_message');
@@ -63,11 +78,17 @@ describe('parseUpdate over recorded fixtures', () => {
     });
   });
 
-  it('an update with no known payload kind is unsupported, not silently swallowed', () => {
-    expect(parseUpdate({ update_id: 500, my_chat_member: {} })).toEqual({
-      ok: false,
-      reason: 'unsupported',
-      detail: expect.any(String),
+  it('an update with no known payload kind is skip-stamped unsupported — never a wedge, never a turn', () => {
+    const parsed = parseUpdate({ update_id: 500, my_chat_member: {} });
+    if (!parsed.ok) throw new Error('a numbered update must parse (skip-stamped at worst)');
+    expect(parsed.msg).toEqual({
+      updateId: 500,
+      msgId: 0,
+      chatId: 0,
+      ts: 1_788_000_000_000,
+      text: '',
+      speaker: { person: 'unknown', channel: 'telegram' },
+      skipped: { reason: 'unsupported' },
     });
   });
 });

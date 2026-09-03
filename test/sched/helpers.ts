@@ -104,6 +104,11 @@ export class SchedHarness {
   }
 }
 
+/** A real-event-loop settle (test-only; src is Clock-gated): lets an fs append
+ * chain that raced an assertion land before the log is read. */
+export const realSettle = (ms = 25): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+
 // --- job factories ---------------------------------------------------------
 
 type JobOverrides = Partial<Pick<Job, 'name' | 'cadence' | 'lane' | 'catchUp' | 'timeoutMs' | 'run'>>;

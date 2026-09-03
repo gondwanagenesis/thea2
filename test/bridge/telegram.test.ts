@@ -14,7 +14,7 @@ import {
   type InboundMsg,
   type TelegramChannelDeps,
 } from '../../src/bridge/index.js';
-import { EXPECTED_INBOUND, fixture, memoryLog, testSpeaker } from './helpers.js';
+import { EXPECTED_INBOUND, EXPECTED_SKIPPED_INBOUND, fixture, memoryLog, testSpeaker } from './helpers.js';
 
 const T0 = 1_788_000_000_000;
 const TOKEN = '123456:ABC-not-a-real-token';
@@ -208,7 +208,7 @@ describe('telegramChannel — updates (long poll)', () => {
     await first;
   });
 
-  it('AC: parses accepted fixtures and skips the rest — a skipped update never reaches the pipeline', async () => {
+  it('AC: parses accepted fixtures and skip-stamps the rest — a skipped update is recorded for the offset, never turned', async () => {
     const { fetchImpl, queue } = scriptedFetch();
     queue.push(okUpdates([fixture('text_message'), fixture('edited_message'), fixture('reaction')]));
     const ch = telegramChannel(channelDeps({ fetchImpl, speaker: testSpeaker }));
@@ -216,9 +216,13 @@ describe('telegramChannel — updates (long poll)', () => {
     const got: InboundMsg[] = [];
     for await (const m of ch.updates(ac.signal)) {
       got.push(m);
-      if (got.length === 2) break;
+      if (got.length === 3) break;
     }
-    expect(got).toEqual([EXPECTED_INBOUND['text_message']!, EXPECTED_INBOUND['reaction']!]);
+    expect(got).toEqual([
+      EXPECTED_INBOUND['text_message']!,
+      EXPECTED_SKIPPED_INBOUND['edited_message']!,
+      EXPECTED_INBOUND['reaction']!,
+    ]);
   });
 
   it('a failed poll backs off on the clock (jitter from the injected stream) and then retries', async () => {

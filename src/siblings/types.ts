@@ -132,3 +132,26 @@ export const NIGHTINGALE_TIMEOUT_MS = 15 * 60_000;
 
 /** Spec: probes run k=3, median-aggregated. */
 export const PROBE_K = 3;
+
+// ---------------------------------------------------------------------------
+// `sibling.report` — the delivery seam (round 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted once per finished report, with everything a channel deliverer needs.
+ * Round 2 lands the EVENT; the channel delivery itself (Telegram) is round 3 —
+ * no bridge here. `sibling.ledger_report` / `sibling.nightingale_*` stay the
+ * per-sibling verdict events; this one is the generic "a report is ready to
+ * travel" row.
+ */
+export const SIBLING_REPORT_EVENT = 'sibling.report';
+
+export interface SiblingReportEvent {
+  sibling: 'ledger' | 'nightingale';
+  /** The report file on disk (var/reports/…). */
+  file: string;
+  /** The report's own date line (ledger date / nightingale stamp). */
+  date: string;
+  /** One machine-rendered line summarizing the page — the delivery preview. */
+  summary: string;
+}

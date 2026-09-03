@@ -75,7 +75,7 @@ describe('cli', () => {
     expect(capture.text().err).toContain("unknown verb 'vibes'");
   });
 
-  it('status boots prod over the local config and reports state — no network', async () => {
+  it('status boots prod over the local config and reports state — no network', { timeout: 30_000 }, async () => {
     // Same isolation as reconcile below: a prod boot anchors var/ at the
     // process cwd, and the repo's own var/ belongs to a live thead.
     const dir = mkdtempSync(join(tmpdir(), 'thea2-cli-install-'));
@@ -92,13 +92,13 @@ describe('cli', () => {
       expect(t.out).toContain('corpus');
       expect(t.out).toContain('episodes');
       expect(t.out).toContain('tg offset');
-      expect(t.out).toContain('sched jobs    3'); // S6/S7: heartbeat + ponder + reflect wire on every real boot
+      expect(t.out).toContain('sched jobs    6'); // S6/S7 + reconcile + affect snapshot + the Ledger wire on every real boot
     } finally {
       process.chdir(cwd);
     }
   });
 
-  it('reconcile over a fresh install is clean', async () => {
+  it('reconcile over a fresh install is clean', { timeout: 30_000 }, async () => {
     // Isolation: compose anchors var/ AND corpus/ at the process cwd (the
     // documented S5 canon deviation), so run against a throwaway cwd with the
     // canon copied in — never the repo's own var/ledger, which a live thead

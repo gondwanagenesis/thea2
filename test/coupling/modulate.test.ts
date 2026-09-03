@@ -14,7 +14,7 @@ import {
   type SparseVec12,
   type Vec12,
 } from '../../src/coupling/index.js';
-import { vecOf, zeroVec, COMMITTED } from './helpers.js';
+import { vecOf, zeroVec, COMMITTED, compileConfig } from './helpers.js';
 
 const entry = (from: MatrixEntry['from'], to: MatrixEntry['to'], w: number, why = 'test'): MatrixEntry => ({ from, to, w, why });
 
@@ -83,6 +83,43 @@ describe('modulate — hand-computed aᵀMe goldens', () => {
       const expected = Math.min(0.25, Math.max(-0.25, dense));
       expect(modulate(av, sv, [], compiled), `trial ${trial}`).toBeCloseTo(expected, 12);
     }
+  });
+});
+
+describe('modulate — max rules (fires BELOW θ, the v2 low-state shape)', () => {
+  const maxCfg: CouplingConfig = {
+    version: 2,
+    lambda: 0.25,
+    matrix: [],
+    formRules: [{ when: { dim: 'arousal', max: -0.4 }, boostTag: 'quiet', gain: 0.1, why: 'low energy favors the quiet room' }],
+  };
+  const maxed = compileConfig(maxCfg);
+  const at = (arousal: number): number => modulate(vecOf({ arousal }), {}, ['quiet'], maxed);
+
+  it('adds gain·(θ−a) strictly below θ, nothing at or above it', () => {
+    expect(at(-1)).toBeCloseTo(0.1 * 0.6, 12); // pinned low: 0.6 past θ
+    expect(at(-0.9)).toBeCloseTo(0.1 * 0.5, 12);
+    expect(at(-0.4)).toBe(0); // exactly at θ
+    expect(at(-0.39)).toBe(0); // above θ
+    expect(at(0)).toBe(0); // neutral — the v1 always-on boost is gone
+    expect(at(1)).toBe(0); // high arousal never boosts the quiet room
+  });
+
+  it('a negative gain penalizes the LOW side symmetrically (the "penalize when low" shape)', () => {
+    const neg: CouplingConfig = { ...maxCfg, formRules: [{ ...maxCfg.formRules[0]!, gain: -0.2 }] };
+    const compiled = compileConfig(neg);
+    expect(modulate(vecOf({ arousal: -0.9 }), {}, ['quiet'], compiled)).toBeCloseTo(-0.2 * 0.5, 12);
+    expect(modulate(vecOf({ arousal: 0 }), {}, ['quiet'], compiled)).toBe(0);
+  });
+
+  it('plays by the same cap: saturates at ±λ like any other term', () => {
+    const big: CouplingConfig = {
+      version: 2,
+      lambda: 0.25,
+      matrix: [],
+      formRules: [{ when: { dim: 'arousal', max: 1 }, boostTag: 'quiet', gain: 1, why: 'maxed' }],
+    };
+    expect(modulate(vecOf({ arousal: -1 }), {}, ['quiet'], compileConfig(big))).toBe(0.25);
   });
 });
 
