@@ -26,8 +26,13 @@ export const MAX_DERIVED_PER_CANON = 8;
  * Judge attestation version + pass threshold. A draft scoring below the
  * threshold is retried once, then discarded. The spec pins the mechanism, not
  * the number; 4/5 is "the shape survived, the voice survived".
+ *
+ * v2 (P-JUDGE0 JU.1): the rubric gained the hard-fail laws — a draft carrying a
+ * romantic pet name, a fabricated dwelling/home/pet/named third party, physical
+ * co-presence or touch, an invented past event, or an em-dash scores 1. Every
+ * entry attested under the older rubric carries `derive-judge-v1` in its stamp.
  */
-export const JUDGE_VERSION = 'derive-judge-v1';
+export const JUDGE_VERSION = 'derive-judge-v2';
 export const JUDGE_PASS_THRESHOLD = 4;
 
 // ---------------------------------------------------------------------------

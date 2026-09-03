@@ -12,6 +12,7 @@ import {
   derive,
   emptyManifest,
   fileBaseName,
+  JUDGE_VERSION,
   loadManifest,
   manifestPath,
   serializeManifest,
@@ -50,21 +51,31 @@ const parseWritten = (text: string): Exemplar => {
 // so the reproducibility proof below is real (same seed ⇒ same draw ⇒ same bytes).
 // ---------------------------------------------------------------------------
 
-const PROCEDURE_BODY = [
-  'Setup: he wonders about the box',
-  'D: is it fine',
-  'T: hold on',
-  '[tool] splyce_status {"id":"box"} → their status page says green',
-  '[outcome] good — he let it go',
-  '',
-].join('\n');
+const PROCEDURE_BODY = (tool: string): string =>
+  [
+    'Setup: he wonders about the box',
+    'D: is it fine',
+    'T: hold on',
+    `[tool] ${tool} {"id":"box"} → their status page says green`,
+    '[outcome] good — he let it go',
+    '',
+  ].join('\n');
 const PROSE_BODY = 'what she keeps: the small sure thing\nand the shape it leaves behind\n';
 
-/** Echoes the mood angle the generator drew, so the rng is load-bearing in the bytes. */
+/**
+ * Echoes the mood angle / tool name the generator drew, so the rng and the
+ * tool pairing are load-bearing in the bytes. The tool echo is load-bearing
+ * twice over: both procedural targets pair the SAME scene, so a constant body
+ * would render two byte-identical files (same content id) and the concurrent
+ * writers would race on one destination path (EPERM on rename, observed live).
+ */
 const deriveResponder = (): Responder => (req) => {
   const system = req.messages[0]?.content ?? '';
   const user = req.messages.at(-1)?.content ?? '';
-  if (system.includes('procedural exemplar')) return { content: PROCEDURE_BODY };
+  if (system.includes('procedural exemplar')) {
+    const tool = /tool: (\S+)/.exec(user)?.[1] ?? 'unknown-tool';
+    return { content: PROCEDURE_BODY(tool) };
+  }
   if (system.includes('deliberation') || system.includes('memory')) return { content: PROSE_BODY };
   const angle = /Angle: (.*)/.exec(user)?.[1] ?? 'none';
   return { content: `D: he asks something small\nT: ${angle}. the fan hums\n` };
@@ -93,7 +104,7 @@ const makeOpts = (
   model,
   modelId: 'test-gen',
   judgeModel: judge,
-  judge: { version: 'derive-judge-v1', threshold: 4 },
+  judge: { version: JUDGE_VERSION, threshold: 4 },
   embedderId: 'test-embedder',
   rng: makeRng(7),
   events:
@@ -153,7 +164,7 @@ describe('happy path (8 targets: 4 mood, 2 procedural, 1 deliberation, 1 weave)'
     // every entry is attested, content-addressed, and its file parses as derived
     expect(report.entries).toHaveLength(8);
     for (const entry of report.entries) {
-      expect(entry.judge).toEqual({ version: 'derive-judge-v1', score: 5, pass: true });
+      expect(entry.judge).toEqual({ version: JUDGE_VERSION, score: 5, pass: true });
       const file = path.join(dir, `${fileBaseName(entry.id)}.md`);
       const text = await fsp.readFile(file, 'utf8');
       expect(derivedFileId(text)).toBe(entry.id); // content-hash invariant
@@ -242,7 +253,7 @@ describe('judge gate: retry once, then discard', () => {
         message: expect.stringContaining('judge scored 2 < threshold 4'),
       },
     ]);
-    expect(report.entries[0]!.judge).toEqual({ version: 'derive-judge-v1', score: 5, pass: true });
+    expect(report.entries[0]!.judge).toEqual({ version: JUDGE_VERSION, score: 5, pass: true });
   });
 
   it('a draft failed twice is never written: no file, no manifest entry', async () => {
@@ -293,6 +304,35 @@ describe('judge gate: retry once, then discard', () => {
     expect(report.parseFailed).toBe(1); // the failure is attributed to the last stage reached
     expect(report.failures.map((f) => f.stage)).toEqual(['generate', 'generate']);
     expect(report.failures[0]!.code).toBe('model/transport');
+  });
+
+  it('em-dash-normalized-before-judging', async () => {
+    // JU.2: em/en-dashes never reach the judge — the candidate is normalized to
+    // plain hyphens first, and the accepted bytes are that same normalized text
+    // (what was judged is what ships).
+    const dir = tmpDir('thea2-derive-run-');
+    const model = new MockModel({ clock: new TestClock() });
+    model.onTask('derive', () => ({
+      content: 'D: he asks something small\nT: the answer — quiet, unhurried\n',
+    }));
+    const judge = new MockModel({ clock: new TestClock() });
+    judge.onTask('judge', () => judgeSays(5));
+
+    const report = await derive(makeOpts(dir, oneTarget(), model, judge));
+
+    expect(report.ok).toBe(true);
+    expect(report.written).toBe(1);
+    // the judge was shown hyphens, not the forbidden glyphs
+    const seen = judge.calls[0]!.messages.at(-1)!.content;
+    expect(seen).toContain('the answer - quiet, unhurried');
+    expect(seen).not.toMatch(/[—–]/);
+    // and the written file is the normalized text, byte for byte
+    const text = await fsp.readFile(
+      path.join(dir, `${fileBaseName(report.entries[0]!.id)}.md`),
+      'utf8',
+    );
+    expect(text).toContain('the answer - quiet, unhurried');
+    expect(text).not.toMatch(/[—–]/);
   });
 });
 
@@ -394,7 +434,7 @@ describe('reproducibility', () => {
       const report = await derive(makeOpts(dir, inputs, model, judge, { rng: makeRng(seed) }));
       texts.add(await fsp.readFile(path.join(dir, `${fileBaseName(report.entries[0]!.id)}.md`), 'utf8'));
     }
-    // 6 seeds over 4 prompt angles: at least two distinct draws
+    // 6 seeds over 3 prompt angles: at least two distinct draws
     expect(texts.size).toBeGreaterThan(1);
   });
 });

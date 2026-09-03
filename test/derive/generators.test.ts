@@ -96,7 +96,9 @@ describe('mood-variant', () => {
     expect(draft).toContain('id: sha256:pending');
     expect(draft).not.toContain('provenance');
     expect(draft).toContain('kind: scene');
-    expect(draft).toContain('context: "bright variant');
+    // ' - ' not an em-dash (JU.1/JU.2): the plain value needs no YAML quoting
+    expect(draft).toContain('context: bright variant - ');
+    expect(draft).not.toMatch(/[—–]/);
     const parsed = parseDraft(draft);
     expect(parsed.context).toContain('bright variant');
   });

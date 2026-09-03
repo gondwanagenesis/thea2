@@ -14,7 +14,7 @@ import type { DerivedProvenance } from '../../schemas/exemplar.js';
 import { enumerateTargets, type ExpectedTarget } from './enumerate.js';
 import { assertStatementProse, draftKind, withBody, withProvenance } from './file.js';
 import { derivedFileId, fileBaseName, withFileId } from './keys.js';
-import { gradeDraft } from './judge.js';
+import { gradeDraft, normalizeDashes } from './judge.js';
 import { emptyManifest, loadManifest, sortEntries } from './manifest.js';
 import {
   DERIVE_ORPHAN_GC_EVENT,
@@ -180,6 +180,11 @@ const generateAndJudge = async (
       record(failures, generator.name, target.deriveKey, counted, 'generate', asError(e));
       continue;
     }
+
+    // JU.2: em/en-dashes are normalized out of the candidate before anything
+    // downstream sees it — parse, judge, and the accepted bytes are one and the
+    // same normalized text (what was judged is what ships).
+    draft = normalizeDashes(draft);
 
     // Parsed without a `file` argument — the id is still the pending
     // placeholder, so location identity is not checkable yet.

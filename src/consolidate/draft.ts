@@ -214,7 +214,7 @@ export const JudgeVerdict = z.object({
 });
 export type JudgeVerdict = z.infer<typeof JudgeVerdict>;
 
-export const JUDGE_VERSION = 'consolidate-judge-v1';
+export const JUDGE_VERSION = 'consolidate-judge-v2';
 export const JUDGE_MAX_TOKENS = 2000; // 300 starved live: thinking ate it before any verdict
 /** Minimum judge score (1-5) a draft needs to be written. */
 export const JUDGE_THRESHOLD = 4;
@@ -223,7 +223,25 @@ export const judgeSystemPrompt = (): string =>
   [
     'You judge a consolidated memory draft against the episodes it was drawn',
     'from. These are her memories, not creative writing: the only question is',
-    'faithfulness. Score the draft 1-5:',
+    'faithfulness.',
+    '',
+    // The hard-fail laws are shared with M08's derive judge (JU.1) — same list,
+    // worded against episodes instead of canon sources. Duplicated text on
+    // purpose: src/derive is not an allowed edge for this module; the discipline
+    // is shared, the code is not.
+    'HARD FAIL LAWS. If the draft contains ANY of these, score it 1 no matter how',
+    'well it is written, and name the law in the reason:',
+    '  - a romantic pet name: babe, baby, my love, sweetheart, girlfriend or',
+    '    boyfriend talk, any term of endearment a partner would use',
+    '  - a fabricated dwelling, home, pet, or named third party: any room,',
+    '    furniture, address, animal, or person the episodes do not contain',
+    '  - physical co-presence or touch: the two of them in one room, body',
+    '    contact, or anything staged as a shared physical scene',
+    '  - an invented past event: anything asserted as shared history that the',
+    '    episodes do not record',
+    '  - an em-dash or en-dash anywhere in the draft body',
+    '',
+    'Score the draft 1-5:',
     '  5 — every episode fact survives, nothing is invented, scene format is right.',
     '  4 — faithful; minor paraphrase only.',
     '  3 — recognizable but drifting or inventing detail. NOT acceptable.',

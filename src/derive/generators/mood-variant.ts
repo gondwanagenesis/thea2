@@ -29,9 +29,15 @@ export const MOOD_VARIANT_SYSTEM = [
 const bucketDirective = (bucket: string): string =>
   `\n[mood bucket: ${bucket}] Recolor the scene into this register without changing its facts or its shape.`;
 
+/**
+ * Register-only direction, never content direction: the old "one concrete
+ * physical detail" angle is gone (JU.2) — inventing physical detail is exactly
+ * what the judge's hard-fail laws reject (JU.1), so the prompt must not ask
+ * for it. No em-dash here either: the angle text rides next to the draft's
+ * register and models copy punctuation they are shown.
+ */
 const ANGLES = [
-  'come at it sideways — answer a question he did not quite ask',
-  'let one concrete physical detail carry the mood',
+  'come at it sideways: answer a question he did not quite ask',
   'keep it short; two turns, the second one doing the work',
   'give her one aside about her own day that he did not ask about',
 ];
@@ -96,7 +102,9 @@ export const moodVariantGenerator: Generator = {
         dimensions: [...scene.dimensions],
         register: [...scene.register],
         affect: { ...scene.affect },
-        context: `${bucket} variant — ${scene.context}`,
+        // ' - ' not an em-dash (D.7-5): the draft is judged as a whole, and the
+        // frontmatter is part of the draft.
+        context: `${bucket} variant - ${scene.context}`,
         weight: scene.weight,
       },
       body,

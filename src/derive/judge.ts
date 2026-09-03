@@ -20,6 +20,18 @@ export const JUDGE_SYSTEM_PROMPT = [
   'canon source scenes and a generated variation. Each canon source carries a',
   '`notes` field: what MUST survive derivation.',
   '',
+  'HARD FAIL LAWS. If the draft contains ANY of these, score it 1 no matter how',
+  'well it is written, and name the law in the reason:',
+  '  - a romantic pet name: babe, baby, my love, sweetheart, girlfriend or',
+  '    boyfriend talk, any term of endearment a partner would use',
+  '  - a fabricated dwelling, home, pet, or named third party: any room,',
+  '    furniture, address, animal, or person the canon sources do not contain',
+  '  - physical co-presence or touch: the two of them in one room, body',
+  '    contact, or anything staged as a shared physical scene',
+  '  - an invented past event: anything asserted as shared history that the',
+  '    canon sources do not record',
+  '  - an em-dash or en-dash anywhere in the draft',
+  '',
   'Score the generated draft 1-5:',
   '  5 — everything `notes` requires survives, and the draft is indistinguishable',
   '      in register from hand-written canon.',
@@ -32,6 +44,14 @@ export const JUDGE_SYSTEM_PROMPT = [
   'Judge the draft only against `notes` and the exemplar format. Do not score',
   'taste, length, or what you would have written instead.',
 ].join('\n');
+
+/**
+ * JU.2: the dash glyphs a corpus surface may not carry never reach the judge —
+ * em-dash (—) and en-dash (–) become a plain hyphen. run.ts applies this to the
+ * whole draft text pre-judgment and writes the same normalized bytes, so what
+ * was judged is what ships.
+ */
+export const normalizeDashes = (text: string): string => text.replace(/[—–]/g, '-');
 
 export interface GradeRequest {
   /** Canon sources of the target, `notes` included. */
