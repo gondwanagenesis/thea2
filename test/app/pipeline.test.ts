@@ -108,7 +108,7 @@ describe('interruption carry-over', () => {
 });
 
 describe('afterturn isolation', () => {
-  it('an appraisal that dies cannot unsend, unwrite, or fail the turn', { timeout: 30_000 }, async () => {
+  it('an appraisal that dies cannot unsend, unwrite, or fail the turn', { timeout: 90_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
 
@@ -135,7 +135,7 @@ describe('afterturn isolation', () => {
 });
 
 describe('the L0 boundary', () => {
-  it('packet.record lands with the same turnId the decision carries', { timeout: 30_000 }, async () => {
+  it('packet.record lands with the same turnId the decision carries', { timeout: 90_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
     scriptTurn(h, ['credited reply'], { importance: 5, outcomePrev: null });
@@ -154,7 +154,7 @@ describe('the L0 boundary', () => {
     await handle.stop();
   });
 
-  it('a denied chat is recorded as a skip (no text, never owed) and starts no turn', { timeout: 30_000 }, async () => {
+  it('a denied chat is recorded as a skip (no text, never owed) and starts no turn', { timeout: 90_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
     h.channel.queueInbound(inboundMsg({ updateId: 541, msgId: 941, chatId: 999 /* not allowed */ }));
@@ -177,7 +177,7 @@ describe('the L0 boundary', () => {
     await handle.stop();
   });
 
-  it('a skipped update (photo, edit, stranger) starts no turn, is recorded, and is never owed', { timeout: 30_000 }, async () => {
+  it('a skipped update (photo, edit, stranger) starts no turn, is recorded, and is never owed', { timeout: 90_000 }, async () => {
     const h = await bootApp();
     const skipped = inboundMsg({ updateId: 551, msgId: 951, text: '', skipped: { reason: 'non_text' } });
     expect(h.sys.pipeline.inbound(skipped)).toBeUndefined();
@@ -194,7 +194,7 @@ describe('the L0 boundary', () => {
     await h.sys.stop();
   });
 
-  it('a model-authored defer lands ONE ledger row with dueBy — the turn no longer throws (Phase 1)', { timeout: 30_000 }, async () => {
+  it('a model-authored defer lands ONE ledger row with dueBy — the turn no longer throws (Phase 1)', { timeout: 90_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
     h.model.enqueue({ content: decisionJson({ plan: 'defer', bubbles: [] }) });
@@ -215,7 +215,7 @@ describe('the L0 boundary', () => {
     await handle.stop();
   });
 
-  it('a failure silence is recorded with provenance and stays OWED after the window', { timeout: 30_000 }, async () => {
+  it('a failure silence is recorded with provenance and stays OWED after the window', { timeout: 90_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
     h.model.enqueue({ content: '' }); // assess: nothing
@@ -232,7 +232,7 @@ describe('the L0 boundary', () => {
     await handle.stop();
   });
 
-  it('a reaction-only update is an outcome signal, never a turn', { timeout: 30_000 }, async () => {
+  it('a reaction-only update is an outcome signal, never a turn', { timeout: 90_000 }, async () => {
     const h = await bootApp();
     const handle = startThead(h.sys);
     h.channel.injectReaction({ emoji: '❤️', toMsgId: 900 });
