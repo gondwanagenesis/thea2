@@ -1,6 +1,6 @@
 ---
 title: Thea2 — Agent Execution Protocol
-syncedTo: S8 as-built (2026-09-02)
+syncedTo: v7-W1 (agents run npm; gates = typecheck, lint, depcruise, verify, docs:check)
 date: 2026-09-02
 ---
 

@@ -1,12 +1,12 @@
 ---
 title: Thea2 — Roadmap
-syncedTo: S8 (S0–S8 landed — see docs/modules/*/ "As built"; 1502 tests, five gates green; backend = z.ai anthropic door per Diego 2026-09-02; S9 optional, not built)
+syncedTo: v7 (S0-S8 landed; v7 THE OPENCODE SPINE is the plan of record — gates are npm, never pnpm; backend = ADR-010 four-door registry, voice = Neuralwatt glm-5.3 per Diego 2026-09-03)
 date: 2026-09-02
 ---
 
 # Roadmap — build stages S0–S9
 
-Rule for every stage: the repo is **green at the gate** — `pnpm lint && pnpm depcruise && pnpm test` — plus the stage-specific proofs. No stage may stub a published interface with a throw; unimplemented capability is expressed by absence (a nominator not registered, a job not scheduled), so integration is always runnable.
+Rule for every stage: the repo is **green at the gate** — `npm run gates && npm test` (npm, never pnpm) — plus the stage-specific proofs. No stage may stub a published interface with a throw; unimplemented capability is expressed by absence (a nominator not registered, a job not scheduled), so integration is always runnable.
 
 Modules in the same stage touch disjoint directories and depend only on prior stages — safe for **parallel agents** (counts below). Full contracts: `docs/modules/`.
 

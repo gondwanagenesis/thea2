@@ -1,7 +1,7 @@
 ---
 module: M14
 name: realize
-syncedTo: S8 (src/realize + test/realize, 43 tests green; voice guarding lives in M06/M10/M12/M19 — see "As built")
+syncedTo: v6-W1 (P-CADENCE CA.1–CA.4 as built: snappy constants, per-send ledger rows, progressive first bubble; src/realize + test/realize, 49 tests green; bubble-shape gate rule lives in M12 — see "As built")
 stage: S4
 depends: [M01-kernel, M06-coupling, M15-bridge]
 ---
@@ -37,7 +37,10 @@ export const planDelivery: (d: RealizableDecision, a: Vec12, limits: ChannelLimi
 //   law constants (PRE_DELAY_*, CPS_*, LOW_VALENCE_CPS_FACTOR, GAP_*, TOTAL_CAP_MS, MAX_BUBBLES).
 
 export interface ExecResult { sent: Array<{ msgId: number; text: string }>; aborted: boolean; undelivered: string[]; }
-export const executePlan: (plan: DeliveryPlan, chatId: number, ch: Channel, clock: Clock, signal: AbortSignal) => Promise<ExecResult>;
+export const executePlan: (plan: DeliveryPlan, chatId: number, ch: Channel, clock: Clock, signal: AbortSignal,
+  onSend?: (msgId: number, text: string) => Promise<void>) => Promise<ExecResult>;
+//   onSend (v6 CA.2) is awaited immediately after each ch.send resolves and BEFORE
+//   the next step; a throw propagates.
 
 // The composition entry M20 calls — plan + execute + per-send ledger record in one call:
 export interface DeliveryReport { plan: DeliveryPlan; sent: ExecResult['sent']; aborted: boolean; undelivered: string[]; }
@@ -46,7 +49,7 @@ export interface RealizeDeps {
   channel: Channel;
   clock: Clock;
   signal: AbortSignal;
-  recordSend?: (msgId: number, text: string) => Promise<void> | undefined;  // wire to MessageLedger.recordOutbound
+  recordSend?: (msgId: number, text: string) => Promise<void> | undefined;  // wire to MessageLedger.recordOutbound (lands per send)
 }
 export const realize: (d: RealizableDecision, affect: Vec12, rng: Rng, deps: RealizeDeps) => Promise<DeliveryReport>;
 ```
@@ -54,16 +57,16 @@ export const realize: (d: RealizableDecision, affect: Vec12, rng: Rng, deps: Rea
 ## Behavior spec
 - Invariant restated as a rule: output texts are the decision's bubbles verbatim. The only permitted text operations are merging adjacent bubbles (newline join) and splitting an oversized bubble on paragraph/sentence boundaries. No paraphrase, no restyling, no tone adjustment — tone was already caused upstream by the packet and the decision.
 - `plan: 'silent'` and `plan: 'defer'` produce an empty DeliveryPlan (no steps); defer follow-up semantics live upstream.
-- Typing speed: chars-per-second = lerp(6 -> 14) with the arousal deviation (a[arousal] over [-1,1] mapped across the lerp range). Low valence (a[valence] < 0) slows cps by 15%.
-- Pre-delay before the first bubble: 800 ms + 2500 ms · reluctance.
-- Inter-bubble gap: 300–1200 ms, shrinking with arousal.
+- Typing speed: chars-per-second = lerp(25 -> 45) with the arousal deviation (a[arousal] over [-1,1] mapped across the lerp range). Low valence (a[valence] < 0) slows cps by 15%.
+- Pre-delay before the first bubble: 0 while reluctance < 0.5; 1500 ms · reluctance from 0.5 up (v6 CA.1).
+- Inter-bubble gap: 400–1500 ms, shrinking with arousal.
 - Typing duration per bubble = bubble chars / cps, expressed as typing steps.
-- Total plan ≤ 45 s. If the raw plan exceeds it, pause and typing durations scale down proportionally; sends are never dropped (completion — the report pins the cap, not the compression method).
+- Total plan ≤ 12 s. If the raw plan exceeds it, pause and typing durations scale down proportionally; sends are never dropped (completion — the report pins the cap, not the compression method).
 - Merging: if bubbles > 5, or any bubble exceeds `limits.maxMsgChars`, merge/split until within limits before planning. A bubble under the char limit is never split. Splits happen first, then the merge pass — so the count cap can never push a piece over the char cap. When the two conflict, the char cap outranks the count cap: a join that would breach `maxMsgChars` is skipped, leaving more than 5 bubbles rather than an over-limit send (Telegram rejects the send; the count is only style). Whitespace-only bubbles are dropped first (no words, no timing).
-- A single sentence longer than `limits.maxMsgChars` has no legal cut (only paragraph/sentence boundaries are permitted), so it throws `realize/unsplittable-bubble` instead of emitting a send the channel will reject. The gap jitter is ±15% around the arousal curve, clamped back inside [300, 1200] ms, drawn from `rng.fork('realize/gap')`.
+- A single sentence longer than `limits.maxMsgChars` has no legal cut (only paragraph/sentence boundaries are permitted), so it throws `realize/unsplittable-bubble` instead of emitting a send the channel will reject. The gap jitter is ±15% around the arousal curve, clamped back inside [400, 1500] ms, drawn from `rng.fork('realize/gap')`.
 - Executor: re-fires the typing indicator on every `limits.typingRefreshMs` tick inside a typing span (the Telegram preset's 4000 satisfies "every 4 s"), and never after the span ends; enforces ≥ `limits.minSendGapMs` between consecutive sends per chat **by construction** — the schedule is held until the gap has elapsed (the reference instant is when the send hits the wire, so a slow transport cannot skew the next hold); all waits go through the injected clock — no wall-clock sleeps.
 - Interruption: a new inbound aborts the remaining steps via the AbortSignal; `ExecResult.undelivered` carries the unsent bubbles read off the remaining plan — including the bubble she was mid-typing when the abort landed; the M20 pipeline feeds them into the next turn's context as "she was about to say".
-- The realizer emits nothing to the ledger itself; the pipeline records each successful send via `MessageLedger.recordOutbound`. `realize()` exposes that seam as `RealizeDeps.recordSend`, invoked after execution in delivery order — so a ledger row's `ts` is the recording time, while the channel's accept times live on the `ExecResult`/captured-send side, linked by `msgId`. Until M20 terminates an aborted turn, reconcile correctly stays armed (`LOST_REPLY`): partial delivery is only clean once the pipeline records what did land.
+- The realizer emits nothing to the ledger itself; the pipeline records each successful send via `MessageLedger.recordOutbound`. `realize()` exposes that seam as `RealizeDeps.recordSend`, handed straight down to `executePlan`, which awaits it immediately after each `ch.send` resolves and before the next step (v6 CA.2) — so each row lands per delivered bubble, an abort mid-plan leaves exactly what was delivered recorded, and a throw from `recordSend` propagates. A row's `ts` is the recording time, while the channel's accept times live on the `ExecResult`/captured-send side, linked by `msgId`. Until M20 terminates an aborted turn, reconcile correctly stays armed (`LOST_REPLY`): partial delivery is only clean once the pipeline records what did land.
 
 ## Not this module's job
 - Bubble wording, count, and plan choice — M13-loop (the decision).
@@ -74,7 +77,7 @@ export const realize: (d: RealizableDecision, affect: Vec12, rng: Rng, deps: Rea
 
 ## Acceptance criteria
 - [x] Verbatim invariant holds: concatenated sent text equals concatenated bubble text modulo merge joins and boundary splits; property-tested (300 seeded random plans across Telegram and a tighter synthetic limit set), zero character-level rewrites.
-- [x] Exact constants: pre-delay 800 + 2500·reluctance ms; cps lerp 6->14 with arousal; −15% cps under low valence; gap 300–1200 ms shrinking with arousal; total ≤ 45 s; typing re-fire every 4 s; ≥ 1.1 s between sends.
+- [x] Exact constants (v6 CA.1): pre-delay 0 below the reluctance gate, 1500·reluctance ms from 0.5 up; cps lerp 25->45 with arousal; −15% cps under low valence; gap 400–1500 ms shrinking with arousal; total ≤ 12 s; typing re-fire every 4 s; ≥ 1.1 s between sends.
 - [x] Monotonicity: pre-delay strictly increases with reluctance (40 seeded trials × 11-point grid); higher arousal never lengthens the total and strictly tightens it across the span, with sends invariant.
 - [x] silent/defer produce empty plans.
 - [x] Merge at >5 bubbles or oversize; splits only on paragraph/sentence boundaries; char cap outranks the count cap.
@@ -89,6 +92,35 @@ export const realize: (d: RealizableDecision, affect: Vec12, rng: Rng, deps: Rea
 - **Whitespace-only bubbles are dropped** — they carry no words and no timing.
 - **45 s compression method** (the spec explicitly leaves it open): every pause/typing step scales by one shared factor with floor rounding, the residual shaved off the longest steps; `totalMs` always equals the exact step sum.
 - Test-side note (upstream trait, not a deviation here): `TestClock.advance` drains only two microtask hops per fired waiter, while the executor's chain to its next registration is 3–4 hops — so tests drive the clock in small slices with settles between (`test/realize/helpers.ts` `drive()`). Exact-time assertions hold because every due instant stays ahead of the clock until it is exactly due.
+
+## As built (v6-W1) — P-CADENCE CA.1–CA.4: snappy and true
+
+- **CA.1 constants replaced the S4 set** (both are spec; v6 supersedes):
+  `PRE_DELAY_BASE_MS` 800→**0**, `PRE_DELAY_PER_RELUCTANCE_MS` 2500→**1500**
+  applied only at/above the new `RELUCTANCE_DELAY_GATE` 0.5, `CPS_FLOOR`
+  6→**25**, `CPS_CEIL` 14→**45**, `GAP_MIN_MS` 300→**400**, `GAP_MAX_MS`
+  1200→**1500**, `TOTAL_CAP_MS` 45_000→**12_000**. Arousal scaling, the flat
+  −15 % low-valence slowdown, the ±15 % forked gap jitter, the per-chat 1100 ms
+  send gap (channel physics, unchanged here) and the merge/split shaping law
+  are untouched. Named tests: `first bubble sends within 200 ms of lock when
+  not reluctant`, `realizer total under 12 s for six bubbles`, `arousal still
+  shortens gaps`.
+- **CA.2 per-send ledger rows**: `executePlan` gained an optional `onSend`
+  callback, awaited immediately after each `ch.send` resolves and before the
+  next step; `realize()` hands `RealizeDeps.recordSend` straight down to it
+  (previously rows were replayed after the whole plan executed). A throw
+  propagates. Named test: `outbound-rows-land-per-send` (abort mid-plan ⇒ the
+  ledger holds exactly the delivered bubbles, and a delivered row is already
+  in while the plan is still parked mid-flight).
+- **CA.3 progressive send**: with the pre-delay at 0 below the reluctance gate,
+  bubble 1 leaves at the lock instant and pacing for bubbles 2..n is computed
+  from decision fields + affect exactly as before. The verbatim invariant is
+  untouched (property tests unchanged and green). Named test: `pacing is
+  computed from the decision not from text length alone`.
+- **CA.4 bubble-shape gate rule** lives in M12 (`src/inhibit/compile.ts`, class
+  `shape`, soft) — see `docs/modules/M12-inhibit.md`. The realizer's own
+  shaping (`shapeBubbles`) is unchanged: the gate rejects and the loop
+  rephrases; realize still never rewrites a word.
 
 ## As built (S8) — the verbatim invariant stands; voice is guarded, not rewritten
 

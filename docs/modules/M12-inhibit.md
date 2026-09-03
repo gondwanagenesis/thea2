@@ -1,7 +1,7 @@
 ---
 module: M12
 name: inhibit
-syncedTo: S8 (prompt block renders ids only — 2026-09-02)
+syncedTo: v6-W1 (P-CADENCE CA.4 added the bubble-shape gate rule as an additive class 'shape' helper in compile.ts — see "As built (v6-W1)")
 stage: S3
 depends: [M01-kernel, M03-model, M07-corpus]
 ---
@@ -94,6 +94,37 @@ export interface RuleInfo {              // one compiled rule, as audits and the
 ## Canon v1 draft status (reported upstream, not fixed here)
 The compiler consumes `corpus/canon/inhibitions.yaml` as-is; canon content is Diego-authored. One defect found and NOT corrected (agents never edit scene semantics):
 - **`banned-construction.why` is truncated by YAML at line 47.** The line is unquoted and contains ` #1 AI tell …`, so everything from ` #` is a comment; the compiled why is `the "it's not X, it's Y" family is the`. Suggested fix when Diego edits canon: single-quote the value (`why: 'the "it''s not X, it''s Y" family is the #1 AI tell (owner''s law)…'`). Every other rule compiles clean; `entry.crisis == true` on `no-mind-reading` compiles dormant (see Decisions above) until a caller can assert the flag.
+
+## As built (v6-W1) — the bubble-shape gate rule (class `shape`, soft; P-CADENCE CA.4)
+
+Added additively at the end of `src/inhibit/compile.ts` — no existing export,
+section, or compiled-gate behavior changed, so a later rule class can merge
+beside it without conflict:
+
+- `checkBubbleShape({ bubbles, weight? }) → Verdict` rejects (soft) when any
+  bubble is over `SHAPE_MAX_BUBBLE_CHARS` 220 chars, when there are more than
+  `SHAPE_MAX_BUBBLES` 5 bubbles unless `weight ≥ SHAPE_MIN_WEIGHT_FOR_MORE`
+  0.7, when a bubble contains a newline, or when ≥ `SHAPE_MIN_SAME_EMOJI` 3
+  bubbles all end with the same emoji. Every violation carries the one neutral
+  reason `SHAPE_REJECTION_WHY` = "split shorter" (hint
+  `[INHIBITION:bubble-shape] split shorter`) — the rephrase pass is told what
+  to do, not which law it broke. `SHAPE_RULE` publishes the compiled
+  `RuleInfo` (id `bubble-shape`, class `plan`, severity `soft`) for audits.
+- Deliberately NOT wired through `compileGate`/`checkPlan` yet: the gate's doc
+  schema (`src/inhibit/schema.ts`, not this package's file) has no section for
+  the class until its canon entry merges, and `PlanView` carries no `weight`.
+  The loop composes it beside `checkPlan` and reads softness via
+  `SHAPE_RULE.severity` (or `severityOf` once the canon entry lands). The
+  verdict code is the existing plan-path `'forbidden-pattern'` —
+  `VERDICT_CODES` is a closed union owned in `src/inhibit/types.ts`, and a new
+  code is a design decision there, not a local one.
+- Emoji tails are matched with `\p{Extended_Pictographic}` (u-flag, variation
+  selector allowed); the ASCII keycap bases (#, *, 0-9) are pictographic in
+  Unicode's tables but excluded — they are not sign-offs.
+- The canon entry for `corpus/canon/inhibitions.yaml` is drafted in the
+  P-CADENCE package report and merges at landing (canon is Diego's); until
+  then the rule is enforced by the loop's composition, not by the compiled
+  canon gate, and `severityOf('bubble-shape')` resolves `undefined`.
 
 ## Test checklist
 - unit: table-driven rule fixtures per class (regex hit/miss, arg allowlist, chat-id lock, spend cap, path fence, entry-context allowlist); unknown-tool default; malformed-yaml reject cases; reason-code stability.

@@ -1,12 +1,16 @@
 ---
 title: Thea2 — Architecture
-syncedTo: S8 as-built (2026-09-02 — all modules landed; 1,502 tests, five gates green; live on VPS)
+syncedTo: v7-W1 (S0-S8 landed; v7 spine wave in flight — doors registry per ADR-010, gates + docs:check green)
 date: 2026-09-02
 ---
 
 # Architecture
 
 Companion to [THESIS.md](THESIS.md) (concepts), [docs/MANUAL.md](docs/MANUAL.md) (the plain-language walkthrough), and `docs/modules/` (per-module contracts). This file is the map: what exists, what depends on what, what flows where.
+
+<!-- gen:tests-count:start -->
+**1457 test declarations in 132 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+<!-- gen:tests-count:end -->
 
 ## Topology
 
@@ -53,6 +57,10 @@ kernel ← {events, model, embed}
 Left of an arrow may never import right of it. `app` is the only module allowed to import everything (composition root).
 
 ## The context packet
+
+<!-- gen:canon-scenes:start -->
+**65 canon scene files** under `corpus/canon/` (every `.md` except `TEMPLATE.md` and `identity.md`), plus **50 derived exemplar files** in `corpus/derived/` (machine-generated; manifest-tracked per ADR-007). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+<!-- gen:canon-scenes:end -->
 
 Assembled fresh every entry (user turn, heartbeat, ponder) — the one synchronous step. Two channels that never compete for slots (ADR-009):
 
@@ -116,6 +124,19 @@ Z.ai GLM over the **anthropic-compat door** (`https://api.z.ai/api/anthropic`, p
 
 Spawn primitives (registry tools, native calls): `fork` (character + procedural context), `task` (procedural + brief), `committee` (scripted DAG). Depth ≤ 2, concurrency ≤ 3, per-entry wall-clock budget. Spawns log delegation episodes → procedural exemplar feedstock.
 
+<!-- gen:doors:start -->
+**4 doors configured** (parsed from `thea2.config.yaml`, ADR-010):
+
+| Door | Model | Protocol | Endpoint | Effort | Forcing |
+|---|---|---|---|---|---|
+| voice | glm-5.3 | openai | https://api.neuralwatt.com/v1 | low | none |
+| voiceFallback | glm-5.3-flash | anthropic | https://api.z.ai/api/anthropic | - | tool_choice |
+| mind | deepseek-v4-flash | openai | https://api.neuralwatt.com/v1 | none | tool_choice |
+| judge | kimi-k3 | openai | https://api.neuralwatt.com/v1 | none | tool_choice |
+
+Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+<!-- gen:doors:end -->
+
 ## Scheduler jobs (v1 table)
 
 | Job | Cadence | Lane | Catch-up | As built |
@@ -130,6 +151,21 @@ Spawn primitives (registry tools, native calls): `fork` (character + procedural 
 | Nightingale (probe-on-deploy watcher) | 1 min | maintenance | skip | **not registered** — Phase 4 gates it |
 
 `skip` for moods, not obligations — 16 missed heartbeats must not become 16 texts (named test). Interactive lane respects the conversation-active mutex (skip if inbound < 10 min ago or a turn is in flight). Job isolation: timeout → cooperative abort; wedged → abandoned + flagged, singleton lock refuses re-entry until restart; 3 consecutive failures → alarm.
+
+<!-- gen:job-table:start -->
+**6 jobs registered** on a real boot (parsed from `src/app/compose.ts`):
+
+| Job | Cadence |
+|---|---|
+| heartbeat | 30 min |
+| ponder | 20 min |
+| reflect | daily 03:00 UTC |
+| reconcile | 5 min |
+| affect-snapshot | 15 min |
+| ledger | daily 04:30 UTC |
+
+Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+<!-- gen:job-table:end -->
 
 ## Data stores (all under `var/`, gitignored)
 

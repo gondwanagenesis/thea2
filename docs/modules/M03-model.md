@@ -1,8 +1,8 @@
 ---
 module: M03
 name: model
-syncedTo: Phase 1 as-built (2026-09-02 — src/model, test/model; dual-protocol wire (openai + anthropic), SSE streaming on the anthropic door, structured ladder through the synthetic `emit` tool rung, ChatRequest.toolChoice)
-stage: S8
+syncedTo: v6-W1 as-built (2026-09-03 — P-DOOR: door registry with per-door reasoning control, forcing, pricing; model.call observability; truncation guard; repair on tier; request-carried tool-input validation)
+stage: v6-W1
 depends: [M01-kernel, M02-events]
 ---
 # M03 — model
@@ -129,3 +129,15 @@ Live smoke against the z.ai anthropic door (`scripts/thinking-smoke.ts`, both ti
 - Therefore `THINKING_DEFAULTS` **omits the field entirely** for `turn`, `heartbeat-thought`, `ponder-seed`, `summarize` (door default answered 200, end_turn, ~3.5 s on flash); `enabled 1024` verified working on BOTH models for the judge family.
 - `enabled 2048` also accepted on both (no reason to raise the 1024 budget).
 - Kill-switch `models.thinking: 'off'` remains the emergency lever (P-A.2).
+
+## As built (v6-W1 P-DOOR, 2026-09-03) — doors with control
+
+The door registry (ADR-010, D.6-1/D.6-2) lives in config (`models.doors.{voice,mind,judge,voiceFallback}` in `thea2.config.yaml`, schema in src/app/config.ts): each door `{endpoint, protocol:'anthropic'|'openai', keyEnv, model, effort?, thinkingBudget?, forcing:'tool_choice'|'none', temperature?, topP?, pricing?}` — `keyEnv` names an env variable, never a key value; `loadConfig` resolves every door's key from env (missing ⇒ `app/config-invalid` naming the door) and synthesizes the three tier doors from a legacy `models.endpoint/protocol/tiers` block (voice=main, mind=cheap, judge=reasoning, forcing 'none'). The shipped yaml carries the four D.6-1/D.6-2 doors. The flattened `models.{endpoint,apiKey,protocol,tiers}` view equals the voice door (the embedder and derive CLI ride it).
+
+- **tier→door** (`src/model/tiers.ts`): `TIER_DOOR`/`tierFor` map main→voice, cheap→mind, reasoning→judge; tier names in code stay `main|cheap|reasoning`. `makeRouter` takes the door table and every `RoutedCall` names its door. Compose (src/app/compose.ts) builds ONE transport per tier door (`zaiTransport` with the door's endpoint/protocol/key, rng fork `door-<name>`); `chatCore` picks the runtime by routed tier, so a mixed openai+anthropic door set rides one `ModelClient`. `voiceFallback` ships in config for the D.6-1 swap; nothing routes to it yet.
+- **Reasoning by class (DR.2)**: `REASONING_BY_CLASS` in tiers.ts — turn/heartbeat-thought/summarize/ponder-seed/appraisal → `low`; consolidate/derive/judge/probe-judge → `high`. `client.chat` applies it when `req.reasoning` is absent (caller override wins). Wire mapping: openai door → `reasoning_effort` (glm-5.* never see `none` — mapped to `minimal`; other models take it verbatim); anthropic door → `thinking:{type:'enabled', budget_tokens}` from the door's `thinkingBudget` or `{none:128, minimal:256, low:512, high:1024, max:2048}` — **`type:'disabled'` is never emitted** (a caller asking for it gets the field dropped). This replaces the loop's `THINKING_DEFAULTS` (P-FAST's `LoopConfig.thinking` stays as a direct-override escape hatch, default empty). NOTE: ponder-seed moves from enabled-1024 to low(512 on the effort table) on the anthropic wire — spec-mandated (DR.2); watch the ponder-starvation family after deploy.
+- **Forcing per door (DR.3)**: on a `forcing:'tool_choice'` door the client forces `{name:'decide'}` whenever `decide` is among the offered defs and the caller set no toolChoice (not only as the sole def); `forcing:'none'` doors never add a force, and a caller's explicit toolChoice always outranks the door.
+- **Observability (DR.4)**: `model.call` gains `door, stopReason, maxTokens, reasoning, costUsd` (costUsd only when the door has pricing: `in·inputPerM/1e6 + out·outputPerM/1e6`). A failed send's HTTP attempts are stamped onto the thrown `ModelError` by the transport and credited into `usage.attempts` (sum with completed generations).
+- **Truncation guard (DR.5)**: `model/truncated` (non-retryable) fires when `stopReason === 'max_tokens'`, OR `outputTokens >= maxTokens` with no tool call, OR a schema was expected and content is empty — including cut-off replies WITH visible content and max_tokens stops that carried a tool call (two pre-DR.5 behaviors inverted deliberately; a cut-off answer is not her voice).
+- **Repair on tier (DR.6)**: the one-shot structured/tool-arg repair keeps the REQUESTING tier (never downgrades to cheap) and doubles maxTokens.
+- **Tool-input validation (DR.7)**: `ChatRequest.toolInput` carries per-tool zod validators on the REQUEST (the loop's registry entries — src/model never imports src/loop; the DAG forbids it). `decide.bubbles` is always coerced (bare string → newline-split string array, blanks dropped); validator failures join the one-shot repair rung and repaired args are revalidated. Wiring the loop side to pass `toolInput` lands with P-FAST/P-LOOP (their files).

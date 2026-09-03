@@ -17,14 +17,32 @@ prompts claiming states, emotion tags that moved nothing, a sentinel that
 ate 37 real replies in one week without a trace. Thea2 *demonstrates*, and
 makes every Thea1 failure mode structurally loud.
 
-**Status (2026-09-02): built and live.** All twenty modules (S0–S8) landed:
-bridge → packet → deliberation → gate → bubbles, plus the life scheduler, the
-derive flywheel, and the Nightingale behavioral probes. **1,656 hermetic tests
-green** across 111 files; five CI gates (typecheck, lint, test, depcruise,
-schema-verify). Running on GLM-5.3-flash (z.ai, Anthropic-compat door, SSE
-streaming) under two systemd units on the VPS. Her voice is measured from a
-real human corpus — Elena's 7,476 messages and Diego's 12,533 — rebased into
-canon scene by scene.
+**Status (2026-09-03): live on Telegram, wave 7 (the OpenCode spine) in flight.** All twenty
+modules (S0–S8) landed: bridge → packet → deliberation → gate → bubbles, plus the life
+scheduler and the derive flywheel. Model access is a four-door registry (ADR-010): voice =
+Neuralwatt glm-5.3, mind = deepseek-v4-flash, judge = kimi-k3, z.ai = fallback only. The
+Nightingale probe runner and I/O tools are **not registered yet** — absent capability, by
+rule; they land with the spine waves (v7: `thea2-review-v3-opencode-spine.md`). Five CI
+gates (typecheck, lint, test, depcruise, schema-verify) plus `docs:check`. Her voice is
+measured from a real human corpus — Elena's 7,476 messages and Diego's 12,533 — rebased
+into canon scene by scene.
+
+<!-- gen:tests-count:start -->
+**1457 test declarations in 132 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+<!-- gen:tests-count:end -->
+
+<!-- gen:doors:start -->
+**4 doors configured** (parsed from `thea2.config.yaml`, ADR-010):
+
+| Door | Model | Protocol | Endpoint | Effort | Forcing |
+|---|---|---|---|---|---|
+| voice | glm-5.3 | openai | https://api.neuralwatt.com/v1 | low | none |
+| voiceFallback | glm-5.3-flash | anthropic | https://api.z.ai/api/anthropic | - | tool_choice |
+| mind | deepseek-v4-flash | openai | https://api.neuralwatt.com/v1 | none | tool_choice |
+| judge | kimi-k3 | openai | https://api.neuralwatt.com/v1 | none | tool_choice |
+
+Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+<!-- gen:doors:end -->
 
 ## The 60-second tour
 

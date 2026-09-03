@@ -1,6 +1,6 @@
 ---
 title: Thea2 — Testing Architecture
-syncedTo: S8 as-built (2026-09-02 — 1,502 tests / 111 files green; Nightingale live baseline of record in probes/baseline.json)
+syncedTo: v7-W1 (counts live in README gen: blocks via docs:check; Nightingale unregistered until the spine waves; probe verb planned, not built)
 date: 2026-09-02
 ---
 
