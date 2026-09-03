@@ -328,6 +328,24 @@ describe('heartbeatJob — the precondition gates run before any model call', ()
     expect(h.log.kinds()).toContain(HEARTBEAT_THOUGHT_EVENT);
   });
 
+  it('unanswered decays with time: 30h of silence pays one of two debts (PO.4)', async () => {
+    const h = harness({ lastInboundTs: () => T0 - 40 * HOUR, model: thoughtModel() });
+    await seedState(h.heartbeatPath, {
+      version: 1,
+      date: dayOf(h),
+      sentToday: 0,
+      unanswered: 2,
+      lastSentTs: T0 - 40 * HOUR, // older than the newest unanswered send: no reply-reset fires
+      lastUnansweredTs: T0 - 30 * HOUR,
+    });
+    await heartbeatJob(h.deps).run(jobCtx(h));
+
+    // floor(30h / 24h) = 1 decayed: the effective count is 1, its ladder (6h)
+    // is long expired — the gate opens and the pre row reports the DECAYED debt.
+    const pre = h.log.rows[0]?.payload as HeartbeatPrePayload;
+    expect(pre).toMatchObject({ canText: true, reason: 'ok', unanswered: 1 });
+  });
+
   it('the mutex blocks the fire with reason mutex and zero model calls', async () => {
     const h = harness({ mutex: () => true });
     await heartbeatJob(h.deps).run(jobCtx(h));
@@ -530,6 +548,8 @@ describe('ponderJob — through the committee to a landed artifact', () => {
     expect(h.model.calls).toHaveLength(4);
     expect(h.model.calls[0]?.messages[0]?.content).toContain('IDENTITY: you are Thea.');
     expect(h.model.calls[0]?.tools).toBeUndefined();
+    // PO.1: the node budget is the config's committeeMaxTokens (3000).
+    expect(h.model.calls[0]?.maxTokens).toBe(3000);
 
     // the episode landed, clearly marked ponder-origin
     expect(h.appended).toHaveLength(1);
@@ -537,7 +557,7 @@ describe('ponderJob — through the committee to a landed artifact', () => {
     expect(ep.summary).toContain('[ponder:world]');
     expect(ep.summary).toContain('the cadence, not the calendar');
     expect(ep.diaryLine).toContain('pondered slot math (world)');
-    expect(ep.importance).toBe(7); // saliency 0.7
+    expect(ep.importance).toBe(5); // saliency 0.7 — capped at 5 (PO.3)
     expect(ep.emotions).toEqual([]); // no appraisal ran — none invented
     expect(ep.threads).toEqual(['ponder']); // her `next` is filed as standing intent (Round 3)
     expect(ep.affectAtEncoding).toHaveLength(12);
@@ -546,6 +566,7 @@ describe('ponderJob — through the committee to a landed artifact', () => {
     // state: the seed's about unshifted, the artifact clock reset
     const state = (await readJson(h.ponderPath)) as PonderJobState;
     expect(state.recentAbouts).toEqual(['world']);
+    expect(state.recentTopics).toEqual(['slot math']);
     expect(state.lastArtifactTs).toBe(T0);
 
     // the ledger tells the whole story: gate -> seed -> artifact
@@ -562,6 +583,41 @@ describe('ponderJob — through the committee to a landed artifact', () => {
       revised: false,
     });
     expect(h.selfEntries).toHaveLength(0); // ponder lands as an episode, never a turn
+  });
+
+  it('ponder importance is capped', async () => {
+    // saliency 1.0 would map to importance 10 on the old scale; the ponder
+    // artifact is context, not a formative event — D.6-5 pins the cap at 5.
+    const hot = harness({ drives: { novelty: 0.8 }, arousal: 0.3, model: ponderModel({ artifact: { saliency: 1 } }) });
+    await ponderJob(hot.deps).run(jobCtx(hot));
+    expect((hot.appended[0] as EpisodeRecord).importance).toBe(5);
+
+    const thin = harness({ drives: { novelty: 0.8 }, arousal: 0.3, model: ponderModel({ artifact: { saliency: 0.3 } }) });
+    await ponderJob(thin.deps).run(jobCtx(thin));
+    expect((thin.appended[0] as EpisodeRecord).importance).toBe(3); // under the cap the scale is untouched
+  });
+
+  it('the seed context carries no ponder artifact and the recent topics ride to the prompt', async () => {
+    const h = harness({
+      drives: { novelty: 0.8, connection: 0, mastery: 0 },
+      arousal: 0.3,
+      model: ponderModel(),
+      episodes: [
+        { summary: '[ponder:self] my own drift pattern again', importance: 7, ts: T0 - HOUR },
+        { summary: '[heartbeat:miss] just missing him', importance: 5, ts: T0 - 2 * HOUR },
+        { summary: 'he told me the crates shipped this morning', importance: 8, ts: T0 - 3 * HOUR },
+      ],
+    });
+    await seedState(h.ponderPath, { version: 1, recentAbouts: [], recentTopics: ['slot math'] });
+    await ponderJob(h.deps).run(jobCtx(h));
+
+    const seedPrompt = h.model.calls[0]?.messages[1]?.content ?? '';
+    expect(seedPrompt).not.toContain('[ponder:');
+    expect(seedPrompt).not.toContain('[heartbeat:');
+    expect(seedPrompt).toContain('he told me the crates shipped this morning');
+    // the persisted topic history reaches the seed prompt, escape clause along
+    expect(seedPrompt).toContain('slot math');
+    expect(seedPrompt).toContain('pick something else: a thing you noticed');
   });
 
   it('the balance rule bites before the committee: 2 diego seeds in the window force the avoid', async () => {
@@ -584,7 +640,7 @@ describe('ponderJob — through the committee to a landed artifact', () => {
 
   it('a committee failure is an incident and untouched state: no episode, no ponder.json, no artifact event', async () => {
     const model = new MockModel({ clock: new TestClock(T0) });
-    model.enqueue({ content: JSON.stringify(seedScript()) });
+    model.enqueue({ toolCalls: [{ name: 'emit', args: seedScript() as unknown as Record<string, unknown> }] }); // seed answers on the ladder
     model.enqueue({ content: 'prose where the JSON should be' }); // the ground node dies
     const h = harness({ drives: { novelty: 0.8, connection: 0, mastery: 0 }, arousal: 0.3, model });
     await ponderJob(h.deps).run(jobCtx(h));

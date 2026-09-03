@@ -8,10 +8,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   HEARTBEAT_BACKOFF_BASE_H,
+  HEARTBEAT_BACKOFF_CAP_H,
   HEARTBEAT_DAILY_CAP,
   HEARTBEAT_KINDS,
   HEARTBEAT_THRESHOLD,
+  UNANSWERED_DECAY_H,
   backoffHoursFor,
+  decayUnanswered,
   heartbeatPrecondition,
   isQuietHour,
   localDateOf,
@@ -178,7 +181,7 @@ describe('daily cap resets at local midnight', () => {
 // The backoff ladder
 // ---------------------------------------------------------------------------
 
-describe('backoffHoursFor (the doubling no-reply ladder)', () => {
+describe('backoffHoursFor (the doubling no-reply ladder, capped)', () => {
   it('0/1/2/3 unanswered => 0h/6h/12h/24h (the spec ladder)', () => {
     expect(backoffHoursFor(0)).toBe(0);
     expect(backoffHoursFor(1)).toBe(6);
@@ -186,10 +189,30 @@ describe('backoffHoursFor (the doubling no-reply ladder)', () => {
     expect(backoffHoursFor(3)).toBe(24);
   });
 
-  it('keeps doubling past the spec table and is zero with nothing outstanding', () => {
-    expect(backoffHoursFor(4)).toBe(48);
-    expect(backoffHoursFor(10)).toBe(3 * 2 ** 10);
+  it('backoff never exceeds 48 h', () => {
+    expect(HEARTBEAT_BACKOFF_CAP_H).toBe(48);
+    expect(backoffHoursFor(4)).toBe(48); // 3·2⁴ is exactly the cap
+    expect(backoffHoursFor(5)).toBe(48);
+    expect(backoffHoursFor(10)).toBe(48);
+    for (let n = 0; n <= 24; n += 1) {
+      expect(backoffHoursFor(n), `unanswered ${n}`).toBeLessThanOrEqual(48);
+    }
     expect(backoffHoursFor(0)).toBe(0); // no unanswered send => never a backoff
+  });
+});
+
+describe('decayUnanswered (unanswered decays with time)', () => {
+  it('one rung of backoff debt per 24 h of silence, floored at zero', () => {
+    expect(UNANSWERED_DECAY_H).toBe(24);
+    expect(decayUnanswered(3, 0)).toBe(3);
+    expect(decayUnanswered(3, 23.9)).toBe(3); // just under the hour does not decay
+    expect(decayUnanswered(3, 24)).toBe(2);
+    expect(decayUnanswered(3, 48)).toBe(1);
+    expect(decayUnanswered(3, 71.9)).toBe(1);
+    expect(decayUnanswered(3, 72)).toBe(0);
+    expect(decayUnanswered(1, 30)).toBe(0); // a lone debt dies inside one window
+    expect(decayUnanswered(0, 500)).toBe(0); // nothing outstanding stays nothing
+    expect(decayUnanswered(2, -5)).toBe(2); // negative silence (clock skew) decays nothing
   });
 });
 

@@ -196,9 +196,88 @@ describe('runCommittee', () => {
       nodes: [{ id: 'a', needs: [], channels: { character: false, procedural: true }, prompt: 'p' }],
       output: z.string(),
     };
+    // No env override: the client applies the class default
+    // (REASONING_BY_CLASS['ponder-seed'] = 'low') to every node call.
     await runCommittee(solo, envFor(model));
     expect(model.calls[0]?.taskClass).toBe('ponder-seed');
     expect(model.calls[0]?.tier).toBe('main');
+    expect(model.calls[0]?.reasoning).toBe('low');
+  });
+
+  it('committee-node-uses-schema-ladder', async () => {
+    const clock = new TestClock(0);
+    const model = new MockModel({ clock });
+    // Node a declares a schema: the ladder picks rung (b) and the payload rides
+    // the forced `emit` tool call. Node b is schemaless: plain content path,
+    // and its prompt embeds node a's validated value as the edge text.
+    model.enqueue({ toolCalls: [{ name: 'emit', args: { verdict: 'yes' } }] });
+    model.enqueue({ content: 'plain node answer' });
+    const verdictSchema = z.object({ verdict: z.string() });
+    const spec: CommitteeSpec = {
+      name: 'laddered',
+      nodes: [
+        { id: 'a', needs: [], channels: { character: false, procedural: true }, prompt: 'p', schema: verdictSchema },
+        { id: 'b', needs: ['a'], channels: { character: false, procedural: true }, prompt: 'p' },
+      ],
+      output: z.string(),
+    };
+    const res = await runCommittee(spec, { ...envFor(model), reasoning: 'high' });
+    expect(res.ok).toBe(true);
+    expect(res.artifact).toBe('plain node answer');
+
+    // The schema rode the request: the structured ladder, not a hand parse.
+    expect(model.calls[0]?.schema).toBe(verdictSchema);
+    expect(model.calls[0]?.schemaName).toBe('committee:laddered:a');
+    expect(model.calls[0]?.tools).toBeUndefined(); // still tool-less: the rung synthesizes emit on the wire
+    // The env's reasoning override wins over the class default (DR.2).
+    expect(model.calls[0]?.reasoning).toBe('high');
+    // The validated value travels the edge as JSON.
+    expect(model.calls[1]?.messages[1]?.content).toContain('{"verdict":"yes"}');
+
+    // A schemaless node stays a plain call; the env override is committee-wide,
+    // so it rides the schemaless node too.
+    expect(model.calls[1]?.schema).toBeUndefined();
+    expect(model.calls[1]?.reasoning).toBe('high');
+  });
+
+  it('a truncated node is a typed model/truncated', async () => {
+    const clock = new TestClock(0);
+    const model = new MockModel({ clock });
+    model.enqueue({ error: { code: 'model/truncated', message: 'output at the cap with nothing usable' } });
+    const res = await runCommittee(diamond(), envFor(model));
+    expect(res.ok).toBe(false);
+    expect(res.artifact).toBeNull();
+    // The typed code survives into the committee's failure value — a truncated
+    // node is never mistaken for a schema miss or an empty answer.
+    expect(res.error).toContain("node 'a' failed");
+    expect(res.error).toContain('model/truncated');
+  });
+
+  it('a schema-declaring node whose output misses the schema takes the ladder repair, then fails typed', async () => {
+    const clock = new TestClock(0);
+    const model = new MockModel({ clock });
+    model.enqueue({ content: 'prose where the emit call should be' }); // rung (b) miss
+    // No further script: the one-shot repair faces an unscripted mock (empty
+    // turn) and the ladder throws model/parse-failed.
+    const res = await runCommittee(
+      {
+        name: 'strict-ladder',
+        nodes: [
+          {
+            id: 'a',
+            needs: [],
+            channels: { character: false, procedural: true },
+            prompt: 'p',
+            schema: z.object({ verdict: z.string() }),
+          },
+        ],
+        output: z.object({ verdict: z.string() }),
+      },
+      envFor(model),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("node 'a' failed");
+    expect(res.error).toContain('model/parse-failed');
   });
 });
 

@@ -57,8 +57,10 @@ import type { LifeConfig } from './config.js';
 import {
   HEARTBEAT_THRESHOLD,
   PONDER_ABOUTS,
+  PONDER_IMPORTANCE_CAP,
   allowedAbouts,
   balanceAvoid,
+  decayUnanswered,
   heartbeatPrecondition,
   ponderGate,
   ponderScore,
@@ -71,6 +73,7 @@ import {
   GROUNDING_NONE,
   PONDER_COMMITTEE_NAME,
   PonderArtifactSchema,
+  isLifeArtifact,
   ponderCommittee,
   ponderContextBlock,
   ponderGroundQuery,
@@ -286,6 +289,14 @@ const runHeartbeat = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
   if (inbound !== undefined && state.unanswered > 0 && inbound > (state.lastSentTs ?? Number.NEGATIVE_INFINITY)) {
     state = { ...state, unanswered: 0 };
   }
+  // PO.4: silence also pays — one rung of backoff debt is forgiven per 24h
+  // since the newest still-unanswered send. Derived from the clock, so the
+  // decayed count is recomputed identically on every fire (no extra write).
+  if (state.unanswered > 0 && state.lastUnansweredTs !== undefined) {
+    const ageH = Math.max(0, (now - state.lastUnansweredTs) / HOUR);
+    const decayed = decayUnanswered(state.unanswered, ageH);
+    if (decayed !== state.unanswered) state = { ...state, unanswered: decayed };
+  }
 
   const nowH = localHourOfDay(now, deps.cfg.timeZone);
   const lastUnansweredAgeH =
@@ -424,14 +435,22 @@ export interface PonderJobState {
   version: 1;
   /** The seed classes of the last ponder runs, newest first (balance-rule window). */
   recentAbouts: PonderAbout[];
+  /**
+   * PO.2: the seed topics of the last ponder runs, newest first — the last 3
+   * name the prompt's avoidances and key the topic-similarity balance rule.
+   */
+  recentTopics: string[];
   lastArtifactTs?: number | undefined;
 }
 
 const isPonderAbout = (v: unknown): v is PonderAbout =>
   typeof v === 'string' && (PONDER_ABOUTS as readonly string[]).includes(v);
 
+/** The topic window: the balance rule looks at the last 3 topics (PO.2). */
+const MAX_TOPIC_HISTORY = 3;
+
 const readPonderState = async (filePath: string): Promise<PonderJobState> => {
-  const fresh = (): PonderJobState => ({ version: 1, recentAbouts: [] });
+  const fresh = (): PonderJobState => ({ version: 1, recentAbouts: [], recentTopics: [] });
   let text: string;
   try {
     text = await fsp.readFile(filePath, 'utf8');
@@ -443,12 +462,16 @@ const readPonderState = async (filePath: string): Promise<PonderJobState> => {
     if (typeof raw !== 'object' || raw === null) return fresh();
     const o = raw as Record<string, unknown>;
     const abouts = Array.isArray(o['recentAbouts']) ? o['recentAbouts'].filter(isPonderAbout) : [];
+    const topics = Array.isArray(o['recentTopics'])
+      ? o['recentTopics'].filter((t): t is string => typeof t === 'string' && t !== '').slice(0, MAX_TOPIC_HISTORY)
+      : [];
     const lastArtifactTs = typeof o['lastArtifactTs'] === 'number' && Number.isFinite(o['lastArtifactTs'])
       ? o['lastArtifactTs']
       : undefined;
     return {
       version: 1,
       recentAbouts: abouts.slice(0, MAX_ABOUT_HISTORY),
+      recentTopics: topics,
       ...(lastArtifactTs !== undefined ? { lastArtifactTs } : {}),
     };
   } catch {
@@ -456,8 +479,10 @@ const readPonderState = async (filePath: string): Promise<PonderJobState> => {
   }
 };
 
-/** saliency 0..1 → the episode's 1..10 importance, clamped at both rails. */
-const importanceOf = (saliency: number): number => Math.max(1, Math.min(10, Math.round(saliency * 10)));
+/** saliency 0..1 → the episode's 1..10 importance, capped at 5 (PO.3: a ponder
+ * artifact is context, not a formative event — D.6-5) and clamped at the rails. */
+const importanceOf = (saliency: number): number =>
+  Math.max(1, Math.min(PONDER_IMPORTANCE_CAP, Math.round(saliency * 10)));
 
 interface PonderSeed {
   thought: string;
@@ -471,13 +496,14 @@ interface PonderSeed {
  * The seed node's validated output, re-read for the balance history and the
  * seed event. runCommittee already checked it against the same schema, so this
  * is a recovery of typed data, not a second verdict; undefined falls back to the
- * artifact's own about/topic/saliency.
+ * artifact's own about/topic/saliency. The schema is rebuilt with the same
+ * recent topics the seed node validated against (PO.2's topic rule rides it).
  */
-const seedFrom = (result: CommitteeResult, abouts: readonly PonderAbout[]): PonderSeed | undefined => {
+const seedFrom = (result: CommitteeResult, abouts: readonly PonderAbout[], recentTopics: readonly string[]): PonderSeed | undefined => {
   const raw = result.outputs.find((o) => o.id === 'seed');
   if (raw === undefined) return undefined;
   try {
-    const parsed = ponderSeedSchemaFor(abouts).safeParse(JSON.parse(raw.output) as unknown);
+    const parsed = ponderSeedSchemaFor(abouts, recentTopics).safeParse(JSON.parse(raw.output) as unknown);
     return parsed.success ? (parsed.data as PonderSeed) : undefined;
   } catch {
     return undefined;
@@ -517,13 +543,21 @@ const runPonder = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
   if (!pass) return;
 
   // Balance rule as structure: the seed schema is BUILT from the allowed
-  // classes, so a violating seed dies at validation, not at persuasion.
+  // classes (and, PO.2, keyed on the recent topics), so a violating seed dies
+  // at validation, not at persuasion.
   const avoid = balanceAvoid(state.recentAbouts);
   const abouts = allowedAbouts(state.recentAbouts);
-  const recent = deps.episodes.recent(deps.cfg.contextEpisodes).map((e) => ({
-    summary: e.summary,
-    importance: e.importance,
-  }));
+  // PO.2: her own artifacts (`[ponder:*]`, `[heartbeat:*]`) are filtered out of
+  // "recent life" — a ponder never grounds in its own past output, and the
+  // ground query cannot be steered by what she already concluded.
+  const recent = deps.episodes
+    .recent(deps.cfg.contextEpisodes)
+    .filter((e) => !isLifeArtifact(e.summary))
+    .map((e) => ({
+      summary: e.summary,
+      importance: e.importance,
+    }));
+  const recentTopics = state.recentTopics;
 
   // No web tools exist in v1 (rule 5: absent capability = absent registration):
   // her own episodes ARE the grounding source — verbatim extracts, never a
@@ -542,6 +576,7 @@ const runPonder = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
     context: ponderContextBlock(recent, affect, deps.affect.weather()),
     abouts,
     avoid,
+    recentTopics,
     grounding,
   });
   const turnId = newId(ctx.clock, ctx.rng);
@@ -578,7 +613,7 @@ const runPonder = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
     return;
   }
 
-  const seed = seedFrom(result, abouts);
+  const seed = seedFrom(result, abouts, recentTopics);
   const about = seed?.about ?? artifact.data.about;
   const topic = seed?.topic ?? artifact.data.topic;
   const saliency = seed?.saliency ?? artifact.data.saliency;
@@ -591,12 +626,15 @@ const runPonder = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
   );
 
   // The seed counts for the balance rule even when the ponder is dropped as
-  // thin — the rule is about what she chewed on, not what she kept.
+  // thin — the rule is about what she chewed on, not what she kept. PO.2: the
+  // topic feeds the same history, newest first, capped at the 3-topic window.
   const recentAbouts = [about, ...state.recentAbouts].slice(0, MAX_ABOUT_HISTORY);
+  const nextTopics = [topic, ...state.recentTopics].slice(0, MAX_TOPIC_HISTORY);
   if (artifact.data.artifact === 'nothing') {
     await atomicWriteJson(statePath, {
       version: 1,
       recentAbouts,
+      recentTopics: nextTopics,
       ...(state.lastArtifactTs !== undefined ? { lastArtifactTs: state.lastArtifactTs } : {}),
     });
     // Dropping a thin ponder is a good outcome: no episode, and the gate stays
@@ -624,7 +662,7 @@ const runPonder = async (deps: LifeJobDeps, ctx: JobCtx): Promise<void> => {
   if (artifact.data.next !== '' && deps.threads !== undefined) {
     deps.threads.apply([{ id: 'ponder', title: artifact.data.next, status: 'open' }], now);
   }
-  await atomicWriteJson(statePath, { version: 1, recentAbouts, lastArtifactTs: now });
+  await atomicWriteJson(statePath, { version: 1, recentAbouts, recentTopics: nextTopics, lastArtifactTs: now });
   await emitLife(
     ctx.events,
     PONDER_ARTIFACT_EVENT,

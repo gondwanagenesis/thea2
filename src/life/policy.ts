@@ -37,12 +37,25 @@ export const HEARTBEAT_DAILY_CAP = 3;
 
 /**
  * The doubling no-reply backoff, in hours, before the NEXT heartbeat may text:
- * 0 unanswered ⇒ 0h, 1 ⇒ 6h, 2 ⇒ 12h, 3 ⇒ 24h (spec's acceptance ladder).
+ * 0 unanswered ⇒ 0h, 1 ⇒ 6h, 2 ⇒ 12h, 3 ⇒ 24h (spec's acceptance ladder),
+ * capped at 48h (PO.4: an unanswered text must not be able to silence her for
+ * good — the ladder stops stretching after two days).
  * `lastUnansweredAgeH` is measured from the newest still-unanswered send.
  */
 export const HEARTBEAT_BACKOFF_BASE_H = 3;
+/** The ladder's ceiling in hours (PO.4, spec constant: Math.min(48, 3·2ⁿ)). */
+export const HEARTBEAT_BACKOFF_CAP_H = 48;
 export const backoffHoursFor = (unanswered: number): number =>
-  unanswered <= 0 ? 0 : HEARTBEAT_BACKOFF_BASE_H * 2 ** unanswered;
+  unanswered <= 0 ? 0 : Math.min(HEARTBEAT_BACKOFF_CAP_H, HEARTBEAT_BACKOFF_BASE_H * 2 ** unanswered);
+
+/**
+ * PO.4 — unanswered decays with time: one rung of backoff debt is forgiven per
+ * 24h of silence since the newest still-unanswered send, floored at zero.
+ * Silence is exogenous; a week of it must not read as her owing him ten texts.
+ */
+export const UNANSWERED_DECAY_H = 24;
+export const decayUnanswered = (unanswered: number, silenceH: number): number =>
+  unanswered <= 0 ? 0 : Math.max(0, unanswered - Math.floor(Math.max(0, silenceH) / UNANSWERED_DECAY_H));
 
 export type HeartbeatPreReason = 'owed' | 'quiet hours' | 'cap' | 'backoff' | 'mutex' | 'ok';
 
@@ -241,3 +254,46 @@ export const allowedAbouts = (recent: readonly PonderAbout[]): PonderAbout[] => 
   const avoid = balanceAvoid(recent);
   return avoid === null ? [...PONDER_ABOUTS] : PONDER_ABOUTS.filter((a) => a !== avoid);
 };
+
+// ---------------------------------------------------------------------------
+// The topic rule (PO.2): the balance rule also keys on TOPIC similarity. A seed
+// whose topic is cosine-similar (>= 0.6, token bag-of-words — deterministic,
+// no embedder) to any of her last 3 ponder topics is a repeat, and repeats are
+// avoided the same way about-classes are: structurally, at seed validation.
+// ---------------------------------------------------------------------------
+
+/** Cosine >= this with any recent topic marks the seed as a repeat (spec constant). */
+export const TOPIC_AVOID_COSINE = 0.6;
+/** How many of the newest topics the rule looks at (spec: the last 3). */
+export const TOPIC_AVOID_WINDOW = 3;
+
+/** Case/punctuation-folded word-bag cosine between two topic strings. */
+export const topicCosine = (a: string, b: string): number => {
+  const bag = (s: string): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const w of s.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (w !== '') m.set(w, (m.get(w) ?? 0) + 1);
+    }
+    return m;
+  };
+  const va = bag(a);
+  const vb = bag(b);
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (const v of va.values()) na += v * v;
+  for (const [w, v] of vb) {
+    nb += v * v;
+    const ua = va.get(w);
+    if (ua !== undefined) dot += ua * v;
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / Math.sqrt(na * nb);
+};
+
+/** True when `topic` is a repeat of any of the newest `TOPIC_AVOID_WINDOW` topics. */
+export const repeatsTopic = (topic: string, lastTopics: readonly string[]): boolean =>
+  lastTopics.slice(0, TOPIC_AVOID_WINDOW).some((t) => topicCosine(topic, t) >= TOPIC_AVOID_COSINE);
+
+/** PO.3 / D.6-5: a ponder artifact is context, not a formative event — its episode importance caps here. */
+export const PONDER_IMPORTANCE_CAP = 5;

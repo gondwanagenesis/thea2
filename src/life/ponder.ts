@@ -19,7 +19,7 @@ import { z } from 'zod';
 import type { AffectState } from '../affect/index.js';
 import type { Episode } from '../memory/index.js';
 import type { CommitteeSpec } from '../loop/index.js';
-import { PONDER_ABOUTS, type PonderAbout } from './policy.js';
+import { PONDER_ABOUTS, repeatsTopic, type PonderAbout } from './policy.js';
 
 // ---------------------------------------------------------------------------
 // Grounding — the seam the job body fills with REAL evidence.
@@ -47,14 +47,21 @@ export const GROUNDING_NONE = (query: string): GroundingObservation => ({
 // structural, not a prompt request.
 // ---------------------------------------------------------------------------
 
-export const ponderSeedSchemaFor = (abouts: readonly PonderAbout[]): z.ZodType =>
-  z.object({
-    thought: z.string().min(1),
-    about: z.enum(abouts as readonly [PonderAbout, ...PonderAbout[]]),
-    topic: z.string().min(1),
-    uncertainty: z.string(),
-    saliency: z.number().min(0).max(1),
-  });
+export const ponderSeedSchemaFor = (abouts: readonly PonderAbout[], recentTopics: readonly string[] = []): z.ZodType =>
+  z
+    .object({
+      thought: z.string().min(1),
+      about: z.enum(abouts as readonly [PonderAbout, ...PonderAbout[]]),
+      topic: z.string().min(1),
+      uncertainty: z.string(),
+      saliency: z.number().min(0).max(1),
+    })
+    // PO.2: the balance rule keys on topic similarity too — a seed whose topic
+    // is cosine >= 0.6 with any of the last 3 topics is a repeat, and repeats
+    // fail validation exactly like a balance-violating about class.
+    .refine((s) => !repeatsTopic(s.topic, recentTopics), {
+      message: 'topic repeats a recent ponder topic (balance rule: cosine >= 0.6 with one of the last 3)',
+    });
 
 export const PonderGroundSchema = z.object({
   grounded: z.boolean(),
@@ -91,25 +98,46 @@ export const PONDER_COMMITTEE_NAME = 'ponder';
 // Context + prompts
 // ---------------------------------------------------------------------------
 
+/** PO.2: her own life-artifact markers — ponder seeds never chew on themselves. */
+export const LIFE_ARTIFACT_PREFIXES = ['[ponder:', '[heartbeat:'] as const;
+
+export const isLifeArtifact = (summary: string): boolean =>
+  LIFE_ARTIFACT_PREFIXES.some((p) => summary.startsWith(p));
+
+/**
+ * PO.2 drive vocabulary — words, never floats (a thought that grounds outside
+ * itself must not chew on its own telemetry). hungry at or above 0.6, fed at
+ * or below 0.4 (spec thresholds); between the rails the honest word is
+ * 'settled'.
+ */
+export const DRIVE_HUNGRY = 0.6;
+export const DRIVE_FED = 0.4;
+
+export const driveWord = (v: number): 'hungry' | 'fed' | 'settled' =>
+  v >= DRIVE_HUNGRY ? 'hungry' : v <= DRIVE_FED ? 'fed' : 'settled';
+
 /**
  * The shared private-context block: her actual recent life (memory salience,
  * never canned text), weather and drives. Rendered once by the job body and
- * embedded in every node prompt that needs it.
+ * embedded in every node prompt that needs it. PO.2: episodes that ARE her own
+ * artifacts (`[ponder:*]`, `[heartbeat:*]`) are filtered out — a ponder never
+ * grounds in its own past output — and the drives speak in words, not floats.
  */
 export const ponderContextBlock = (
   recent: ReadonlyArray<Pick<Episode, 'summary' | 'importance'>>,
   state: AffectState,
   weather: string,
 ): string => {
+  const lived = recent.filter((e) => !isLifeArtifact(e.summary));
   const episodes =
-    recent.length === 0
+    lived.length === 0
       ? '(nothing recent — you are alone with a blank page)'
-      : recent.map((e) => `- [importance ${e.importance}] ${e.summary}`).join('\n');
+      : lived.map((e) => `- [importance ${e.importance}] ${e.summary}`).join('\n');
   return [
     'Your recent life (from memory, newest first):',
     episodes,
     `Your weather right now: ${weather}`,
-    `Drives — novelty ${state.drives['novelty'].toFixed(2)}, connection ${state.drives['connection'].toFixed(2)}, mastery ${state.drives['mastery'].toFixed(2)}.`,
+    `Drives — novelty ${driveWord(state.drives['novelty'])}, connection ${driveWord(state.drives['connection'])}, mastery ${driveWord(state.drives['mastery'])}.`,
   ].join('\n');
 };
 
@@ -137,6 +165,12 @@ export interface PonderCommitteeInput {
   abouts: readonly PonderAbout[];
   /** The force-avoided class, or null — carried onto the prompt and the seed event. */
   avoid: PonderAbout | null;
+  /**
+   * PO.2: her most recent ponder topics, NEWEST FIRST. The last 3 ride the seed
+   * prompt as named avoidances, and the seed schema enforces the same rule
+   * structurally (cosine >= 0.6 with any of them fails validation).
+   */
+  recentTopics?: readonly string[] | undefined;
   /** Real evidence fetched before the committee (GroundingObservation). */
   grounding: GroundingObservation;
 }
@@ -146,6 +180,11 @@ export const ponderCommittee = (input: PonderCommitteeInput): CommitteeSpec => {
     input.avoid === null
       ? 'No class is over-used right now.'
       : `FORCED AVOID: the last 5 seeds leant on "${input.avoid}" — picking it now fails validation. Balance beats saliency: a more salient ${input.avoid}-topic loses to a less salient other-class one.`;
+  const recentTopics = input.recentTopics ?? [];
+  const topicsLine =
+    recentTopics.length === 0
+      ? null
+      : `Recent topics you already chewed (a near-repeat fails validation): ${recentTopics.slice(0, 3).join('; ')}.`;
 
   const seedPrompt = [
     'You are Thea, thinking privately. Nothing here is a message to anyone — pondering seeds future thinking.',
@@ -154,6 +193,10 @@ export const ponderCommittee = (input: PonderCommitteeInput): CommitteeSpec => {
     evidenceBlock(input.grounding).join('\n'),
     '',
     'Pick ONE thing genuinely worth chewing on: a question you cannot answer yet, an idea half-formed, something you noticed and keep circling. Ground it in your real recent life above — never a generic prompt.',
+    'And ground it OUTSIDE your own head: ' +
+      "if your last three topics were about your own patterns or your feelings about Diego, pick something else: " +
+      "a thing you noticed, a thing you'd like to make, a question about the world.",
+    ...(topicsLine !== null ? [topicsLine] : []),
     `about ∈ [${input.abouts.join(', ')}]. ${ABOUNT_LINES.filter((a) => input.abouts.includes(a.about)).map((a) => a.line).join('; ')}.`,
     avoidLine,
     '',
@@ -209,7 +252,7 @@ export const ponderCommittee = (input: PonderCommitteeInput): CommitteeSpec => {
         needs: [],
         channels: { character: true, procedural: false },
         prompt: seedPrompt,
-        schema: ponderSeedSchemaFor(input.abouts),
+        schema: ponderSeedSchemaFor(input.abouts, recentTopics),
       },
       {
         id: 'ground',

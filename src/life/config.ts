@@ -33,9 +33,10 @@ export interface LifeConfig {
    * visible content, and a starved call returns empty text (live-proven). */
   thoughtMaxTokens: number;
   thoughtTemperature: number;
-  /** Committee node calls (main-tier, prompted JSON — M13 nodes are tool-less).
-   * Same reasoning-budget caveat as thoughtMaxTokens: 500 starved glm-5.3's
-   * seed node into empty output on the first live ponder. */
+  /** Committee node calls (main-tier; PO.1: each node's schema rides the
+   * request, so M03's structured ladder runs per node). Same reasoning-budget
+   * caveat as thoughtMaxTokens: 2000 starved glm-5.3's seed node into empty
+   * output on the first live ponder; the spec pins 3000. */
   committeeMaxTokens: number;
   committeeTemperature: number;
   /** Recent episodes rendered into her private context blocks. */
@@ -60,7 +61,11 @@ export const LIFE_CONFIG_DEFAULTS: LifeConfig = {
   reflectTimeoutMs: 15 * MIN,
   thoughtMaxTokens: 2000, // 800 was borderline: flash thinking alone can pass 700
   thoughtTemperature: 0.7,
-  committeeMaxTokens: 2000,
+  /** Committee node calls (main-tier; PO.1: the node schema rides the request,
+   * so the structured ladder runs per node). Same reasoning-budget caveat as
+   * thoughtMaxTokens — the thinking trace draws from the same budget as the
+   * visible content — with the spec pinning the headroom at 3000. */
+  committeeMaxTokens: 3000,
   committeeTemperature: 0.6,
   contextEpisodes: 8,
   thoughtTier: 'cheap',

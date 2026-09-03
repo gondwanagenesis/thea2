@@ -3,12 +3,17 @@
 //     requiresObservation (structurally unreachable without upstream input —
 //     M13's validateCommittee is the enforcement, asserted here too);
 //   * the balance rule as STRUCTURE: the seed schema is built from the allowed
-//     abouts, so a violating seed fails validation, never a prompt request;
+//     abouts, so a violating seed fails validation, never a prompt request —
+//     and since PO.2 the same structure keys on TOPIC similarity (cosine >= 0.6
+//     with any of the last 3 topics => avoid);
+//   * PO.2: the seed context excludes her own artifacts ([ponder:*],
+//     [heartbeat:*]) and telemetry (drive floats render as words);
 //   * the build delta: real evidence enters through the injected ground seam as
 //     SEED/GROUND prompt inputs, and REVISE gets the observation through the DAG
 //     edge only — the evidence is pasted into no revise prompt;
 //   * an end-to-end committee run over MockModel (taskClass ponder-seed, main
-//     tier, graceful failure, artifact validation, 'nothing' as a good outcome).
+//     tier, graceful failure, artifact validation, 'nothing' as a good outcome),
+//     every node call riding the structured ladder (PO.1).
 
 import { describe, expect, it } from 'vitest';
 import { TestClock } from '../../src/kernel/clock.js';
@@ -26,9 +31,11 @@ import {
   ponderGroundQuery,
   ponderSeedSchemaFor,
 } from '../../src/life/ponder.js';
+import { repeatsTopic } from '../../src/life/policy.js';
 import type { PonderAbout } from '../../src/life/policy.js';
 import {
   T0,
+  HOUR,
   affectState,
   committeeEnv,
   ponderModel,
@@ -38,11 +45,14 @@ import {
 
 const context = 'Your recent life (from memory, newest first):\n- [importance 8] the crates';
 
-const spec = (over: { abouts?: readonly PonderAbout[]; avoid?: PonderAbout | null } = {}): CommitteeSpec =>
+const spec = (
+  over: { abouts?: readonly PonderAbout[]; avoid?: PonderAbout | null; topics?: readonly string[] } = {},
+): CommitteeSpec =>
   ponderCommittee({
     context,
     abouts: over.abouts ?? ['diego', 'self', 'world'],
     avoid: over.avoid !== undefined ? over.avoid : null,
+    ...(over.topics !== undefined ? { recentTopics: over.topics } : {}),
     grounding: GROUNDING_NONE('something genuinely new worth learning today'),
   });
 
@@ -140,6 +150,98 @@ describe('the balance rule is structural — the seed schema is built from the a
 });
 
 // ---------------------------------------------------------------------------
+// PO.2 — the seed grounds outside itself: no own artifacts, no telemetry, no
+// repeated topics
+// ---------------------------------------------------------------------------
+
+describe('PO.2 — the seed context excludes her own artifacts and telemetry', () => {
+  it('seed context carries no ponder artifact', () => {
+    const recent = [
+      { summary: '[ponder:world] the cadence, not the calendar, is what drifts', importance: 7, ts: T0 - HOUR },
+      { summary: '[heartbeat:followup] asked how the crates landed', importance: 6, ts: T0 - 2 * HOUR },
+      { summary: 'he told me the crates shipped this morning', importance: 8, ts: T0 - 3 * HOUR },
+    ];
+    const block = ponderContextBlock(recent, affectState({ drives: { novelty: 0.2, connection: 0.2, mastery: 0.2 } }), 'calm');
+    expect(block).not.toContain('[ponder:');
+    expect(block).not.toContain('[heartbeat:');
+    expect(block).toContain('he told me the crates shipped this morning');
+  });
+
+  it('a life that is all her own artifacts is a blank page, honestly named', () => {
+    const recent = [
+      { summary: '[ponder:self] a pattern in my own drift', importance: 5, ts: T0 - HOUR },
+      { summary: '[heartbeat:miss] just missing him', importance: 4, ts: T0 - 2 * HOUR },
+    ];
+    const block = ponderContextBlock(recent, affectState(), 'calm');
+    expect(block).toContain('(nothing recent — you are alone with a blank page)');
+  });
+
+  it('no drive number reaches the prompt — floats render as words (thresholds 0.4/0.6)', () => {
+    const block = ponderContextBlock(
+      recentEpisodes(),
+      affectState({ drives: { novelty: 0.7, connection: 0.2, mastery: 0.5 } }),
+      'calm',
+    );
+    expect(block).toContain('Drives — novelty hungry, connection fed, mastery settled.');
+    // No float from the drives line can reach any prompt built on the block.
+    const drivesLine = block.split('\n').find((l) => l.startsWith('Drives —')) ?? '';
+    expect(drivesLine).not.toMatch(/\d/);
+
+    const seedPrompt = ponderCommittee({
+      context: block,
+      abouts: ['diego', 'self', 'world'],
+      avoid: null,
+      grounding: GROUNDING_NONE('q'),
+    }).nodes[0]?.prompt ?? '';
+    expect(seedPrompt).toContain('Drives — novelty hungry, connection fed, mastery settled.');
+    expect(seedPrompt).not.toMatch(/novelty \d/);
+  });
+});
+
+describe('PO.2 — the topic-escape clause and the topic-similarity balance rule', () => {
+  it('the seed prompt carries the topic-escape clause verbatim', () => {
+    const prompt = spec().nodes[0]?.prompt ?? '';
+    expect(prompt).toContain(
+      "if your last three topics were about your own patterns or your feelings about Diego, pick something else: " +
+        "a thing you noticed, a thing you'd like to make, a question about the world",
+    );
+  });
+
+  it('the seed prompt names the recent topics it must not repeat', () => {
+    const withTopics = spec({ topics: ['slot math', 'calendar drift'] });
+    const prompt = withTopics.nodes[0]?.prompt ?? '';
+    expect(prompt).toContain('slot math');
+    expect(prompt).toContain('calendar drift');
+    // And a clean history names nothing.
+    expect(spec().nodes[0]?.prompt ?? '').not.toContain('recent topics');
+  });
+
+  it('a repeated topic is avoided', () => {
+    // The rule itself (policy): cosine >= 0.6 with any of the last 3 topics.
+    expect(repeatsTopic('slot math drift', ['slot math'])).toBe(true);
+    expect(repeatsTopic('sea glass jar', ['slot math', 'calendar drift'])).toBe(false);
+
+    // As structure: the seed schema is built WITH the recent topics, so a
+    // repeating seed fails validation exactly like a balance-violating about.
+    const schema = ponderSeedSchemaFor(['diego', 'self', 'world'], ['slot math']);
+    expect(schema.safeParse({ ...seedScript(), topic: 'slot math' }).success).toBe(false); // identical topic
+    expect(schema.safeParse({ ...seedScript(), topic: 'slot math drift' }).success).toBe(false); // cosine ~0.82
+    expect(schema.safeParse({ ...seedScript(), topic: 'why the horizon drifts' }).success).toBe(true);
+    // Without topics the same schema accepts the same shape.
+    expect(ponderSeedSchemaFor(['diego', 'self', 'world']).safeParse(seedScript({ topic: 'slot math' })).success).toBe(true);
+  });
+
+  it('a seed that repeats a recent topic dies at validation in the run', async () => {
+    const model = new MockModel({ clock: new TestClock(T0) });
+    model.enqueue({ toolCalls: [{ name: 'emit', args: seedScript() as unknown as Record<string, unknown> }] }); // topic 'slot math'
+    const res = await runCommittee(spec({ topics: ['calendar drift', 'slot math'] }), committeeEnv(model));
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("node 'seed' failed");
+    expect(res.artifact).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The grounding seam and the revision discipline
 // ---------------------------------------------------------------------------
 
@@ -227,14 +329,20 @@ describe('the ponder committee run over MockModel', () => {
 
   it('every node call is a plain ponder-seed model call on the env tier, with no tools', async () => {
     const model = ponderModel();
-    await runCommittee(spec(), committeeEnv(model));
+    const s = spec();
+    await runCommittee(s, committeeEnv(model));
     expect(model.calls).toHaveLength(4);
-    for (const call of model.calls) {
+    const schemas = s.nodes.map((n) => n.schema);
+    for (const [i, call] of model.calls.entries()) {
       expect(call.taskClass).toBe('ponder-seed');
       expect(call.tier).toBe('main');
       expect(call.maxTokens).toBe(500);
       expect(call.temperature).toBe(0.6);
       expect(call.tools).toBeUndefined(); // M13: committee nodes are tool-less
+      // PO.1: the node's schema rides the request — the structured ladder runs,
+      // the class default ('low', REASONING_BY_CLASS) is the reasoning control.
+      expect(call.schema).toBe(schemas[i]);
+      expect(call.reasoning).toBe('low');
     }
   });
 
@@ -260,36 +368,37 @@ describe('the ponder committee run over MockModel', () => {
 
   it('an unparseable node output fails gracefully — the committee never throws', async () => {
     const model = new MockModel({ clock: new TestClock(T0) });
-    model.enqueue({ content: JSON.stringify(seedScript()) });
-    model.enqueue({ content: 'prose where the JSON should be' });
+    model.enqueue({ toolCalls: [{ name: 'emit', args: seedScript() as unknown as Record<string, unknown> }] }); // seed answers on the ladder
+    model.enqueue({ content: 'prose where the JSON should be' }); // the ground node dies
     const res = await runCommittee(spec(), committeeEnv(model));
 
     expect(res.ok).toBe(false);
     expect(res.artifact).toBeNull();
-    expect(res.error).toContain("node 'ground'");
+    expect(res.error).toContain("node 'ground' failed");
     expect(res.outputs.map((o) => o.id)).toEqual(['seed']); // the work done so far survives in the report
   });
 
   it('a seed that violates the balance rule dies at validation — the structural rule bites in the run', async () => {
     const model = new MockModel({ clock: new TestClock(T0) });
-    model.enqueue({ content: JSON.stringify(seedScript({ about: 'diego' })) }); // abouts here are self|world
+    model.enqueue({ toolCalls: [{ name: 'emit', args: seedScript({ about: 'diego' }) as unknown as Record<string, unknown> }] }); // abouts here are self|world
     const res = await runCommittee(spec({ abouts: ['self', 'world'], avoid: 'diego' }), committeeEnv(model));
 
     expect(res.ok).toBe(false);
-    expect(res.error).toContain("node 'seed'");
+    expect(res.error).toContain("node 'seed' failed");
     expect(res.artifact).toBeNull();
-    expect(model.calls).toHaveLength(1); // the committee stops at the violated node
+    expect(model.calls).toHaveLength(2); // the node call + the ladder's one-shot repair — then the committee stops
   });
 
   it('a malformed terminal artifact is a loud ok:false — the artifact node validates its own output', async () => {
     // The artifact node's schema IS spec.output (pinned above), so a bad artifact
-    // dies at the node and the committee-level re-check never sees a divergence.
+    // dies at the node (the ladder's one repair included) and the committee-level
+    // re-check never sees a divergence.
     const model = ponderModel({ artifact: { saliency: 9 } });
     const res = await runCommittee(spec(), committeeEnv(model));
     expect(res.ok).toBe(false);
-    expect(res.error).toContain("node 'artifact' output failed its schema");
+    expect(res.error).toContain("node 'artifact' failed");
     expect(res.artifact).toBeNull();
-    expect(model.calls).toHaveLength(4); // it ran to the last node before failing
+    expect(model.calls).toHaveLength(5); // 4 node calls + the artifact node's repair
   });
 
   it("'nothing' is a valid landing: a thin ponder ends the run ok, not failed", async () => {
@@ -308,20 +417,20 @@ describe('the ponder committee run over MockModel', () => {
 // ---------------------------------------------------------------------------
 
 describe('ponderContextBlock', () => {
-  it('renders her real recent life, weather and drives', () => {
+  it('renders her real recent life, weather and drives as words (PO.2: no floats)', () => {
     const block = ponderContextBlock(recentEpisodes(), affectState({ drives: { novelty: 0.25, connection: 0.34, mastery: 0.25 } }), 'warm, restless');
     const lines = block.split('\n');
     expect(lines[0]).toBe('Your recent life (from memory, newest first):');
     expect(block).toContain('- [importance 8] he told me the crates shipped this morning');
     expect(block).toContain('- [importance 3] quiet afternoon, I reread my own diary and cringed');
     expect(block).toContain('Your weather right now: warm, restless');
-    expect(block).toContain('Drives — novelty 0.25, connection 0.34, mastery 0.25.');
+    expect(block).toContain('Drives — novelty fed, connection fed, mastery fed.');
   });
 
   it('an empty life is a blank page, honestly named', () => {
     const block = ponderContextBlock([], affectState({ drives: { novelty: 0, connection: 0, mastery: 0 } }), 'calm');
     expect(block).toContain('(nothing recent — you are alone with a blank page)');
-    expect(block).toContain('Drives — novelty 0.00, connection 0.00, mastery 0.00.');
+    expect(block).toContain('Drives — novelty fed, connection fed, mastery fed.');
   });
 });
 

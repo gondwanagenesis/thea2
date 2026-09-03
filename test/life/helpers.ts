@@ -1,9 +1,9 @@
 // test/life — shared fixtures. Three deliberate choices:
 //   * Every model script here answers through the rung the real call would take:
-//     the heartbeat thought goes out with a schema and no tools, so the ladder
-//     picks rung (b) and the scripts answer through the forced `emit` tool call.
-//     The ponder committee takes no schema to the wire at all (M13 parses node
-//     output itself), so its scripts answer with content JSON.
+//     the heartbeat thought goes out with a schema and no tools, and — since
+//     P-PONDER PO.1 — so does every ponder committee node (the node schema rides
+//     the request, M13 no longer hand-parses), so the ladder picks rung (b) in
+//     both cases and the scripts answer through the forced `emit` tool call.
 //   * The event log is an in-memory recording double: the life events' payloads and
 //     ORDER are what the suites pin, not file bytes (M02's own suite owns the file).
 //   * Affect state comes from the real `initialAffectState` with drives overridden,
@@ -234,12 +234,17 @@ export const artifactScript = (over: Record<string, unknown> = {}): Record<strin
   ...over,
 });
 
-/** Scripts all four nodes with valid JSON, in committee execution order. */
+/** A node reply on rung (b): the payload rides the forced `emit` tool call. */
+const emitNode = (args: Record<string, unknown>) => ({
+  toolCalls: [{ name: 'emit', args }],
+});
+
+/** Scripts all four nodes with valid JSON through the ladder's emit rung, in committee execution order. */
 export const ponderModel = (scripts: NodeScripts = {}): MockModel => {
   const m = new MockModel({ clock: new TestClock(T0) });
-  m.enqueue({ content: JSON.stringify(seedScript(scripts.seed)) });
-  m.enqueue({ content: JSON.stringify(groundScript(scripts.ground)) });
-  m.enqueue({ content: JSON.stringify(reviseScript(scripts.revise)) });
-  m.enqueue({ content: JSON.stringify(artifactScript(scripts.artifact)) });
+  m.enqueue(emitNode(seedScript(scripts.seed) as unknown as Record<string, unknown>));
+  m.enqueue(emitNode(groundScript(scripts.ground) as unknown as Record<string, unknown>));
+  m.enqueue(emitNode(reviseScript(scripts.revise) as unknown as Record<string, unknown>));
+  m.enqueue(emitNode(artifactScript(scripts.artifact)));
   return m;
 };

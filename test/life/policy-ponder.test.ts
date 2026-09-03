@@ -11,10 +11,14 @@ import {
   PONDER_ARTIFACT_HORIZON_H,
   PONDER_GATE,
   PONDER_WEIGHTS,
+  TOPIC_AVOID_COSINE,
+  TOPIC_AVOID_WINDOW,
   allowedAbouts,
   balanceAvoid,
   ponderGate,
   ponderScore,
+  repeatsTopic,
+  topicCosine,
   type PonderAbout,
   type PonderFeatures,
 } from '../../src/life/policy.js';
@@ -133,6 +137,43 @@ describe('allowedAbouts (the balance rule as a set)', () => {
     expect(allowedAbouts(['diego', 'diego', 'world'])).toEqual(['self', 'world']);
     expect(allowedAbouts(['self', 'self', 'self', 'self'])).toEqual(['diego', 'world']);
     expect(allowedAbouts(['world', 'world', 'world', 'world'])).toEqual(['diego', 'self']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The topic rule (PO.2): the balance rule also keys on topic similarity —
+// cosine >= 0.6 with any of the last 3 topics => avoid.
+// ---------------------------------------------------------------------------
+
+describe('topicCosine / repeatsTopic (the topic-similarity balance rule)', () => {
+  it('constants: threshold 0.6 over a window of 3', () => {
+    expect(TOPIC_AVOID_COSINE).toBe(0.6);
+    expect(TOPIC_AVOID_WINDOW).toBe(3);
+  });
+
+  it('cosine is 1 for identical word bags, 0 for disjoint ones', () => {
+    expect(topicCosine('slot math', 'slot math')).toBe(1);
+    expect(topicCosine('Slot Math', 'slot math')).toBe(1); // case-folded
+    expect(topicCosine('slot  math!', 'slot math')).toBe(1); // punctuation/whitespace folded
+    expect(topicCosine('slot math', 'the crates shipped')).toBe(0);
+    expect(topicCosine('', 'slot math')).toBe(0); // an empty side is no similarity
+  });
+
+  it('paraphrases with shared vocabulary land between, deterministically', () => {
+    const a = topicCosine('why does the slot math drift', 'slot math drift');
+    expect(a).toBeGreaterThan(0.6);
+    expect(a).toBeLessThan(1);
+    expect(topicCosine('why does the slot math drift', 'slot math drift')).toBe(a);
+  });
+
+  it('repeatsTopic keys on the LAST 3 topics only', () => {
+    expect(repeatsTopic('slot math drift', ['calendar drift', 'slot math'])).toBe(true);
+    expect(repeatsTopic('sea glass jar', ['slot math', 'calendar drift', 'the crates'])).toBe(false);
+    // The window: a match inside the newest 3 bites, the same match pushed to
+    // fourth place ages out.
+    expect(repeatsTopic('t0', ['t0', 'a', 'b', 'c'])).toBe(true);
+    expect(repeatsTopic('t0', ['a', 'b', 'c', 't0'])).toBe(false);
+    expect(repeatsTopic('anything', [])).toBe(false); // no history, no avoidance
   });
 });
 

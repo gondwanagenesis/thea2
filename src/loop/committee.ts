@@ -9,8 +9,8 @@
 // through the DAG's own edges. Tool work belongs to the deliberation that
 // spawned the committee or to a fork/task subprocess.
 
-import { looseJsonParse } from '../model/index.js';
-import type { ChatMsg, ModelClient } from '../model/index.js';
+import { isModelError } from '../model/index.js';
+import type { ChatMsg, ChatResponse, ModelClient, ReasoningEffort } from '../model/index.js';
 import type { LoopPacket, CommitteeSpec, CommitteeResult, Vec12, LoopQuery } from './types.js';
 import { failLoop } from './errors.js';
 import { decisionIssue } from './schema.js';
@@ -79,6 +79,12 @@ export interface CommitteeEnv {
   temperature: number;
   /** Tier for node calls (cfg.spawnTier.committee). */
   tier: 'main' | 'cheap' | 'reasoning';
+  /**
+   * PO.1: optional reasoning-control override for node calls. Absent, the
+   * client applies the class default (REASONING_BY_CLASS['ponder-seed'] =
+   * 'low'); set, it wins over that default (DR.2).
+   */
+  reasoning?: ReasoningEffort | undefined;
 }
 
 /**
@@ -143,22 +149,37 @@ const runNode = async (
     { role: 'system', content: nodeSystem(node, env) },
     { role: 'user', content: nodePrompt(node, upstream) },
   ];
-  const res = await env.model.chat(
-    {
-      taskClass: 'ponder-seed',
-      tier: env.tier,
-      messages,
-      maxTokens: env.maxTokens,
-      temperature: env.temperature,
-    },
-    { turnId: env.turnId, signal: env.signal },
-  );
-  if (node.schema === undefined) return { text: res.content, value: res.content };
-  const parsed = looseJsonParse(res.content);
-  if (!parsed.ok) throw new Error(`node '${node.id}' did not return JSON: ${parsed.error}`);
-  const check = node.schema.safeParse(parsed.value);
-  if (!check.success) throw new Error(`node '${node.id}' output failed its schema: ${decisionIssue(check.error)}`);
-  return { text: res.content, value: check.data };
+  let res: ChatResponse<unknown>;
+  try {
+    res = await env.model.chat(
+      {
+        taskClass: 'ponder-seed',
+        tier: env.tier,
+        messages,
+        maxTokens: env.maxTokens,
+        temperature: env.temperature,
+        // PO.1: a node that declares a schema carries it on the request — the
+        // structured ladder runs (rung per capability, one-shot repair), and the
+        // reply arrives as the ladder-VALIDATED value, not prose to hand-parse.
+        ...(node.schema === undefined
+          ? {}
+          : { schema: node.schema, schemaName: `committee:${env.name}:${node.id}` }),
+        ...(env.reasoning === undefined ? {} : { reasoning: env.reasoning }),
+      },
+      { turnId: env.turnId, signal: env.signal },
+    );
+  } catch (e) {
+    // The typed code survives into the committee's failure value: a truncated
+    // node is never mistaken for a schema miss or an empty answer.
+    const code = isModelError(e) ? `${e.code}: ` : '';
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(`node '${node.id}' failed: ${code}${detail}`);
+  }
+  if (node.schema === undefined) return { text: res.content as string, value: res.content };
+  // The ladder already parsed AND validated against node.schema — content is
+  // the typed value. The edge text is its JSON form (upstream prompts embed it).
+  const value = res.content;
+  return { text: typeof value === 'string' ? value : JSON.stringify(value), value };
 };
 
 /** Per-node channel composition — the same rule the spawn primitives follow. */
