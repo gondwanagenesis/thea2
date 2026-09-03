@@ -1,0 +1,37 @@
+[
+  {
+    "event": "message.part.updated",
+    "data": {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_test",
+        "messageID": "msg_1",
+        "part": {
+          "id": "prt_1",
+          "type": "text",
+          "text": "{\"plan\":\"reply\",\"bubbles\":\"just a sec\",\"confidence\":0.7,\"weight\":0.5,\"reluctance\":0.2,\"completeness\":1}"
+        }
+      }
+    }
+  },
+  {
+    "event": "message.updated",
+    "data": {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg_1",
+          "sessionID": "ses_test",
+          "role": "assistant",
+          "cost": 0.0011,
+          "tokens": { "input": 280, "output": 24 },
+          "finish": "stop"
+        }
+      }
+    }
+  },
+  {
+    "event": "session.idle",
+    "data": { "type": "session.idle", "properties": { "sessionID": "ses_test" } }
+  }
+]

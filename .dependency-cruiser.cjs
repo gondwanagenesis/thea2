@@ -26,6 +26,11 @@ const MODULES = {
   "src/assemble": ["kernel", "embed", "coupling", "corpus", "memory"],
   "src/inhibit": ["kernel", "model", "corpus"],
   "src/loop": ["kernel", "events", "model", "memory", "inhibit"],
+  // M21/P-SPINE-1 (v7): the OpenCode spine runtime. It sits above the
+  // kernel/events/model floor and consumes the loop's decision contract and
+  // the inhibit compiler READ-ONLY (the SpineRunner seam, plan v7 PART 0.5).
+  // app is its only downstream consumer (composition root).
+  "src/spine": ["kernel", "events", "model", "loop", "inhibit"],
   "src/realize": ["kernel", "coupling", "bridge"],
   "src/bridge": ["kernel", "events"],
   "src/sched": ["kernel", "events"],
@@ -38,7 +43,8 @@ const MODULES = {
     // S5 wiring: the pipeline emits packet.record (M10's credit input) and
     // compose builds the M19 probe target. S6-S8 wiring landed life, siblings
     // (routing table) and derive (the S7 CLI verbs) into compose/cli.
-    "consolidate", "probes", "life", "siblings", "derive",
+    // W2 (v7): the spine runner — compose registers the SpineRunner (M21).
+    "consolidate", "probes", "life", "siblings", "derive", "spine",
   ],
 };
 

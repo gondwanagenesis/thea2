@@ -95,3 +95,43 @@ cat <<'EOF'
    4. systemctl start thea2-backup.timer
    Thea1 keeps running until the explicit cutover decision (ops.md §5).
 EOF
+
+# ===== BEGIN spine provisioning (P-SPINE-1 / M21, appended 2026-09-03 — v7) =====
+# The pinned OpenCode spine child (ADR-001/ADR-002 amendments, D.7-2): thead
+# spawns and supervises it; this block only provisions the binary and Bun.
+# The pin MUST equal thea2.config.yaml `spine.version` (M.6). Upgrades are
+# explicit M-items gated on the probe suite — bump both places in one change.
+SPINE_VERSION="1.18.3"
+
+spine_version_ok() {
+  command -v opencode >/dev/null 2>&1 || return 1
+  opencode --version 2>/dev/null | grep -q "$SPINE_VERSION"
+}
+
+if spine_version_ok; then
+  echo ">> spine: opencode $SPINE_VERSION already provisioned"
+else
+  echo ">> spine: provisioning opencode $SPINE_VERSION (pinned)"
+  # OpenCode's official installer honors VERSION= for an exact pin.
+  curl -fsSL https://opencode.ai/install | VERSION="$SPINE_VERSION" bash
+  spine_version_ok || { echo ">> spine: opencode $SPINE_VERSION failed to provision — fix before enabling thea2"; exit 1; }
+fi
+
+# Bun is OpenCode's runtime; custom tools/plugins (M22/M23) need it present.
+if ! command -v bun >/dev/null 2>&1; then
+  echo ">> spine: provisioning bun"
+  curl -fsSL https://bun.sh/install | bash
+fi
+
+# Spine secrets ride keys.env like every other secret (AGENTS rule 7): the
+# auth token the child requires on every request, the secret VALUES the gate
+# plugin scans tool args for, and the thead endpoint it posts gate events to.
+if ! grep -q '^THEA2_SPINE_TOKEN=' "$KEYS" 2>/dev/null; then
+  cat >> "$KEYS" <<'EOF'
+THEA2_SPINE_TOKEN=PLACEHOLDER_SPINE_TOKEN
+THEA2_SPINE_SECRETS=
+THEA2_SPINE_EVENT_URL=http://127.0.0.1:8087/spine/gate-events
+EOF
+  echo ">> spine: appended THEA2_SPINE_TOKEN to $KEYS — fill it in (openssl rand -hex 32)"
+fi
+# ===== END spine provisioning =====

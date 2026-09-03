@@ -27,3 +27,12 @@ One runtime process, `thead`, hosts bridge + scheduler + deliberation loop + aff
 - One crash takes everything down. Accepted: systemd restarts the unit; the bridge commits Telegram offsets only after ledger append, so at-least-once redelivery plus dedup makes restarts lossless.
 - A wedged job shares the process. Mitigated: cooperative timeout via AbortSignal, abandoned promises flagged `wedged`, singleton locks refuse re-entry until restart.
 - 97 units become 2. Everything that was a unit file becomes a row in the job table, with tests.
+
+## Amendment (2026-09-03, Diego directive, v7)
+
+Status above is unchanged. The process count changes by exactly ONE, on purpose: **one thead + one pinned spine child.**
+
+- OpenCode (M21, ADR-001 amendment) runs as `opencode serve` on 127.0.0.1, spawned and SUPERVISED by thead — a child process, not a systemd unit. It never joins the unit forest this ADR was written to kill: the pinned version, the health check, the restart backoff, and the wedge→abandon (`incident.spine_failed`) are thead code (M21 S1.2), testable hermetically like every other supervisor semantic.
+- Exactly one spine child per thead. No second conversation-multiplexed server, no helper daemons; M22's casts are sessions of the same child, not processes.
+- The deploy ritual gains one step (M.7): every deploy post-W2 restarts thead AND the spine child, verifies `session.idle` within 30 s, then door:smoke + watch. The pin lives in `thea2.config.yaml` (`spine.version`); install.sh provisions it (M.6). Upgrades are explicit M-items (D.7-2).
+- The one-crash-takes-everything consequence is thereby WEAKENED in her favor: a wedged spine no longer wedges the person — thead survives it, abandons loudly, and the ledger keeps the reply owed.

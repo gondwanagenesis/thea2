@@ -9,7 +9,7 @@ date: 2026-09-02
 Companion to [THESIS.md](THESIS.md) (concepts), [docs/MANUAL.md](docs/MANUAL.md) (the plain-language walkthrough), and `docs/modules/` (per-module contracts). This file is the map: what exists, what depends on what, what flows where.
 
 <!-- gen:tests-count:start -->
-**1475 test declarations in 132 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+**1527 test declarations in 140 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
 <!-- gen:tests-count:end -->
 
 ## Topology
@@ -42,6 +42,7 @@ One TypeScript package (Node 20+, ESM, tsx runtime, vitest). Module boundaries a
 | M18 | `siblings` | S8 | Ledger (cost/routing) + Nightingale (probe runner) as scheduler jobs |
 | M19 | `probes` | S8 | Probe definitions, harness, evaluators, drift metric, baseline |
 | M20 | `app` | S5 | Config, composition presets, `thead` entrypoint, CLI |
+| M21 | `spine` | W2 | The OpenCode spine runtime: SpineRunner seam (OpenCodeRunner + FakeRunner), supervised pinned `opencode serve` child, session lifecycle, SSE→StreamEvent bridge, spine gate wiring |
 
 ## Dependency DAG (enforced)
 
@@ -51,15 +52,16 @@ kernel ← {events, model, embed}
        ← {coupling, memory, inhibit}
        ← {assemble, loop, realize}
        ← {life, derive, consolidate, siblings, probes}
+       ← {spine}
        ← app
 ```
 
-Left of an arrow may never import right of it. `app` is the only module allowed to import everything (composition root).
+Left of an arrow may never import right of it. `app` is the only module allowed to import everything (composition root). `spine` (M21) sits above the kernel/events/model floor and consumes the loop's decision contract and the inhibit compiler read-only; its only consumer is `app`.
 
 ## The context packet
 
 <!-- gen:canon-scenes:start -->
-**65 canon scene files** under `corpus/canon/` (every `.md` except `TEMPLATE.md` and `identity.md`), plus **1 derived exemplar files** in `corpus/derived/` (machine-generated; manifest-tracked per ADR-007). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+**65 canon scene files** under `corpus/canon/` (every `.md` except `TEMPLATE.md` and `identity.md`), plus **50 derived exemplar files** in `corpus/derived/` (machine-generated; manifest-tracked per ADR-007). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
 <!-- gen:canon-scenes:end -->
 
 Assembled fresh every entry (user turn, heartbeat, ponder) — the one synchronous step. Two channels that never compete for slots (ADR-009):

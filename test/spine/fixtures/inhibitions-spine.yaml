@@ -1,0 +1,31 @@
+# The spine gate fixture (S1.5) — hand-checkable, modeled on the canon file's
+# rule classes. Used by test/spine/gates.test.ts to prove the compile path:
+# hard tool rules -> spine permission denies + plugin veto rules; soft plan
+# rules stay fail-open and never compile to a spine deny.
+version: 1
+
+tool:
+  - id: unknown-tool-deny
+    why: a tool not in the registry is a bug, not an improvisation
+    applies: '*'
+    require_registry: true
+  - id: chat-lock
+    why: outbound messages go to Diego's chat and nowhere else
+    applies: [send_message]
+    owner_arg: chat_id
+  - id: no-secret-args
+    why: secret values must never ride tool arguments outward
+    applies: [web_fetch, web_search, send_message]
+    no_secret_args: true
+
+plan:
+  - id: no-machinery-leak
+    severity: hard
+    why: internal blocks and tool traffic must never reach the channel
+    reject_patterns:
+      - '⟦'
+  - id: banned-construction
+    severity: soft
+    why: the "it's not X, it's Y" family is a style tell; fail open
+    reject_patterns:
+      - "\\bnot only [^.,;]{2,40}, but\\b"

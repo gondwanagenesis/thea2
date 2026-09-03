@@ -1,0 +1,61 @@
+[
+  {
+    "event": "message.part.updated",
+    "data": {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_test",
+        "messageID": "msg_1",
+        "part": { "id": "prt_1", "type": "text", "text": "on it" }
+      }
+    }
+  },
+  {
+    "event": "message.part.updated",
+    "data": {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_test",
+        "messageID": "msg_1",
+        "part": { "id": "prt_2", "type": "text", "text": " - checking the logs." }
+      }
+    }
+  },
+  {
+    "event": "message.part.updated",
+    "data": {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_test",
+        "messageID": "msg_1",
+        "part": {
+          "id": "prt_3",
+          "type": "tool",
+          "callID": "call_1",
+          "tool": "memory_search",
+          "state": { "status": "done", "input": { "query": "deploy" } }
+        }
+      }
+    }
+  },
+  {
+    "event": "message.updated",
+    "data": {
+      "type": "message.updated",
+      "properties": {
+        "info": {
+          "id": "msg_1",
+          "sessionID": "ses_test",
+          "role": "assistant",
+          "cost": 0.0021,
+          "tokens": { "input": 311, "output": 42 },
+          "finish": "stop"
+        }
+      }
+    }
+  },
+  {
+    "event": "session.idle",
+    "data": { "type": "session.idle", "properties": { "sessionID": "ses_test" } }
+  }
+]

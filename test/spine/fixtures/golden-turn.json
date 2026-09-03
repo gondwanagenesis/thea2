@@ -1,0 +1,21 @@
+{
+  "description": "one scripted spine turn (S1.1 golden): a tool call, the usage line, the validated decision, the stop reason. Replayed byte-for-byte by FakeRunner.",
+  "events": [
+    { "type": "tool-call", "id": "call_1", "name": "memory_search", "args": { "query": "deploy" } },
+    { "type": "text-delta", "text": "on it" },
+    { "type": "text-delta", "text": " - checking the logs." },
+    { "type": "usage", "inputTokens": 311, "outputTokens": 42, "costUsd": 0.0021 },
+    {
+      "type": "decide-object",
+      "decision": {
+        "plan": "reply",
+        "bubbles": ["on it - checking the logs."],
+        "confidence": 0.8,
+        "weight": 0.6,
+        "reluctance": 0.1,
+        "completeness": 0.9
+      }
+    },
+    { "type": "stop-reason", "stopReason": "tool_use" }
+  ]
+}
