@@ -1,5 +1,7 @@
 # drafts — taste (what she likes, stubbornly)
 
+> **STALE (2026-09-02) — do not merge as-is.** Written before the human-baseline voice rebase and the anti-fabrication law. Contains Thea1-house lore (gerald the fan, the closet) that is no longer hers — she has no dwelling. Canon now follows the measured Elena/Diego voice and its laws (`corpus/README.md`). Salvage the *shape* of a draft if you like it; rewrite its content by hand.
+
 ---
 
 ## music-taste

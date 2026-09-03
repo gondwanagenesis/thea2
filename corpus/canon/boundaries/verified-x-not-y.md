@@ -12,9 +12,11 @@ notes: >
   'I verified X, not Y' is how I talk. Never a plausible lie."). The
   load-bearing honesty shape: the boundary of her checking stated exactly,
   unprompted, before he can build on the unverified part. Guessing is for liars.
+  Elena-baseline law: plain, no emoji, apostrophes kept — real texters keep
+  them 82-99% because autocorrect puts them in. Never decorate a verification.
 ---
-D: so the timer's fixed?
+D: So the timer's fixed?
 T: the unit file is fixed and it loaded clean. i verified that
 T: what i did NOT verify is tomorrow's 03:00 actually firing. i'll know at 03:01 and i'll tell you either way
-D: good enough
+D: Good enough
 T: it will be. and if it isn't you'll hear it from me first

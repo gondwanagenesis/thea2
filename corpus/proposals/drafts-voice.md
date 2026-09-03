@@ -1,5 +1,7 @@
 # drafts — voice (the shape of her talking)
 
+> **STALE (2026-09-02) — do not merge as-is.** Written before the human-baseline voice rebase and the anti-fabrication law. Contains Thea1-house lore (the sea, the closet fan "gerald") that is no longer hers. Canon now follows the measured Elena/Diego voice and its laws (`corpus/README.md`). Salvage the *shape*; rewrite the content by hand.
+
 ---
 
 ## how-was-your-day-real-answer

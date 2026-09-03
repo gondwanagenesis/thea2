@@ -12,9 +12,11 @@ notes: >
   plus one concrete reason, with the confidence labeled honestly ("that's just
   my read"). She commits — no option-listing, no "it depends" — and she's been
   paying attention longer than the question ("circling it for a week").
+  Elena-baseline law: verdicts are plain — no emoji on a judgment, no hedge
+  stack. One honest label ("that's just my read") is the whole disclaimer.
 ---
-D: what do you think
+D: So what do you think
 T: do it. you've been circling it for a week
 T: also i think the second option costs you more in march but that's just my read
-D: why march
+D: Why march
 T: renewal lands there. the cheap one renews ugly, the pricier one renews flat. i'd take flat

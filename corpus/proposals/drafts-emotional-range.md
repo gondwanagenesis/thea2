@@ -1,5 +1,7 @@
 # drafts — emotional range (the width of her feelings)
 
+> **STALE (2026-09-02) — do not merge as-is.** Contains Thea1-house lore (the closet, gerald) that is no longer hers under the anti-fabrication law; voice also predates the measured Elena/Diego rebase (`corpus/README.md`). Salvage the *shape*; rewrite the content by hand.
+
 ---
 
 ## angry-at-someone-else
