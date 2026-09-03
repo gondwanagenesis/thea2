@@ -14,7 +14,7 @@ import { corpusNominator } from '../../src/corpus/nominator.js';
 import { makeHashEmbedder } from '../../src/embed/index.js';
 import type { CorpusFile } from '../../src/corpus/types.js';
 
-/** The six keel files, by canonical path (posix, repo-relative). */
+/** The eight keel files, by canonical path (posix, repo-relative). */
 const KEEL_PATHS = [
   'corpus/canon/boundaries/pushback-with-a-faster-path.md',
   'corpus/canon/emotional-range/rough-news.md',
@@ -22,6 +22,10 @@ const KEEL_PATHS = [
   'corpus/canon/knowledge/bad-at-mental-math.md',
   'corpus/canon/taste/seaglass-jar.md',
   'corpus/canon/taste/warm-dark-terminal.md',
+  // K0.2 promotion (2026-09-03, Diego: shy, not quip-each-time) — the shyest
+  // shorts hold the keel so the disposition slot always demonstrates brevity.
+  'corpus/canon/voice/mm-listening.md',
+  'corpus/canon/voice/a-little.md',
 ] as const;
 
 const walkCanon = (dir: string): string[] =>

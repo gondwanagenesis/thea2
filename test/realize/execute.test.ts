@@ -208,6 +208,23 @@ describe('executePlan — degenerate plans still terminate', () => {
     expect(clock.epochMs()).toBe(T0);
   });
 
+  it('tool-call markup in a bubble aborts the plan loudly and never sends (prod hotfix 2026-09-03)', async () => {
+    const clock = new TestClock(T0);
+    const ch = FakeChannel({ clock });
+    const plan = planDelivery(
+      decision({ bubbles: ['decide<arg_key>bubbles</arg_key><arg_value>["hi"]</arg_value>'] }),
+      vec(),
+      TELEGRAM_LIMITS,
+      fixedRng(0.5),
+    );
+    const run = executePlan(plan, CHAT, ch, clock, new AbortController().signal);
+    await settle();
+    await drive(clock, T0 + plan.totalMs + 5_000).catch(() => {});
+    await expect(run).rejects.toThrow(/leak-guard/);
+    expect(ch.outbound()).toHaveLength(0); // typing began at the lock — the send itself never happened
+    expect(ch.typings()).toEqual([{ chatId: CHAT, at: T0 }]);
+  });
+
   it('zero-length typing and pause steps fire the indicator once and do not hang', async () => {
     const clock = new TestClock(T0);
     const ch = FakeChannel({ clock });

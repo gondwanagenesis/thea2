@@ -98,6 +98,13 @@ export const executePlan = async (
       // The gap reference is the moment the send hits the wire, not when its
       // promise resolves — a slow transport must not skew the next hold.
       const sendAt = clock.epochMs();
+      // Outbound leak guard (prod hotfix 2026-09-03): a malformed model turn can
+      // carry raw tool-call markup as prose (ledger msgIds 93/95 sent it to
+      // Telegram). The realizer never rewrites text, so markup is a loud abort,
+      // never a send.
+      if (/<\/?(?:arg_key|arg_value|tool_call)>/.test(step.text)) {
+        throw new Error(`realize/leak-guard: bubble carries tool-call markup — refusing to send: ${step.text.slice(0, 80)}`);
+      }
       const { msgId } = await ch.send(chatId, step.text);
       lastSendAt = sendAt;
       sent.push({ msgId, text: step.text });

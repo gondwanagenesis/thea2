@@ -16,7 +16,11 @@ models:
       keyEnv: THEA2_NEURALWATT_KEY
       model: glm-5.3
       effort: low
-      forcing: none
+      # tool_choice (prod hotfix 2026-09-03): with forcing none, glm-5.3 sometimes
+      # wrote the decide call as pseudo-XML text and the prose path SENT it to
+      # Telegram (ledger msgIds 93/95). Forcing returns a structured call; the
+      # door smoke proved NW honors it. DR.1 deviation recorded in STATUS.
+      forcing: tool_choice
       temperature: 0.7
       topP: 0.95
     voiceFallback:
