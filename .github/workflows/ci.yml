@@ -7,6 +7,10 @@
 # timeout fires; see TESTING.md chunk doctrine). Each chunk job retries a
 # wedged run (no summary = environmental; completed-but-failed = real, no
 # retry). The gates job runs once; chunk jobs run in parallel after it.
+#
+# W1 (2026-09-03): c1a/c1b/c2 split into PARALLEL jobs — sequential test:a
+# outgrew first the 30-min ceiling, then 60 (suite at 1527+ tests, serial
+# forks by doctrine). Wall time is now the slowest chunk, not their sum.
 name: ci
 on:
   push:
@@ -27,7 +31,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run gates
-  test-a:
+  test-c1a:
     runs-on: ubuntu-latest
     needs: gates
     timeout-minutes: 60
@@ -38,13 +42,61 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: test:a (chunks c1a + c1b + c2, retry on environmental wedge)
+      - name: c1a (affect + app, retry on environmental wedge)
         run: |
           for i in 1 2 3; do
-            npm run test:a > /tmp/ta.log 2>&1 && exit 0
-            if grep -qE "Test Files" /tmp/ta.log; then
+            npx vitest run test/affect test/app > /tmp/chunk.log 2>&1 && exit 0
+            if grep -qE "Test Files" /tmp/chunk.log; then
               echo "completed but failed - real failure, no retry"
-              tail -40 /tmp/ta.log
+              tail -40 /tmp/chunk.log
+              exit 1
+            fi
+            echo "attempt $i: no summary (environmental wedge) - retrying"
+          done
+          echo "all attempts wedged"
+          exit 1
+  test-c1b:
+    runs-on: ubuntu-latest
+    needs: gates
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: c1b (assemble, retry on environmental wedge)
+        run: |
+          for i in 1 2 3; do
+            npx vitest run test/assemble > /tmp/chunk.log 2>&1 && exit 0
+            if grep -qE "Test Files" /tmp/chunk.log; then
+              echo "completed but failed - real failure, no retry"
+              tail -40 /tmp/chunk.log
+              exit 1
+            fi
+            echo "attempt $i: no summary (environmental wedge) - retrying"
+          done
+          echo "all attempts wedged"
+          exit 1
+  test-c2:
+    runs-on: ubuntu-latest
+    needs: gates
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: c2 (bridge..kernel, retry on environmental wedge)
+        run: |
+          for i in 1 2 3; do
+            npx vitest run test/bridge test/consolidate test/coupling test/corpus test/derive test/embed test/events test/inhibit test/kernel > /tmp/chunk.log 2>&1 && exit 0
+            if grep -qE "Test Files" /tmp/chunk.log; then
+              echo "completed but failed - real failure, no retry"
+              tail -40 /tmp/chunk.log
               exit 1
             fi
             echo "attempt $i: no summary (environmental wedge) - retrying"
