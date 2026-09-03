@@ -9,7 +9,7 @@ date: 2026-09-02
 Companion to [THESIS.md](THESIS.md) (concepts), [docs/MANUAL.md](docs/MANUAL.md) (the plain-language walkthrough), and `docs/modules/` (per-module contracts). This file is the map: what exists, what depends on what, what flows where.
 
 <!-- gen:tests-count:start -->
-**1503 test declarations in 138 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+**1528 test declarations in 140 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
 <!-- gen:tests-count:end -->
 
 ## Topology
