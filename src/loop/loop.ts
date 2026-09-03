@@ -335,11 +335,15 @@ export const runLoop: RunLoop = async (entry, deps) => {
       cfg,
       kind: entry.kind,
       turnId,
+      entry,
       situation,
       query,
       affect: deps.affect,
       assemble: (q) => deps.assemble(q, deps.affect),
       window: deps.window,
+      // P-LOOP (M21): the spine runner rides the deps when the config wires
+      // one; absent, every assess call stays on the native model.chat path.
+      ...(deps.runner !== undefined ? { runner: deps.runner } : {}),
       deadline,
       signal: ac.signal,
       hops: 0,

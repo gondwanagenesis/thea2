@@ -13,7 +13,7 @@
 import type { ZodType } from 'zod';
 import type { Clock, Rng } from '../kernel/index.js';
 import type { EntryKind, InhibitionGate, Verdict } from '../inhibit/index.js';
-import type { ModelClient, ToolDef } from '../model/index.js';
+import type { ModelClient, StopReason, TaskClass, ToolCall, ToolDef } from '../model/index.js';
 import type { SessionWindow } from '../memory/index.js';
 import type { EventLog } from '../events/index.js';
 import type { LoopConfig } from './config.js';
@@ -228,6 +228,60 @@ export interface CommitteeResult {
 }
 
 // ---------------------------------------------------------------------------
+// The spine turn seam (M21), mirrored structurally
+// ---------------------------------------------------------------------------
+
+/**
+ * M21's `SpineUsage` (DR.4 semantics: tokens, priced cost, latency, attempts —
+ * retries + the one-shot decide repair fold into ONE logical call), mirrored.
+ */
+export interface SpineTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd?: number | undefined;
+  latencyMs: number;
+  attempts: number;
+}
+
+/**
+ * M21's `StreamEvent` vocabulary, mirrored structurally (the LoopPacket
+ * precedent): the DAG forbids a loop → spine import (spine consumes this
+ * module read-only), so the seam types live HERE and M21's runners satisfy
+ * them by construction — TypeScript keeps the seam honest without the edge.
+ */
+export type SpineTurnEvent =
+  | { type: 'text-delta'; text: string }
+  | { type: 'tool-call'; call: ToolCall }
+  | { type: 'decide-object'; decision: ModelDecision }
+  | { type: 'usage'; usage: SpineTurnUsage }
+  | { type: 'stop-reason'; stopReason: StopReason };
+
+/**
+ * M21's `SpineRunner` seam — the ONE determinism seam (`run(entry, packet,
+ * tools, opts) -> AsyncIterable<SpineTurnEvent>`), mirrored. When
+ * `LoopDeps.runner` is set, the loop's assess rides it (P-LOOP); when absent,
+ * the native `model.chat` path serves unchanged (rule 5).
+ */
+export interface SpineTurnRunner {
+  run(
+    entry: LoopEntry,
+    packet: LoopPacket,
+    tools: readonly ToolDef[],
+    opts: {
+      turnId: string;
+      /** Task class selecting the spine's per-call model (config `byClass`, else `model`). */
+      taskClass?: TaskClass | undefined;
+      /** The turn's wall-clock cut (FA.1 mirror). */
+      signal?: AbortSignal | undefined;
+      /** The structured-output decide contract (S1.3) when the offered defs carry `decide`. */
+      decide?: { schema: unknown } | undefined;
+      /** DR.7 parity: per-tool zod validators checked on tool-call events. */
+      toolInput?: Readonly<Record<string, ZodType>> | undefined;
+    },
+  ): AsyncIterable<SpineTurnEvent>;
+}
+
+// ---------------------------------------------------------------------------
 // Composition
 // ---------------------------------------------------------------------------
 
@@ -244,6 +298,11 @@ export interface LoopDeps {
   clock: Clock;
   rng: Rng;
   cfg: LoopConfig;
+  /**
+   * The spine runner (M21/P-LOOP), when the config wires one. Absent = the
+   * native `model.chat` path serves (rule 5: absent registration, no stubs).
+   */
+  runner?: SpineTurnRunner | undefined;
 }
 
 /** The deliberation loop. Implemented in loop.js; declared here so the contract's

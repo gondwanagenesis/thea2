@@ -19,19 +19,24 @@ import {
   type ChatMsg,
   type ChatResponse,
   type ModelClient,
+  type StopReason,
   type TaskClass,
   type ThinkingControl,
   type Tier,
   type ToolCall,
   type ToolDef,
+  type Usage,
 } from '../model/index.js';
 import type { EntryKind, InhibitionGate, Verdict } from '../inhibit/index.js';
-import { DECIDE_TOOL_NAME } from './decide.js';
+import { DECIDE_TOOL_NAME, decideToolDef } from './decide.js';
 import type {
+  LoopEntry,
   LoopPacket,
   LoopQuery,
   SpawnRecord,
   SpawnSink,
+  SpineTurnEvent,
+  SpineTurnRunner,
   ToolRegistry,
   ToolRegistryEntry,
   ToolStep,
@@ -67,6 +72,8 @@ export interface TurnState {
   cfg: LoopConfig;
   kind: EntryKind;
   turnId: string;
+  /** The entry being deliberated — the spine runner's per-turn identity (M21). */
+  entry: LoopEntry;
   /** The current turn as one line — the situation delegation episodes carry. */
   situation: string;
   query: LoopQuery;
@@ -76,6 +83,11 @@ export interface TurnState {
   window: SessionWindow;
   /** The entry's own packet (subprocesses assemble their own). */
   packet: LoopPacket;
+  /**
+   * The spine runner (M21/P-LOOP), when the config wires one. Set ⇒ assess
+   * routes through it; absent ⇒ the native model.chat path serves (rule 5).
+   */
+  runner?: SpineTurnRunner | undefined;
   /** Registry for THIS entry: the injected registry with the spawn primitives overlaid. */
   tools: ToolRegistry;
   defs: ToolDef[];
@@ -144,12 +156,82 @@ const toolInputFor = (state: TurnState, defs: readonly ToolDef[]): Record<string
   return Object.keys(map).length > 0 ? map : undefined;
 };
 
+// ---------------------------------------------------------------------------
+// The spine turn seam (P-LOOP/M21): StreamEvents fold into ONE ChatResponse
+// ---------------------------------------------------------------------------
+
+/**
+ * The tool-call id of the synthetic `decide` call a `decide-object` event
+ * becomes, so the loop's existing `isDecideCall` path (settleReply) reads a
+ * spine decision exactly like a native one. Never collides with a real wire id.
+ */
+export const SPINE_DECIDE_CALL_ID = 'spine_decide';
+
+/**
+ * The ChatResponse.model label for a spine-routed turn: the StreamEvent
+ * vocabulary carries no door/model ref (the runner reports that itself on
+ * `model.call`), so the response names the transport, not a door.
+ */
+export const SPINE_RESPONSE_MODEL = 'spine/opencode';
+
+/**
+ * Folds one spine turn's StreamEvents into the SAME ChatResponse the native
+ * door returns, so everything downstream (settleReply, the DR.7 machinery, the
+ * repair ladder, the plan gate, realize) is transport-blind. The mapping:
+ * `text-delta` accumulates into `content`; `tool-call` appends the call to
+ * `toolCalls` (mid-turn tool rounds mediate as always); `decide-object`
+ * appends the synthetic `{id: SPINE_DECIDE_CALL_ID, name: 'decide', args}`
+ * call and pins `stopReason: 'tool_use'` (a decision arrived as a tool call —
+ * the native vocabulary); the last `usage` event maps field-for-field onto
+ * `Usage`; the last `stop-reason` event wins otherwise ('end_turn' when the
+ * stream ended without one).
+ */
+const responseOfStream = async (stream: AsyncIterable<SpineTurnEvent>): Promise<ChatResponse> => {
+  let content = '';
+  const calls: ToolCall[] = [];
+  let decided = false;
+  let usage: Usage = { inputTokens: 0, outputTokens: 0, latencyMs: 0, attempts: 1 };
+  let stopReason: StopReason | undefined;
+  for await (const ev of stream) {
+    if (ev.type === 'text-delta') {
+      content += ev.text;
+    } else if (ev.type === 'tool-call') {
+      calls.push(ev.call);
+    } else if (ev.type === 'decide-object') {
+      decided = true;
+      calls.push({ id: SPINE_DECIDE_CALL_ID, name: DECIDE_TOOL_NAME, args: ev.decision });
+    } else if (ev.type === 'usage') {
+      usage = {
+        inputTokens: ev.usage.inputTokens,
+        outputTokens: ev.usage.outputTokens,
+        ...(ev.usage.costUsd !== undefined ? { costUsd: ev.usage.costUsd } : {}),
+        latencyMs: ev.usage.latencyMs,
+        attempts: ev.usage.attempts,
+      };
+    } else {
+      stopReason = ev.stopReason;
+    }
+  }
+  return {
+    content,
+    ...(calls.length > 0 ? { toolCalls: calls } : {}),
+    usage,
+    model: SPINE_RESPONSE_MODEL,
+    stopReason: decided ? 'tool_use' : (stopReason ?? 'end_turn'),
+  };
+};
+
 /** One assess call: native tool defs attached, NO schema — a decision arrives as
  * a native `decide` call (or as content, folded/parsed by the loop); a tool
  * round arrives as native tool_calls (schema + tools would force M03's
  * rung-(c) path and misparse every tool hop). `defs` defaults to the entry's
  * set (which carries `decide` first); workers pass their own. The task class
- * also selects the thinking control (turn-class OFF, judge-class ON). */
+ * also selects the thinking control (turn-class OFF, judge-class ON).
+ *
+ * P-LOOP (M21): when `state.runner` is set the call rides the spine instead —
+ * the runner re-renders the packet byte-stably (S1.4), so `msgs` is the native
+ * path's business alone — and the StreamEvents fold into the same ChatResponse
+ * (responseOfStream). Absent runner = the native model.chat path, unchanged. */
 export const assess = (
   state: TurnState,
   msgs: readonly ChatMsg[],
@@ -159,6 +241,25 @@ export const assess = (
   const toolChoice = toolChoiceFor(defs);
   const thinking = thinkingFor(state.cfg, opts.taskClass);
   const toolInput = toolInputFor(state, defs);
+  if (state.runner !== undefined) {
+    // The decide contract rides only when `decide` is actually offered (the
+    // main set, the fail-open final call, revision calls) — never for workers.
+    const decide = defs.some((d) => d.name === DECIDE_TOOL_NAME) ? { schema: decideToolDef.parameters } : undefined;
+    return responseOfStream(
+      state.runner.run(
+        state.entry,
+        state.packet,
+        [...defs],
+        {
+          turnId: state.turnId,
+          taskClass: opts.taskClass,
+          signal: state.signal,
+          ...(decide !== undefined ? { decide } : {}),
+          ...(toolInput !== undefined ? { toolInput } : {}),
+        },
+      ),
+    );
+  }
   return state.model.chat(
     {
       taskClass: opts.taskClass,
@@ -448,7 +549,11 @@ export const runSubprocess = async (
       };
     }
     const res = await assess(
-      state,
+      // The worker's spine identity: its own brief (entry) and its own
+      // channel-composed packet ride THIS assess call only. The shallow copy
+      // shares every mutable field (hops, traces, budgets) with the parent
+      // state; the native path reads neither override (it walks msgs).
+      { ...state, entry: { kind: state.kind, goal: brief }, packet },
       msgs,
       {
         tier: kind === 'fork' ? state.cfg.spawnTier.fork : state.cfg.spawnTier.task,

@@ -114,11 +114,20 @@ export const secretShaped = (value: string): boolean => {
 
 const SECRETISH_KEY_RE = /token|secret|password|apikey|api_key|credential/i;
 
+/**
+ * Keys suffixed `Env` carry an env VARIABLE NAME by config law (`keyEnv`,
+ * `spine.authTokenEnv`) — never the secret itself — so the key-name suspicion
+ * must not fire on them. Their VALUES stay scanned by `secretShaped`, so a
+ * real credential pasted under a `*Env` key is still rejected.
+ */
+const ENV_NAME_KEY_RE = /Env$/;
+
 /** Walk a parsed yaml value; collect string-leaf paths that carry secret-shaped text. */
 const findSecrets = (node: unknown, path: (string | number)[] = []): ConfigIssue[] => {
   if (typeof node === 'string') {
     const key = path[path.length - 1];
-    const keySuspicious = typeof key === 'string' && SECRETISH_KEY_RE.test(key);
+    const keySuspicious =
+      typeof key === 'string' && SECRETISH_KEY_RE.test(key) && !ENV_NAME_KEY_RE.test(key);
     if ((keySuspicious && !PLACEHOLDER_RE.test(node)) || secretShaped(node)) {
       return [{ path, message: 'looks like a secret — secrets enter via env, never the yaml' }];
     }

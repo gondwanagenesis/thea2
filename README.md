@@ -28,7 +28,7 @@ measured from a real human corpus — Elena's 7,476 messages and Diego's 12,533 
 into canon scene by scene.
 
 <!-- gen:tests-count:start -->
-**1528 test declarations in 140 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+**1540 test declarations in 141 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
 <!-- gen:tests-count:end -->
 
 <!-- gen:doors:start -->

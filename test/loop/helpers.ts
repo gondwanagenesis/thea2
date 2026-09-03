@@ -21,6 +21,7 @@ import type {
   LoopEntry,
   LoopPacket,
   LoopQuery,
+  SpineTurnRunner,
   ToolRegistry,
   ToolRegistryEntry,
   Vec12,
@@ -224,6 +225,8 @@ export interface HarnessOptions {
   /** Base tool registry override (default: echo + wedged). Additive (P-FAST):
    * lets a suite prove the offered def set against a bare registry. */
   tools?: ToolRegistry;
+  /** The spine runner (P-LOOP seam): set ⇒ assess rides it, the model never rings. */
+  runner?: SpineTurnRunner;
 }
 
 export const makeHarness = (opts: HarnessOptions = {}): LoopHarness => {
@@ -252,6 +255,7 @@ export const makeHarness = (opts: HarnessOptions = {}): LoopHarness => {
     clock,
     rng,
     cfg,
+    ...(opts.runner !== undefined ? { runner: opts.runner } : {}),
   };
   if (opts.rule !== undefined) opts.rule(model);
   return {

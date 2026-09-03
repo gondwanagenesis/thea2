@@ -42,6 +42,7 @@ import type { AssembleDeps, Packet, TurnQuery } from '../assemble/index.js';
 import type { ModelClient } from '../model/index.js';
 import type { InhibitionGate } from '../inhibit/index.js';
 import type { ThreadIndex } from '../memory/threads.js';
+import type { SpineRunner } from '../spine/index.js';
 import { localHourOfDay } from '../life/policy.js';
 import { inferRegister } from './register.js';
 
@@ -116,6 +117,11 @@ export interface PipelineDeps {
   personLabel?: ((person: string) => string | undefined) | undefined;
   /** HIS zone (config timezone) — register inference's clock modifier. */
   timezone: string;
+  /**
+   * The spine runner (M21/P-LOOP), when the config carries the spine block and
+   * this is a real boot. Absent = the native loop serves unchanged (rule 5).
+   */
+  runner?: SpineRunner | undefined;
 }
 
 export interface Pipeline {
@@ -263,6 +269,8 @@ export const makePipeline = (deps: PipelineDeps): Pipeline => {
       clock: deps.clock,
       rng: deps.rng.fork(`turn:${turnId}`),
       cfg: deps.loopCfg,
+      // The spine runner rides every turn when the config wires one (M21/P-LOOP).
+      ...(deps.runner !== undefined ? { runner: deps.runner } : {}),
     };
 
     const entry: LoopEntry = {

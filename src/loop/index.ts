@@ -33,6 +33,9 @@ export type {
   CommitteeNode,
   CommitteeSpec,
   CommitteeResult,
+  SpineTurnUsage,
+  SpineTurnEvent,
+  SpineTurnRunner,
   LoopDeps,
   RunLoop,
 } from './types.js';

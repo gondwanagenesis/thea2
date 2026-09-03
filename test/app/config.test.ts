@@ -326,3 +326,37 @@ describe('models.doors (P-DOOR DR.1)', () => {
     expect(err.issues.some((i) => i.path.join('.').includes('forcing'))).toBe(true);
   });
 });
+
+// ——— M21 spine: the M.6 block + the *Env key-name exemption ———————————————
+
+const SPINE_BLOCK = `spine:
+  version: '1.18.3'
+  port: 4096
+  authTokenEnv: THEA2_SPINE_TOKEN
+`;
+
+describe('spine block (M.6) and the *Env secret-scanner exemption', () => {
+  it('the spine block loads: version/port/authTokenEnv pass through untouched', () => {
+    const c = cfg(DOORS_YAML + SPINE_BLOCK, { ...DOORS_ENV, THEA2_SPINE_TOKEN: 'spine-token' });
+    expect(c.spine).toMatchObject({ version: '1.18.3', port: 4096, authTokenEnv: 'THEA2_SPINE_TOKEN' });
+  });
+
+  it('an *Env key carrying an env VARIABLE NAME is not a secret hit', () => {
+    // authTokenEnv matches the /token/i key suspicion; the value is a variable
+    // NAME by config law (mirrors doors' keyEnv), so it must load.
+    expect(cfg(VALID_YAML.replace('embedder:', `spine:\n  version: '1.18.3'\n  authTokenEnv: THEA2_SPINE_TOKEN\nembedder:`)).spine).toBeDefined();
+  });
+
+  it('a real credential value under an *Env key is still rejected', () => {
+    const bad = VALID_YAML.replace(
+      'embedder:',
+      `spine:\n  version: '1.18.3'\n  authTokenEnv: sk-realk3yvalue123456789abcdef\nembedder:`,
+    );
+    expect(reject(bad).code).toBe('app/config-secret-in-yaml');
+  });
+
+  it('an off-pin version (not exact x.y.z) is a config error', () => {
+    const err = reject(DOORS_YAML + SPINE_BLOCK.replace("'1.18.3'", "'1.18'"), { ...DOORS_ENV, THEA2_SPINE_TOKEN: 't' });
+    expect(err.issues.some((i) => i.path.join('.').includes('spine.version'))).toBe(true);
+  });
+});

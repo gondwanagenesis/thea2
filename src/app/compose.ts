@@ -72,6 +72,7 @@ import {
   type ConsolidateDeps,
 } from '../consolidate/index.js';
 import type { ProbeTarget } from '../probes/index.js';
+import { OpenCodeRunner, resolveSpineConfig } from '../spine/index.js';
 import { makePipeline, type Pipeline } from './pipeline.js';
 import { makeEmbedder } from './embedder.js';
 import { affectSnapshotJob, reconcileJob, runReconcile, type RecoverLostDeps } from './maintenance-jobs.js';
@@ -88,6 +89,13 @@ export interface ComposeOpts {
   channel?: Channel | undefined;
   embedder?: Embedder | undefined;
   fetchImpl?: typeof fetch | undefined;
+  /**
+   * The env the spine auth token resolves from (`spine.authTokenEnv` names the
+   * variable; main.ts owns the process edge and injects it in prod; hermetic
+   * tests pass their own map). Defaults to process.env — compose already sits
+   * at the process boundary (cwd, stderr).
+   */
+  env?: Record<string, string | undefined> | undefined;
   /** Scheduler jobs — hermetic tests inject their table; a real boot wires the life jobs by default. */
   jobs?: Job[] | undefined;
 }
@@ -357,6 +365,26 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
   // Standing intent (Round 3): durable across restarts, folded by the
   // afterturn's appraisals, read by the heartbeat's due list.
   const threads = openPersistedThreadIndex(paths.memory);
+  // P-SPINE wiring (M21/P-LOOP): on a real boot with the spine block in config,
+  // Thea's turn rides the pinned OpenCode spine through the loop's runner seam.
+  // Absent block (or a hermetic/probe preset) = no runner — the native loop
+  // serves unchanged (rule 5). No test constructs a runner: the binary must
+  // exist before the block does (M.6), and no test launches it (D.7-3). A bad
+  // block or a missing token is a STARTUP failure (resolveSpineConfig throws) —
+  // compose names the stage by failing here, never mid-turn.
+  const spineCfg =
+    preset === 'prod' && cfg.spine !== undefined
+      ? resolveSpineConfig(
+          // Her turns' model is the voice door (P-DOOR) — passed in from the
+          // wiring site, never pinned in the yaml block.
+          {
+            ...cfg.spine,
+            model: { providerID: 'voice', modelID: cfg.models.doors.voice.model, door: 'voice' },
+          },
+          opts.env ?? process.env,
+        )
+      : undefined;
+  const spineRunner = spineCfg !== undefined ? new OpenCodeRunner(spineCfg, { clock, events }) : undefined;
   const pipeline = makePipeline({
     model,
     gate,
@@ -380,8 +408,9 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     threads,
     personLabel,
     timezone: cfg.timezone,
+    ...(spineRunner !== undefined ? { runner: spineRunner } : {}),
   });
-  await events.emit('app.boot', { stage: 'pipeline', model: model.constructor.name });
+  await events.emit('app.boot', { stage: 'pipeline', model: model.constructor.name, ...(spineCfg !== undefined ? { spine: spineCfg.version } : {}) });
 
   // ---- scheduler (S6: life jobs; S8 adds siblings) ------------------------
   // The M17 conversation-active mutex — a turn in flight OR words from him in
@@ -587,7 +616,8 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     stop: async () => {
       if (stopped) return;
       stopped = true;
-      await pipeline.drain();
+      await pipeline.drain(); // in-flight turns may still be mid-spine-POST
+      await spineRunner?.stop(); // G3/ADR-002: thead never orphans the spine child
       await sched.stop();
       await events.emit('app.boot', { stage: 'stopped' });
     },
