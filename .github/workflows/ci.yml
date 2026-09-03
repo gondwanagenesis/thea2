@@ -1,6 +1,12 @@
 # Thea2 CI — the five gates the docs always claimed, run by a machine
 # (Phase 1, 2026-09-02: before this file existed, "five CI gates green" meant
 # five npm scripts somebody remembered to run).
+#
+# W0 (2026-09-03): the suite runs as chunks (test:a = c1a+c1b+c2, test:b = b) —
+# one long vitest process wedges a worker on some runners (sync-spin, no
+# timeout fires; see TESTING.md chunk doctrine). Each chunk job retries a
+# wedged run (no summary = environmental; completed-but-failed = real, no
+# retry). The gates job runs once; chunk jobs run in parallel after it.
 name: ci
 on:
   push:
@@ -12,9 +18,7 @@ concurrency:
 jobs:
   gates:
     runs-on: ubuntu-latest
-    # The suite is hermetic and takes minutes, not hours; 45 is hang detection,
-    # not headroom for slowness.
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,7 +27,43 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run gates
-      - run: npm test
+  test-a:
+    runs-on: ubuntu-latest
+    needs: gates
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: test:a (chunks c1a + c1b + c2, retry on environmental wedge)
+        run: |
+          for i in 1 2 3; do
+            npm run test:a > /tmp/ta.log 2>&1 && exit 0
+            if grep -qE "Test Files" /tmp/ta.log; then
+              echo "completed but failed - real failure, no retry"
+              tail -40 /tmp/ta.log
+              exit 1
+            fi
+            echo "attempt $i: no summary (environmental wedge) - retrying"
+          done
+          echo "all attempts wedged"
+          exit 1
+  test-b:
+    runs-on: ubuntu-latest
+    needs: gates
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: test:b (chunk b)
+        run: npm run test:b
       # ADR-007: the committed derived corpus must match its manifest. Advisory
       # until corpus/derived is tracked with a manifest (review 2026-09-02).
       - run: npm run corpus:check
