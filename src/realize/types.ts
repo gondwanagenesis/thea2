@@ -48,13 +48,21 @@ export type PlanDelivery = (
   rng: Rng,
 ) => DeliveryPlan;
 
-/** Replays a plan against the Channel honoring channel physics, all waits through the injected clock. */
+/**
+ * Replays a plan against the Channel honoring channel physics, all waits through
+ * the injected clock. `onSend`, when given, is awaited immediately after each
+ * `ch.send` resolves and BEFORE the next step runs (v6 CA.2) — the pipeline
+ * wires it to MessageLedger.recordOutbound so a ledger row lands per delivered
+ * bubble, and an abort mid-plan leaves exactly the delivered bubbles recorded.
+ * A throw from `onSend` propagates (loud, never swallowed).
+ */
 export type ExecutePlan = (
   plan: DeliveryPlan,
   chatId: number,
   ch: Channel,
   clock: Clock,
   signal: AbortSignal,
+  onSend?: ((msgId: number, text: string) => Promise<void>) | undefined,
 ) => Promise<ExecResult>;
 
 /** What a turn's delivery came to — the report M20 logs and reconciles against. */

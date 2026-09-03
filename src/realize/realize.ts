@@ -4,9 +4,11 @@
 // channel's own limits and hands back what actually happened.
 //
 // The realizer never touches the MessageLedger itself (spec §Not this module's
-// job): the pipeline owns that ordering. `recordSend` exists so M20 can have
-// each ledger row land before the next step of the turn instead of replaying
-// the report afterwards; leaving it undefined is equally correct.
+// job): the pipeline owns that ordering. `recordSend` is handed straight down
+// to `executePlan`, which awaits it immediately after each send resolves and
+// before the next step (v6 CA.2) — so each ledger row lands per delivered
+// bubble, and an abort mid-plan leaves exactly what was delivered recorded.
+// Leaving it undefined is equally correct.
 
 import type { Clock } from '../kernel/index.js';
 import type { Channel } from '../bridge/index.js';
@@ -22,7 +24,7 @@ export interface RealizeDeps {
   clock: Clock;
   /** M20 aborts this when a new inbound arrives mid-plan. */
   signal: AbortSignal;
-  /** Awaited once per successful send — M20 wires it to MessageLedger.recordOutbound. A throw propagates (loud, never swallowed). */
+  /** Awaited once per successful send, before the next step (v6 CA.2) — M20 wires it to MessageLedger.recordOutbound. A throw propagates (loud, never swallowed). */
   recordSend?: ((msgId: number, text: string) => Promise<void>) | undefined;
 }
 
@@ -33,9 +35,6 @@ export const realize = async (
   deps: RealizeDeps,
 ): Promise<DeliveryReport> => {
   const plan: DeliveryPlan = planDelivery(d, affect, deps.channel.limits, rng);
-  const res = await executePlan(plan, deps.chatId, deps.channel, deps.clock, deps.signal);
-  for (const s of res.sent) {
-    if (deps.recordSend !== undefined) await deps.recordSend(s.msgId, s.text);
-  }
+  const res = await executePlan(plan, deps.chatId, deps.channel, deps.clock, deps.signal, deps.recordSend);
   return { plan, sent: res.sent, aborted: res.aborted, undelivered: res.undelivered };
 };

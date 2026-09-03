@@ -21,7 +21,7 @@ import { modelError } from './errors.js';
 import { EMIT_TOOL_NAME, promptedJsonInstruction } from './json.js';
 import type { ChatMsg, StopReason, ThinkingControl, ToolCall } from './types.js';
 import type { BuildBodyInput, ParsedResponse } from './wire.js';
-import { schemaJsonForPrompt, schemaToJsonSchema } from './wire.js';
+import { anthropicThinkingFor, schemaJsonForPrompt, schemaToJsonSchema } from './wire.js';
 
 // ---------------------------------------------------------------------------
 // Wire shapes
@@ -59,6 +59,8 @@ export interface AnthropicBody {
   tool_choice?: { type: 'tool'; name: string } | { type: 'auto' } | { type: 'any' };
   /** Extended-thinking control, passed through verbatim (anthropic protocol only). */
   thinking?: ThinkingControl;
+  /** Door topP (DR.1), anthropic spelling. */
+  top_p?: number;
   stream?: boolean;
 }
 
@@ -116,13 +118,18 @@ export const toAnthropicMessages = (msgs: readonly ChatMsg[]): AnthropicMessage[
  * the schema as input_schema, (c) the schema appended to `system` in prose.
  */
 export const buildAnthropicBody = (input: BuildBodyInput): AnthropicBody => {
-  const { req, model, rung } = input;
+  const { req, model, rung, door } = input;
   const systemParts = req.messages.filter((m) => m.role === 'system').map((m) => m.content);
   const schema = req.schema;
   const wireTools: AnthropicToolDef[] | undefined =
     req.tools !== undefined && req.tools.length > 0
       ? req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }))
       : undefined;
+  // DR.2: thinking derived from the effective reasoning control (caller
+  // thinking rides verbatim; 'disabled' is never emitted). DR.1: door sampling
+  // defaults outrank the request's, top_p only ever rides from the door.
+  const thinking = anthropicThinkingFor(req, door);
+  const temperature = door?.temperature ?? req.temperature;
 
   let tools = wireTools;
   let toolChoice: AnthropicBody['tool_choice'];
@@ -154,12 +161,13 @@ export const buildAnthropicBody = (input: BuildBodyInput): AnthropicBody => {
   return {
     model,
     max_tokens: req.maxTokens,
-    temperature: req.temperature,
+    temperature,
     ...(systemParts.length > 0 ? { system: systemParts.join('\n\n') } : {}),
     messages: toAnthropicMessages(req.messages),
     ...(tools !== undefined ? { tools } : {}),
     ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
-    ...(req.thinking !== undefined ? { thinking: req.thinking } : {}),
+    ...(thinking !== undefined ? { thinking } : {}),
+    ...(door?.topP !== undefined ? { top_p: door.topP } : {}),
   };
 };
 

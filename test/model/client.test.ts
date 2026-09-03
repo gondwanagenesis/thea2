@@ -167,7 +167,7 @@ describe('structured-output ladder — rung matrix over real wire bodies', () =>
 });
 
 describe('one-shot repair ladder', () => {
-  it('AC: malformed JSON at rung (c) triggers exactly one cheap-tier repair and succeeds', async () => {
+  it('AC: malformed JSON at rung (c) triggers exactly one repair on the requesting tier and succeeds', async () => {
     const { send, bodies, count } = fakeSend([
       { body: wireOk({ content: '{nope' }) },
       { body: wireOk({ content: '{"a":9}' }) },
@@ -177,8 +177,10 @@ describe('one-shot repair ladder', () => {
     const res = await client.chat({ ...baseReq(), schema: z.object({ a: z.number() }) });
     expect(res.content).toEqual({ a: 9 });
     expect(count()).toBe(2);
-    // The repair rides the cheap tier on the wire.
-    expect(bodies[1]!.model).toBe(TEST_TIERS.cheap);
+    // P-DOOR DR.6: the repair keeps the REQUESTING tier (never downgrades)…
+    expect(bodies[1]!.model).toBe(TEST_TIERS.main);
+    // …and doubles the token budget (DR.6).
+    expect(bodies[1]!.max_tokens).toBe(200);
     // The correction turn carries the parse failure; a trailing [OUTPUT FORMAT]
     // system message may sit after it depending on the rung the repair rides.
     expect(bodies[1]!.messages.some((m) => (m.content ?? '').includes('could not be parsed'))).toBe(true);

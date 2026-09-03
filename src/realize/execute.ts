@@ -19,6 +19,7 @@ export const executePlan = async (
   ch: Channel,
   clock: Clock,
   signal: AbortSignal,
+  onSend?: ((msgId: number, text: string) => Promise<void>) | undefined,
 ): Promise<ExecResult> => {
   const sent: Array<{ msgId: number; text: string }> = [];
   let lastSendAt: number | undefined;
@@ -100,6 +101,10 @@ export const executePlan = async (
       const { msgId } = await ch.send(chatId, step.text);
       lastSendAt = sendAt;
       sent.push({ msgId, text: step.text });
+      // v6 CA.2 — the caller's recording lands per send, before the next step
+      // runs, so an abort mid-plan leaves exactly the delivered bubbles
+      // recorded. A throw propagates: a failed recording must be loud.
+      if (onSend !== undefined) await onSend(msgId, step.text);
     }
   }
 

@@ -20,8 +20,10 @@
     "test:cover": "tsx scripts/test-chunks-cover.ts",
     "depcruise": "depcruise src test",
     "verify": "tsx scripts/verify-schemas.ts",
-    "gates": "npm run typecheck && npm run lint && npm run depcruise && npm run verify",
-    "corpus:check": "tsx src/app/main.ts corpus:check"
+    "gates": "npm run typecheck && npm run lint && npm run depcruise && npm run verify && npm run docs:check",
+    "corpus:check": "tsx src/app/main.ts corpus:check",
+    "docs:check": "tsx scripts/docs-check.ts",
+    "door:smoke": "node scripts/door-smoke.mjs probes/fixtures/door-smoke-packet.txt"
   },
   "dependencies": {
     "js-yaml": "^4.1.0",

@@ -8,6 +8,7 @@
 
 import type { ZodType } from 'zod';
 import type { Clock } from '../kernel/index.js';
+import { canonicalJson } from '../kernel/index.js';
 import type { EventLog } from '../events/index.js';
 import { isModelError, modelError } from './errors.js';
 import {
@@ -17,7 +18,8 @@ import {
   toolArgsRepairMessages,
 } from './json.js';
 import type { Transport } from './transport.js';
-import { TIER_TABLE } from './tiers.js';
+import { attemptsOf } from './transport.js';
+import { REASONING_BY_CLASS, TIER_TABLE } from './tiers.js';
 import { buildAnthropicBody, parseAnthropicResponse } from './anthropic.js';
 import {
   buildWireBody,
@@ -26,6 +28,7 @@ import {
   schemaName,
   schemaToJsonSchema,
   type MalformedToolCall,
+  type ParsedResponse,
   type RequestRung,
   type WireBody,
 } from './wire.js';
@@ -33,6 +36,9 @@ import type {
   ChatContext,
   ChatRequest,
   ChatResponse,
+  Door,
+  DoorName,
+  DoorPricing,
   EndpointCapabilities,
   ModelCallEvent,
   ModelClient,
@@ -44,6 +50,7 @@ import type {
   Tier,
   Usage,
 } from './types.js';
+import { DECIDE_TOOL } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Core: one wire request = one routing decision = one parsed response
@@ -58,7 +65,11 @@ export interface CoreOutcome {
   attempts: number;
   model: string;
   tier: Tier;
-  /** Wire stop reason, when the door reported one (Phase 1: truncation is loud). */
+  /** The door that served the call, when one did (DR.4's `model.call` payload). */
+  door?: DoorName;
+  /** The serving door's pricing, when it carries one (costUsd math at the client). */
+  pricing?: DoorPricing;
+  /** Wire stop reason, when the door reported one (truncation is loud, DR.5). */
   stopReason?: StopReason;
 }
 
@@ -70,43 +81,98 @@ export type CoreChat = (
   rung: RequestRung | 'auto',
 ) => Promise<CoreOutcome>;
 
-export interface CoreDeps {
-  router: ModelRouter;
+/** One door's runtime: the resolved door config + the transport dialed for it. */
+export interface DoorRuntime {
+  door: Door;
   send: Transport;
   capabilities?: EndpointCapabilities;
-  /** Wire protocol; default openai. Anthropic swaps the body builder + parser. */
-  protocol?: 'openai' | 'anthropic';
 }
+
+export interface CoreDeps {
+  router: ModelRouter;
+  /** Legacy single-door transport (no doors configured). Ignored when the request's tier has a door runtime. */
+  send?: Transport;
+  /** Legacy wire protocol; default openai. Anthropic swaps the body builder + parser. */
+  protocol?: 'openai' | 'anthropic';
+  /** Door runtimes per tier (DR.1): main→voice, cheap→mind, reasoning→judge. */
+  doors?: Partial<Record<Tier, DoorRuntime>> | undefined;
+  capabilities?: EndpointCapabilities;
+}
+
+/**
+ * DR.5 — the truncation guard. A generation that hit the cap is never an
+ * answer: `model/truncated` (non-retryable) fires when the wire said
+ * max_tokens, or the output burned the whole budget with no tool call, or a
+ * schema was expected and nothing usable came back. Before this guard the
+ * empty case died as model/parse-failed after a pointless repair.
+ */
+export const assertNotTruncated = (parsed: ParsedResponse, req: ChatRequest<any>): void => {
+  const noToolCall = parsed.toolCalls.length === 0;
+  const atCap =
+    parsed.stopReason === 'max_tokens' || (parsed.outputTokens >= req.maxTokens && noToolCall);
+  const starved = req.schema !== undefined && parsed.content === '' && noToolCall;
+  if (atCap || starved) {
+    throw modelError(
+      'model/truncated',
+      `stop_reason max_tokens or output at the ${req.maxTokens}-token cap with nothing usable — the budget was consumed by thinking or a cut-off stream; raise maxTokens`,
+      { retryable: false },
+    );
+  }
+};
+
+/** DR.3 — a tool_choice-forcing door forces `decide` whenever it is among the offered defs (not only as the sole def). A caller's explicit toolChoice outranks the door. */
+const applyDoorForcing = (req: ChatRequest<any>, door: Door | undefined): ChatRequest<any> => {
+  if (door?.forcing !== 'tool_choice' || req.toolChoice !== undefined) return req;
+  if (req.tools === undefined || !req.tools.some((t) => t.name === DECIDE_TOOL)) return req;
+  return { ...req, toolChoice: { name: DECIDE_TOOL } };
+};
 
 export const chatCore =
   (deps: CoreDeps): CoreChat =>
   async (req, ctx, rung) => {
     const routed = deps.router.resolve(req.taskClass, req.tier);
-    if (deps.protocol === 'anthropic') {
-      const body = buildAnthropicBody({ req, model: routed.model, rung, seedSupported: false });
-      const sent = await deps.send({ body: body as unknown as WireBody, signal: ctx?.signal });
+    const runtime = deps.doors?.[routed.tier];
+    const send = runtime?.send ?? deps.send;
+    if (send === undefined) {
+      throw modelError('model/transport', `no transport configured for tier '${routed.tier}'`);
+    }
+    const protocol = runtime?.door.protocol ?? deps.protocol ?? 'openai';
+    const door = runtime?.door;
+    // The door owns its model id on the wire; the router's table stays the legacy source.
+    const model = door?.model ?? routed.model;
+    const seedSupported = (runtime?.capabilities ?? deps.capabilities)?.seed === true;
+    const effective = applyDoorForcing(req, door);
+
+    if (protocol === 'anthropic') {
+      const body = buildAnthropicBody({
+        req: effective,
+        model,
+        rung,
+        seedSupported: false,
+        ...(door !== undefined ? { door } : {}),
+      });
+      const sent = await send({ body: body as unknown as WireBody, signal: ctx?.signal });
       const parsed = parseAnthropicResponse(sent.response as unknown);
-      // The starvation family: thinking drew the whole budget and NOTHING
-      // visible came back. That is never an empty decision — it is a typed,
-      // non-retryable failure naming the budget (a max_tokens cut WITH content
-      // or a tool call is just a cut-off reply and passes).
-      if (parsed.stopReason === 'max_tokens' && parsed.content === '' && parsed.toolCalls.length === 0) {
-        throw modelError(
-          'model/truncated',
-          `stop_reason max_tokens with no visible content — the ${req.maxTokens}-token budget was consumed by thinking or a torn stream; raise maxTokens`,
-          { retryable: false },
-        );
-      }
+      assertNotTruncated(parsed, effective);
       return {
-        model: routed.model,
+        model,
         tier: routed.tier,
         attempts: sent.attempts,
+        ...(door !== undefined ? { door: door.name, ...(door.pricing !== undefined ? { pricing: door.pricing } : {}) } : {}),
         ...parsed,
       };
     }
-    const body = buildWireBody({ req, model: routed.model, rung, seedSupported: deps.capabilities?.seed === true });
-    const sent = await deps.send({ body, signal: ctx?.signal });
-    return { model: routed.model, tier: routed.tier, attempts: sent.attempts, ...parseWireResponse(sent.response) };
+    const body = buildWireBody({ req: effective, model, rung, seedSupported, ...(door !== undefined ? { door } : {}) });
+    const sent = await send({ body, signal: ctx?.signal });
+    const parsed = parseWireResponse(sent.response);
+    assertNotTruncated(parsed, effective);
+    return {
+      model,
+      tier: routed.tier,
+      attempts: sent.attempts,
+      ...(door !== undefined ? { door: door.name, ...(door.pricing !== undefined ? { pricing: door.pricing } : {}) } : {}),
+      ...parsed,
+    };
   };
 
 // ---------------------------------------------------------------------------
@@ -145,22 +211,53 @@ export const createModelClient = (deps: ModelClientDeps): ModelClient => {
     const acc = { inputTokens: 0, outputTokens: 0, attempts: 0 };
     let model = TIER_TABLE[req.tier];
     let tier: Tier = req.tier;
+    let door: DoorName | undefined;
+    let pricing: DoorPricing | undefined;
+    let stopReason: StopReason | undefined;
     const note = (r: CoreOutcome): void => {
       acc.inputTokens += r.inputTokens;
       acc.outputTokens += r.outputTokens;
       acc.attempts += r.attempts;
       model = r.model;
       tier = r.tier;
+      if (r.door !== undefined) door = r.door;
+      if (r.pricing !== undefined) pricing = r.pricing;
+      // First (non-repair) generation wins — same rule ChatResponse.stopReason follows.
+      if (r.stopReason !== undefined && stopReason === undefined) stopReason = r.stopReason;
     };
-    const usage = (): Usage => ({
+    // DR.2: the class default applies whenever the caller carried no override;
+    // every task class has an entry, so the control always rides.
+    const reasoning = req.reasoning ?? REASONING_BY_CLASS[req.taskClass];
+    const effReq: ChatRequest<T> =
+      req.reasoning === undefined ? { ...req, reasoning } : req;
+    const usage = (failedAttempts = 0): Usage => ({
       inputTokens: acc.inputTokens,
       outputTokens: acc.outputTokens,
       latencyMs: deps.clock.epochMs() - startedAt,
-      attempts: acc.attempts,
+      // DR.4: the attempts a FAILED send made are credited too (transport
+      // attaches them to the thrown ModelError) — a failure never reads as free.
+      attempts: acc.attempts + failedAttempts,
     });
+    // DR.4: priced doors only — in·inputPerM/1e6 + out·outputPerM/1e6.
+    const costUsd = (): number | undefined => {
+      if (pricing === undefined) return undefined;
+      return (acc.inputTokens * pricing.inputPerM + acc.outputTokens * pricing.outputPerM) / 1e6;
+    };
 
-    const emitCall = async (outcome: ModelCallEvent['outcome']): Promise<void> => {
-      const payload: ModelCallEvent = { taskClass: req.taskClass, tier, model, usage: usage(), outcome };
+    const emitCall = async (outcome: ModelCallEvent['outcome'], failedAttempts = 0): Promise<void> => {
+      const cost = costUsd();
+      const payload: ModelCallEvent = {
+        taskClass: req.taskClass,
+        tier,
+        model,
+        usage: usage(failedAttempts),
+        outcome,
+        maxTokens: req.maxTokens,
+        ...(door !== undefined ? { door } : {}),
+        ...(reasoning !== undefined ? { reasoning } : {}),
+        ...(stopReason !== undefined ? { stopReason } : {}),
+        ...(cost !== undefined ? { costUsd: cost } : {}),
+      };
       try {
         await deps.log.emit('model.call', payload, ctx?.turnId);
       } catch {
@@ -172,8 +269,8 @@ export const createModelClient = (deps: ModelClientDeps): ModelClient => {
     try {
       const result =
         req.schema === undefined
-          ? await plain(req, ctx, core, note, emitParseFailed)
-          : await structured<T>(req, req.schema, ctx, core, note, emitParseFailed, caps);
+          ? await plain(effReq, ctx, core, note, emitParseFailed)
+          : await structured<T>(effReq, req.schema, ctx, core, note, emitParseFailed, caps);
       await emitCall('ok');
       return {
         content: result.content,
@@ -183,7 +280,7 @@ export const createModelClient = (deps: ModelClientDeps): ModelClient => {
         model,
       };
     } catch (e) {
-      await emitCall(outcomeOf(e));
+      await emitCall(outcomeOf(e), attemptsOf(e) ?? 0);
       throw e;
     }
   };
@@ -219,6 +316,39 @@ const plain = async <T>(
     ...(r.stopReason !== undefined ? { stopReason: r.stopReason } : {}),
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
   };
+};
+
+/**
+ * DR.7 — per-call input contract: `decide.bubbles` is coerced (models emit it
+ * as one string or newline-joined text; it must be a clean string array), and
+ * when the request carries a zod validator for the tool, the args are
+ * zod-parsed against it. Validation failures join the one-shot repair rung as
+ * malformed calls — never silently dropped, never hand-parsed prose.
+ */
+export const prepareToolCall = (
+  call: ToolCall,
+  req: ChatRequest<any>,
+): { ok: true; call: ToolCall } | { ok: false; bad: MalformedToolCall } => {
+  const coerced = coerceDecideBubbles(call);
+  const schema = req.toolInput?.[coerced.name];
+  if (schema === undefined) return { ok: true, call: coerced };
+  const r = runZod(schema, coerced.args);
+  if (r.ok) return { ok: true, call: coerced };
+  return { ok: false, bad: { id: coerced.id, name: coerced.name, raw: canonicalJson(coerced.args), error: r.error } };
+};
+
+/** `decide.bubbles`: a bare string becomes its (newline-split) bubble list; blank segments never survive. */
+export const coerceDecideBubbles = (call: ToolCall): ToolCall => {
+  if (call.name !== DECIDE_TOOL) return call;
+  const args = call.args;
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) return call;
+  const bubbles = (args as { bubbles?: unknown }).bubbles;
+  if (typeof bubbles !== 'string') return call;
+  const split = bubbles
+    .split('\n')
+    .map((b) => b.trim())
+    .filter((b) => b !== '');
+  return { ...call, args: { ...(args as Record<string, unknown>), bubbles: split } };
 };
 
 /**
@@ -260,7 +390,8 @@ const structured = async <T>(
     ? firstParsed.value
     : await repairStructured<T>(req, schema, ctx, core, note, emitParseFailed, rung, first.content, firstParsed.error);
 
-  // Malformed tool-call arguments: ONE cheap repair, independent of the content path.
+  // Malformed tool-call arguments and validator-failing inputs: ONE cheap
+  // repair, independent of the content path.
   const toolCalls = await finishToolCalls(visibleCalls, first, req, ctx, core, note, emitParseFailed);
 
   return {
@@ -271,10 +402,11 @@ const structured = async <T>(
 };
 
 /**
- * Malformed tool-call arguments get ONE cheap repair, keyed by call id, on every
- * content path — silently dropping a tool call the model asked for is not an
- * option downstream (M13 would act on nothing with no trace). `base` is the
- * visible call list (the synthetic emit already stripped out on rung (b)).
+ * Malformed tool-call arguments (wire-level JSON) and validator-failing inputs
+ * (DR.7) get ONE cheap repair, keyed by call id, on every content path —
+ * silently dropping a tool call the model asked for is not an option
+ * downstream (M13 would act on nothing with no trace). `base` is the visible
+ * call list (the synthetic emit already stripped out on rung (b)).
  */
 const finishToolCalls = async (
   base: readonly ToolCall[],
@@ -285,9 +417,17 @@ const finishToolCalls = async (
   note: Note,
   emitParseFailed: EmitParseFailed,
 ): Promise<ToolCall[]> => {
-  if (first.malformedToolCalls.length === 0) return [...base];
-  const repaired = await repairToolArgs(req, ctx, core, note, emitParseFailed, first.malformedToolCalls);
-  return mergeRepaired(base, repaired);
+  const ok: ToolCall[] = [];
+  const invalid: MalformedToolCall[] = [];
+  for (const call of base) {
+    const prepared = prepareToolCall(call, req);
+    if (prepared.ok) ok.push(prepared.call);
+    else invalid.push(prepared.bad);
+  }
+  const toRepair = [...first.malformedToolCalls, ...invalid];
+  if (toRepair.length === 0) return ok;
+  const repaired = await repairToolArgs(req, ctx, core, note, emitParseFailed, toRepair);
+  return mergeRepaired(ok, repaired);
 };
 
 const repairStructured = async <T>(
@@ -303,17 +443,23 @@ const repairStructured = async <T>(
 ): Promise<T> => {
   const repairReq: ChatRequest<T> = {
     taskClass: req.taskClass,
-    tier: 'cheap',
+    // DR.6: the repair keeps the requesting tier — a structurally-failing
+    // judge-family call never downgrades to a weaker door.
+    tier: req.tier,
     messages: structuredRepairMessages({
       original: req.messages,
       malformed,
       schemaJson: schemaJsonForPrompt(schema),
       error,
     }),
-    maxTokens: req.maxTokens,
+    // DR.6: the repair budget is doubled — the re-ask quotes the schema and the
+    // failed attempt, so it needs headroom over the original cap.
+    maxTokens: req.maxTokens * 2,
     temperature: req.temperature,
     schema,
     ...(req.schemaName !== undefined ? { schemaName: req.schemaName } : {}),
+    // The reasoning control rides (DR.2): the repair is the same logical call.
+    ...(req.reasoning !== undefined ? { reasoning: req.reasoning } : {}),
     // The repair re-ask is part of the SAME logical generation: reproducibility
     // (same store + seed ⇒ same bytes) requires the seed to ride along, or every
     // repaired draft would come from an unseeded call.
@@ -340,15 +486,19 @@ const repairToolArgs = async (
   const error = malformed.map((m) => `${m.id}: ${m.error}`).join('; ');
   const repairReq: ChatRequest = {
     taskClass: req.taskClass,
-    tier: 'cheap',
+    // DR.6: requesting tier + doubled budget, as repairStructured.
+    tier: req.tier,
     messages: toolArgsRepairMessages({
       original: req.messages,
       malformed: malformed.map((m) => ({ id: m.id, name: m.name, args: null })),
       rawArguments: new Map(malformed.map((m) => [m.id, m.raw])),
       error,
     }),
-    maxTokens: req.maxTokens,
+    maxTokens: req.maxTokens * 2,
     temperature: req.temperature,
+    // Repaired args are revalidated against the same request-carried validators.
+    ...(req.toolInput !== undefined ? { toolInput: req.toolInput } : {}),
+    ...(req.reasoning !== undefined ? { reasoning: req.reasoning } : {}),
     // Same reproducibility rule as repairStructured: the re-ask belongs to the
     // same logical call, so the seed rides along.
     ...(req.seedHint !== undefined ? { seedHint: req.seedHint } : {}),
@@ -361,8 +511,11 @@ const repairToolArgs = async (
     const out: ToolCall[] = [];
     let complete = true;
     for (const m of malformed) {
-      if (Object.prototype.hasOwnProperty.call(map, m.id)) out.push({ id: m.id, name: m.name, args: map[m.id] });
-      else complete = false;
+      if (Object.prototype.hasOwnProperty.call(map, m.id)) {
+        const prepared = prepareToolCall({ id: m.id, name: m.name, args: map[m.id] }, req);
+        if (prepared.ok) out.push(prepared.call);
+        else complete = false; // repaired args still fail the validator ⇒ unrepairable
+      } else complete = false;
     }
     if (complete) return out;
   }

@@ -1,12 +1,11 @@
-// M03 model — the tier registry. THE one place a model swap touches.
-//
-// Diego's routing decree (2026-09-01): every tier rides Z.ai's OpenAI-compatible
-// endpoint on glm-5.3-flash. This deliberately overrides the spec-v1 default
-// table ({main: 'glm-5.2', cheap: 'deepseek-v4-flash'}): swapping a tier back is
-// a one-line change here, which is exactly why the table is a single exported
-// const and nothing else in the module hard-codes a model id.
+// M03 model — the tier + reasoning registry. THE one place a class-level model
+// control touches: TIER_TABLE (legacy single-door mode), TIER_DOOR (tier →
+// door), REASONING_BY_CLASS (class → effort), ANTHROPIC_THINKING_BUDGETS
+// (effort → budget). Door configs (endpoint/model/forcing/pricing) live in
+// thea2.config.yaml `models.doors` (M20); these tables are what the code
+// falls back to and what the wire mapping reads.
 
-import type { Tier } from './types.js';
+import type { DoorName, ReasoningEffort, TaskClass, Tier } from './types.js';
 
 export const ZAI_MODEL = 'glm-5.3-flash';
 
@@ -52,6 +51,57 @@ export interface BackoffConfig {
 }
 
 export const DEFAULT_BACKOFF: BackoffConfig = { baseMs: 500, capMs: 8_000 };
+
+// ---------------------------------------------------------------------------
+// Doors + reasoning control (P-DOOR DR.1/DR.2). The load-bearing tables of the
+// door world: tier → door name, task class → reasoning effort, effort →
+// anthropic thinking budget. Constants from the plan verbatim — change none
+// without a STATUS BLOCKED entry first.
+// ---------------------------------------------------------------------------
+
+/**
+ * The reasoning control each task class needs (DR.2), applied by client.chat
+ * whenever the request carries no explicit `reasoning`. turn/heartbeat-thought/
+ * summarize/ponder-seed/appraisal think LOW; the judge family
+ * (consolidate/derive/judge/probe-judge) thinks HIGH.
+ * Replaces the loop's old THINKING_DEFAULTS table — the control now lives with
+ * the door layer that maps it onto each wire.
+ */
+export const REASONING_BY_CLASS: Record<TaskClass, ReasoningEffort> = {
+  turn: 'low',
+  'heartbeat-thought': 'low',
+  summarize: 'low',
+  'ponder-seed': 'low',
+  appraisal: 'low',
+  consolidate: 'high',
+  derive: 'high',
+  judge: 'high',
+  'probe-judge': 'high',
+};
+
+/**
+ * Anthropic-door thinking budget per effort (DR.2), used when the door carries
+ * no explicit `thinkingBudget`. 'none' maps to a small enabled budget — this
+ * wire NEVER emits `type:'disabled'` (glm-5.3-flash rejects it with a 500;
+ * W1.1 door smoke).
+ */
+export const ANTHROPIC_THINKING_BUDGETS: Record<ReasoningEffort, number> = {
+  none: 128,
+  minimal: 256,
+  low: 512,
+  high: 1024,
+  max: 2048,
+};
+
+/** tier → door name (DR.1). Tier names in code stay main|cheap|reasoning. */
+export const TIER_DOOR: Record<Tier, DoorName> = {
+  main: 'voice',
+  cheap: 'mind',
+  reasoning: 'judge',
+};
+
+/** Resolves a tier to its door name: main→voice, cheap→mind, reasoning→judge. */
+export const tierFor = (tier: Tier): DoorName => TIER_DOOR[tier];
 
 /**
  * Jittered exponential backoff drawn from the injected Rng: base * 2^attempt,

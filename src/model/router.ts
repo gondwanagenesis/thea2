@@ -6,9 +6,12 @@
 // L0. Any applied routing change counts as a deploy — M18's Nightingale trigger.
 
 import type { EventLog } from '../events/index.js';
-import { PINNED_TURN_TIER, TIER_RANK, TIER_TABLE, USER_FACING_TASK_CLASSES } from './tiers.js';
+import { PINNED_TURN_TIER, TIER_DOOR, TIER_RANK, TIER_TABLE, USER_FACING_TASK_CLASSES } from './tiers.js';
 import type {
+  Door,
+  DoorName,
   ModelRouter,
+  RoutedCall,
   RoutingIgnoredEvent,
   RoutingOverride,
   RoutingTable,
@@ -23,11 +26,18 @@ export interface RouterDeps {
   routing?: RoutingTable;
   /** tier → model id; defaults to the one-line swap table. */
   tiers?: Record<Tier, string>;
+  /**
+   * The door table (DR.1). When present, every resolved call names its door
+   * (tierFor: main→voice, cheap→mind, reasoning→judge); `voiceFallback` rides
+   * no tier and is resolved by whoever dials it directly.
+   */
+  doors?: Partial<Record<DoorName, Door>>;
 }
 
 export const makeRouter = (deps: RouterDeps = {}): ModelRouter => {
   const tiers = deps.tiers ?? TIER_TABLE;
   const routing = deps.routing ?? [];
+  const doorFor = (tier: Tier): Door | undefined => deps.doors?.[TIER_DOOR[tier]];
 
   const warn = (payload: RoutingIgnoredEvent): void => {
     const log = deps.log;
@@ -38,24 +48,29 @@ export const makeRouter = (deps: RouterDeps = {}): ModelRouter => {
   };
 
   return {
-    resolve(taskClass, requested) {
+    resolve(taskClass, requested): RoutedCall {
+      const withDoor = (model: string, tier: Tier): RoutedCall => {
+        const door = doorFor(tier);
+        return door !== undefined ? { model, tier, door } : { model, tier };
+      };
+
       if (USER_FACING_TASK_CLASSES.includes(taskClass)) {
         const attempted = overrideFor(routing, taskClass)?.tier;
         if (requested !== PINNED_TURN_TIER || (attempted !== undefined && attempted !== PINNED_TURN_TIER)) {
           warn({ taskClass, attemptedTier: attempted ?? requested, pinnedTier: PINNED_TURN_TIER });
         }
-        return { model: tiers[PINNED_TURN_TIER], tier: PINNED_TURN_TIER };
+        return withDoor(tiers[PINNED_TURN_TIER], PINNED_TURN_TIER);
       }
 
       const override = overrideFor(routing, taskClass);
       if (override !== undefined && override.tier !== requested) {
         // Guardrail: only downgrades are legal, and never on a user-facing class.
         if (TIER_RANK[override.tier] < TIER_RANK[requested]) {
-          return { model: tiers[override.tier], tier: override.tier };
+          return withDoor(tiers[override.tier], override.tier);
         }
         warn({ taskClass, attemptedTier: override.tier, pinnedTier: requested });
       }
-      return { model: tiers[requested], tier: requested };
+      return withDoor(tiers[requested], requested);
     },
   };
 };

@@ -1,19 +1,45 @@
 # Thea2 production config. Secrets NEVER live here (AGENTS rule 7) —
-# THEA2_BOT_TOKEN and THEA2_MODEL_API_KEY arrive via /etc/thea2/keys.env.
+# door keys arrive via /etc/thea2/keys.env under each door's keyEnv name.
 # loadConfig rejects any secret-shaped value in this file at startup.
 #
 # sync'd with src/app/config.ts schema (M20). Unknown keys are rejected.
+#
+# P-DOOR door registry (DR.1; ADR-010). voice = Neuralwatt glm-5.3 at
+# reasoning_effort low (D.6-1); z.ai's anthropic door stays as voiceFallback
+# (the coding-plan door); mind/judge per D.6-2. Legacy endpoint/protocol/tiers
+# configs still load and synthesize the three tier doors.
 models:
-  # Z.ai GLM — Diego's pinned backend, re-confirmed 2026-09-02 ("I WANT TO USE
-  # Z-AI GLM 5.3 flash! DO NOT USE NEURALWATT"). The OpenAI-compat door is
-  # pay-as-you-go and 1113s on this account; the ANTHROPIC-compat door is what
-  # his coding plan covers, so the wire protocol is anthropic + streaming SSE.
-  endpoint: https://api.z.ai/api/anthropic
-  protocol: anthropic
-  tiers:
-    main: glm-5.3-flash     # her voice — fast tier, Diego's explicit pick
-    cheap: glm-5.3-flash    # appraisals + heartbeat thoughts (flash IS the cheap door)
-    reasoning: glm-5.3      # the judge — full model; the plan covers both
+  doors:
+    voice:
+      endpoint: https://api.neuralwatt.com/v1
+      protocol: openai
+      keyEnv: THEA2_NEURALWATT_KEY
+      model: glm-5.3
+      effort: low
+      forcing: none
+      temperature: 0.7
+      topP: 0.95
+    voiceFallback:
+      endpoint: https://api.z.ai/api/anthropic
+      protocol: anthropic
+      keyEnv: THEA2_MODEL_API_KEY
+      model: glm-5.3-flash
+      thinkingBudget: 512
+      forcing: tool_choice
+    mind:
+      endpoint: https://api.neuralwatt.com/v1
+      protocol: openai
+      keyEnv: THEA2_NEURALWATT_KEY
+      model: deepseek-v4-flash
+      effort: none
+      forcing: tool_choice
+    judge:
+      endpoint: https://api.neuralwatt.com/v1
+      protocol: openai
+      keyEnv: THEA2_NEURALWATT_KEY
+      model: kimi-k3
+      effort: none
+      forcing: tool_choice
 # The people registry (Round 3): her [INTERLOCUTOR] line says his name, not a
 # raw tg id. Keyed by the bridge's speaker person id.
 people:

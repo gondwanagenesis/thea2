@@ -169,3 +169,160 @@ describe('secretShaped (the detector, unit-level)', () => {
     expect(secretShaped('PLACEHOLDER_NEW_BOT_TOKEN')).toBe(false);
   });
 });
+
+// ——— P-DOOR DR.1: the door registry ————————————————————————————————————
+
+/** The four default doors, byte-for-byte what thea2.config.yaml ships (D.6-1/D.6-2). */
+const DOORS_YAML = `models:
+  doors:
+    voice:
+      endpoint: https://api.neuralwatt.com/v1
+      protocol: openai
+      keyEnv: THEA2_NEURALWATT_KEY
+      model: glm-5.3
+      effort: low
+      forcing: none
+      temperature: 0.7
+      topP: 0.95
+    voiceFallback:
+      endpoint: https://api.z.ai/api/anthropic
+      protocol: anthropic
+      keyEnv: THEA2_MODEL_API_KEY
+      model: glm-5.3-flash
+      thinkingBudget: 512
+      forcing: tool_choice
+    mind:
+      endpoint: https://api.neuralwatt.com/v1
+      protocol: openai
+      keyEnv: THEA2_NEURALWATT_KEY
+      model: deepseek-v4-flash
+      effort: none
+      forcing: tool_choice
+    judge:
+      endpoint: https://api.neuralwatt.com/v1
+      protocol: openai
+      keyEnv: THEA2_NEURALWATT_KEY
+      model: kimi-k3
+      effort: none
+      forcing: tool_choice
+bridge:
+  allowedChatIds: [123456]
+affect:
+  statePath: var/affect.json
+  quietHours: [1, 7]
+sched:
+  statePath: var/sched.json
+budgets:
+  packetTokens: 3000
+  windowTokens: 6000
+  turnTokens: 6000
+inhibitionPlacement: trailing
+gravity:
+  seedWeight: 0.7
+reconcile:
+  lostReplyWindowMin: 20
+embedder:
+  kind: hash
+`;
+
+const DOORS_ENV: Record<string, string> = {
+  THEA2_BOT_TOKEN: VALID_ENV['THEA2_BOT_TOKEN']!,
+  THEA2_NEURALWATT_KEY: 'neuralwatt-key-value',
+  THEA2_MODEL_API_KEY: 'zai-key-value',
+};
+
+describe('models.doors (P-DOOR DR.1)', () => {
+  it('the four default doors load and resolve each key from its keyEnv', () => {
+    const c = cfg(DOORS_YAML, DOORS_ENV);
+    expect(c.models.doors?.voice).toMatchObject({
+      name: 'voice',
+      endpoint: 'https://api.neuralwatt.com/v1',
+      protocol: 'openai',
+      keyEnv: 'THEA2_NEURALWATT_KEY',
+      apiKey: 'neuralwatt-key-value',
+      model: 'glm-5.3',
+      effort: 'low',
+      forcing: 'none',
+      temperature: 0.7,
+      topP: 0.95,
+    });
+    expect(c.models.doors?.voiceFallback).toMatchObject({
+      name: 'voiceFallback',
+      protocol: 'anthropic',
+      model: 'glm-5.3-flash',
+      thinkingBudget: 512,
+      forcing: 'tool_choice',
+      apiKey: 'zai-key-value',
+    });
+    expect(c.models.doors?.mind).toMatchObject({
+      name: 'mind',
+      model: 'deepseek-v4-flash',
+      effort: 'none',
+      forcing: 'tool_choice',
+    });
+    expect(c.models.doors?.judge).toMatchObject({
+      name: 'judge',
+      model: 'kimi-k3',
+      effort: 'none',
+      forcing: 'tool_choice',
+    });
+    // The flattened view (embedder/derive-cli live here) points at the voice door.
+    expect(c.models.endpoint).toBe('https://api.neuralwatt.com/v1');
+    expect(c.models.apiKey).toBe('neuralwatt-key-value');
+    expect(c.models.protocol).toBe('openai');
+    expect(c.models.tiers).toEqual({ main: 'glm-5.3', cheap: 'deepseek-v4-flash', reasoning: 'kimi-k3' });
+  });
+
+  it('legacy config still boots', () => {
+    const c = cfg(VALID_YAML);
+    // endpoint/protocol/tiers synthesize the three tier doors; the keys come
+    // from the legacy env vars, forcing stays 'none' (legacy had no door forcing).
+    expect(c.models.doors?.voice).toMatchObject({
+      name: 'voice',
+      endpoint: 'https://api.example.com/v1',
+      protocol: 'openai',
+      model: 'main-model',
+      forcing: 'none',
+      apiKey: VALID_ENV['THEA2_MODEL_API_KEY'],
+    });
+    expect(c.models.doors?.mind).toMatchObject({ name: 'mind', model: 'cheap-model', forcing: 'none' });
+    expect(c.models.doors?.judge).toMatchObject({ name: 'judge', model: 'main-model', forcing: 'none' });
+    expect(c.models.doors?.voiceFallback).toBeUndefined();
+    expect(c.models.tiers.main).toBe('main-model');
+  });
+
+  it('legacy config with a reasoning tier maps judge to it', () => {
+    const c = cfg(VALID_YAML.replace('    cheap: cheap-model\n', '    cheap: cheap-model\n    reasoning: judge-model\n'));
+    expect(c.models.doors?.judge).toMatchObject({ name: 'judge', model: 'judge-model' });
+  });
+
+  it('a missing door key in env is a typed error naming the door', () => {
+    const err = reject(DOORS_YAML, { ...DOORS_ENV, THEA2_NEURALWATT_KEY: undefined });
+    expect(err.code).toBe('app/config-invalid');
+    expect(err.issues.some((i) => i.path.join('.').includes('doors.voice'))).toBe(true);
+  });
+
+  it('doors and legacy endpoint/tiers together are rejected (exactly one registry form)', () => {
+    const both = DOORS_YAML.replace(
+      '  doors:\n',
+      '  doors:\n    placeholder: never\n',
+    );
+    expect(() => cfg(both)).toThrow(ConfigError); // unknown door key is strict-rejected first
+    const mixed = VALID_YAML.replace(
+      'models:\n',
+      'models:\n  doors:\n    voice:\n      endpoint: https://x/v1\n      protocol: openai\n      keyEnv: K\n      model: m\n      forcing: none\n',
+    );
+    const err = reject(mixed, { ...VALID_ENV, K: 'k' });
+    expect(err.issues.length).toBeGreaterThan(0);
+  });
+
+  it('keyEnv must name an env variable, not carry a key', () => {
+    const bad = DOORS_YAML.replace('keyEnv: THEA2_NEURALWATT_KEY', 'keyEnv: sk-realkeyvalue123456789');
+    expect(reject(bad, DOORS_ENV).code).toBe('app/config-secret-in-yaml');
+  });
+
+  it('a door without forcing is rejected (forcing is not optional)', () => {
+    const err = reject(DOORS_YAML.replace('      forcing: none\n      temperature: 0.7\n', '      temperature: 0.7\n'), DOORS_ENV);
+    expect(err.issues.some((i) => i.path.join('.').includes('forcing'))).toBe(true);
+  });
+});

@@ -6,6 +6,47 @@ import type { ZodType } from 'zod';
 
 export type Tier = 'main' | 'cheap' | 'reasoning';
 
+/**
+ * The reasoning-control vocabulary (P-DOOR DR.2). A request may carry one
+ * explicitly (`ChatRequest.reasoning`); absent, the client applies the class
+ * default from REASONING_BY_CLASS (tiers.ts) and the wire maps it per protocol.
+ */
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'high' | 'max';
+
+/** The door registry names (P-DOOR DR.1). `voiceFallback` rides no tier: it is
+ * the swap-in voice door (D.6-1) and later packages may route to it directly. */
+export type DoorName = 'voice' | 'mind' | 'judge' | 'voiceFallback';
+
+export interface DoorPricing {
+  /** USD per 1M input tokens. */
+  inputPerM: number;
+  /** USD per 1M output tokens. */
+  outputPerM: number;
+}
+
+/**
+ * One door: an endpoint family + wire protocol + the controls it honors
+ * (effort/thinking budget/forcing/sampling/pricing). No key material ever
+ * lives here — keys ride the transport, resolved from `keyEnv` by M20 config.
+ */
+export interface Door {
+  name: DoorName;
+  protocol: 'openai' | 'anthropic';
+  model: string;
+  /** The door's own reasoning control — the fallback when no class default or caller override applies. */
+  effort?: ReasoningEffort | undefined;
+  /** Anthropic-door thinking budget; outranks the effort→budget table when set. */
+  thinkingBudget?: number | undefined;
+  /** 'tool_choice': the client forces `decide` whenever it is among the offered defs (DR.3). */
+  forcing: 'tool_choice' | 'none';
+  temperature?: number | undefined;
+  topP?: number | undefined;
+  pricing?: DoorPricing | undefined;
+}
+
+/** The decide tool's wire name (DR.3 forcing keys on it; the loop's DECIDE_TOOL_NAME matches). */
+export const DECIDE_TOOL = 'decide';
+
 export type TaskClass =
   | 'turn'
   | 'appraisal'
@@ -102,6 +143,20 @@ export interface ChatRequest<T = string> {
   seedHint?: number;
   /** Anthropic `thinking` parameter; sent only when set (anthropic protocol only). */
   thinking?: ThinkingControl;
+  /**
+   * Reasoning-control override (DR.2). Absent ⇒ the client applies the class
+   * default (REASONING_BY_CLASS); the wire maps the effective value per door
+   * protocol (openai: `reasoning_effort`, glm-5.* never sees 'none';
+   * anthropic: `thinking {type:'enabled', budget_tokens}` — never 'disabled').
+   */
+  reasoning?: ReasoningEffort | undefined;
+  /**
+   * Per-tool zod validators (DR.7). The loop passes its registry entries HERE:
+   * the model layer never imports loop (the DAG forbids it), so the validator
+   * rides the request. Each tool call's args are zod-parsed against the
+   * matching entry after coercion; failures join the one-shot repair rung.
+   */
+  toolInput?: Readonly<Record<string, ZodType>> | undefined;
 }
 
 export interface ChatContext {
@@ -125,6 +180,8 @@ export interface ModelClient {
 export interface RoutedCall {
   model: string;
   tier: Tier;
+  /** The door serving this call, when the router was built with a door table. */
+  door?: Door | undefined;
 }
 
 export interface ModelRouter {
@@ -142,6 +199,16 @@ export interface ModelCallEvent {
   model: string;
   usage: Usage;
   outcome: 'ok' | 'error' | 'timeout' | 'aborted';
+  /** The door that served the call (door mode; absent on the legacy single-endpoint client). */
+  door?: DoorName | undefined;
+  /** The request's token cap (DR.4). */
+  maxTokens?: number | undefined;
+  /** The reasoning control that rode the call (DR.2/DR.4). */
+  reasoning?: ReasoningEffort | undefined;
+  /** Wire stop reason of the first (non-repair) generation, when the door reported one. */
+  stopReason?: StopReason | undefined;
+  /** Priced doors only: in·inputPerM/1e6 + out·outputPerM/1e6 over the call's total usage (DR.4). */
+  costUsd?: number | undefined;
 }
 
 /** Structured-output rung vocabulary, as named in `model.parse_failed` payloads. */

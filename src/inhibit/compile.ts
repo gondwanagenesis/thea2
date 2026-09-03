@@ -538,3 +538,77 @@ export const compileGate = (yamlText: string, cfg: GateConfig = {}): InhibitionG
     rules: () => infos,
   };
 };
+
+// ---------------------------------------------------------------------------
+// P-CADENCE CA.4 — the bubble-shape gate rule (class 'shape', soft).
+// Additive by design: this class does not ride the compiled doc sections yet
+// (the yaml gains its section when the canon entry merges at landing — the
+// draft lives in the P-CADENCE report), so it is a standalone pure check the
+// loop composes beside `checkPlan`, with the same verdict shape and the same
+// hint contract. Thresholds are the v6 spec constants (D.6-4), load-bearing.
+// ---------------------------------------------------------------------------
+
+export const SHAPE_RULE_ID = 'bubble-shape';
+export const SHAPE_MAX_BUBBLE_CHARS = 220; // a bubble is one glance
+export const SHAPE_MAX_BUBBLES = 5; // beyond this the reply is an essay
+export const SHAPE_MIN_WEIGHT_FOR_MORE = 0.7; // ...unless the decision carries weight
+export const SHAPE_MIN_SAME_EMOJI = 3; // three identical sign-offs is a kit
+export const SHAPE_REJECTION_WHY = 'split shorter'; // the one neutral reason, never an argument
+
+/** Compiled rule info for audits — the rule is soft: rephrase, fail open (M13's ladder owns the re-entry). */
+export const SHAPE_RULE: RuleInfo = {
+  id: SHAPE_RULE_ID,
+  ruleClass: 'plan',
+  severity: 'soft',
+  why: SHAPE_REJECTION_WHY,
+  matcher: 'bubble-shape',
+};
+
+/**
+ * A bubble "ends with an emoji" when its tail is a run of Extended_Pictographic
+ * code points (variation selector allowed). The ASCII keycap bases (#, *, 0-9)
+ * are pictographic in Unicode's tables but are not sign-offs, so they are
+ * excluded.
+ */
+const EMOJI_TAIL_RE = /(?:\p{Extended_Pictographic}\uFE0F?)+$/u;
+
+const emojiTail = (text: string): string | undefined => {
+  const m = EMOJI_TAIL_RE.exec(text);
+  if (m === null || /^[\d#*]+$/.test(m[0]!)) return undefined;
+  return m[0];
+};
+
+export interface ShapeView {
+  bubbles: readonly string[];
+  /** The decision's weight; absent counts as below the gate. */
+  weight?: number | undefined;
+}
+
+/**
+ * The bubble-shape verdict on a locked plan (checked beside `checkPlan`, before
+ * realization). Rejects when any bubble is over 220 chars, when there are more
+ * than 5 bubbles without weight ≥ 0.7, when a bubble contains a newline, or
+ * when ≥ 3 bubbles all end with the same emoji. Every violation carries the
+ * same neutral hint: the rephrase pass is told what to do, not which law it
+ * broke.
+ */
+export const checkBubbleShape = (d: ShapeView): Verdict => {
+  const deny: Verdict = {
+    allow: false,
+    code: 'forbidden-pattern',
+    ruleId: SHAPE_RULE_ID,
+    hint: hintFor(SHAPE_RULE_ID, SHAPE_REJECTION_WHY),
+  };
+  if (d.bubbles.some((b) => b.length > SHAPE_MAX_BUBBLE_CHARS)) return deny;
+  if (d.bubbles.length > SHAPE_MAX_BUBBLES && !(d.weight !== undefined && d.weight >= SHAPE_MIN_WEIGHT_FOR_MORE)) return deny;
+  if (d.bubbles.some((b) => b.includes('\n'))) return deny;
+  const kits = new Map<string, number>();
+  for (const b of d.bubbles) {
+    const tail = emojiTail(b);
+    if (tail !== undefined) kits.set(tail, (kits.get(tail) ?? 0) + 1);
+  }
+  for (const n of kits.values()) {
+    if (n >= SHAPE_MIN_SAME_EMOJI) return deny;
+  }
+  return ALLOW;
+};

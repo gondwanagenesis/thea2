@@ -15,7 +15,7 @@
 // process.env; this module never reads env itself.
 
 import type { Clock, Rng } from '../kernel/index.js';
-import { isModelError, isRetryable, modelError, retryAfterMsOf } from './errors.js';
+import { isModelError, isRetryable, modelError, retryAfterMsOf, type ModelError } from './errors.js';
 import { parseAnthropicSSE } from './anthropic.js';
 import {
   ANTHROPIC_ENDPOINT,
@@ -29,6 +29,24 @@ import {
 import type { WireBody, WireResponse } from './wire.js';
 
 export type WireProtocol = 'openai' | 'anthropic';
+
+/**
+ * DR.4 — a failed call still reports the attempts it made: the transport
+ * stamps the final error with the HTTP attempt count before it leaves, and the
+ * client credits it into `model.call` usage. (`attemptsOf` reads it back.)
+ */
+interface Attempted {
+  attempts?: number;
+}
+
+const attachAttempts = (e: unknown, attempts: number): unknown => {
+  if (isModelError(e)) (e as ModelError & Attempted).attempts = attempts;
+  return e;
+};
+
+/** The HTTP attempts a failed transport call consumed, when it reported them. */
+export const attemptsOf = (e: unknown): number | undefined =>
+  isModelError(e) ? (e as ModelError & Attempted).attempts : undefined;
 
 export interface TransportCall {
   body: WireBody;
@@ -273,7 +291,7 @@ export const zaiTransport = (deps: ZaiTransportDeps): Transport => {
         return { response, attempts: attempt };
       } catch (e) {
         if (isModelError(e) && e.code === 'model/aborted') throw e;
-        if (attempt > maxRetries || !isRetryable(e)) throw e;
+        if (attempt > maxRetries || !isRetryable(e)) throw attachAttempts(e, attempt);
         // The server's retry-after outranks our backoff: the wait is the max of
         // the two (a named wait shorter than our jittered spacing stays polite;
         // a longer one is obeyed).

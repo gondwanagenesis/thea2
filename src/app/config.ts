@@ -1,15 +1,41 @@
 import { readFileSync } from 'node:fs';
 import yaml from 'js-yaml';
 import { z } from 'zod';
+import type { Door, DoorName } from '../model/index.js';
+
+/**
+ * A resolved door: the yaml registry shape plus the key RESOLVED FROM ENV
+ * (P-DOOR DR.1). Only `keyEnv` names — never key values — live in the yaml;
+ * the resolved `apiKey` exists in memory only, like models.apiKey before it.
+ */
+export interface ResolvedDoor extends Door {
+  endpoint: string;
+  keyEnv: string;
+  apiKey: string;
+}
+
+export interface DoorsConfig {
+  voice: ResolvedDoor;
+  mind: ResolvedDoor;
+  judge: ResolvedDoor;
+  voiceFallback?: ResolvedDoor | undefined;
+}
 
 /** M20 owns config. Secrets NEVER live in the yaml — env only (AGENTS rule 7). */
 export interface Thea2Config {
   models: {
+    /**
+     * Flattened voice-door view — the embedder and derive CLI ride the voice
+     * door. Equals `doors.voice.{endpoint,apiKey,protocol}` in door mode and
+     * the legacy single endpoint in legacy mode.
+     */
     endpoint: string;
-    apiKey: string; // from env (THEA2_MODEL_API_KEY, legacy ZAI_API_KEY) — never the yaml
-    tiers: { main: string; cheap: string; reasoning?: string | undefined };
-    /** Wire protocol: 'anthropic' = z.ai coding-plan door (streaming SSE); default openai. */
+    apiKey: string; // resolved from env — never the yaml
     protocol: 'openai' | 'anthropic';
+    /** main/cheap = voice/mind models; reasoning = judge's (legacy: tiers.reasoning ?? main). */
+    tiers: { main: string; cheap: string; reasoning?: string | undefined };
+    /** The door registry (DR.1) — always present (synthesized from the legacy shape when needed). */
+    doors: DoorsConfig;
   };
   bridge: { botToken: string; allowedChatIds: number[] }; // botToken from env only
   /** IANA zone Diego lives in (quiet hours, daily caps, the [EARLIER] clock). Default 'UTC'. */
@@ -126,16 +152,61 @@ const timezoneSchema = z
   )
   .default('UTC');
 
-const configSchema = z.strictObject({
-  models: z.strictObject({
-    endpoint: z.string().min(1),
+// ——— P-DOOR DR.1: the door registry ———————————————————————————————————
+
+const EFFORTS = ['none', 'minimal', 'low', 'high', 'max'] as const;
+
+const doorYamlSchema = z.strictObject({
+  endpoint: z.string().min(1),
+  protocol: z.enum(['openai', 'anthropic']),
+  /** The ENV VARIABLE NAME the key arrives under — never the key itself. */
+  keyEnv: z
+    .string()
+    .min(1)
+    .regex(/^[A-Z][A-Z0-9_]*$/, 'keyEnv must name an env variable (UPPER_SNAKE_CASE)'),
+  model: z.string().min(1),
+  effort: z.enum(EFFORTS).optional(),
+  /** Anthropic-door thinking budget; outranks the effort→budget table (ADR-010). */
+  thinkingBudget: z.number().int().positive().optional(),
+  forcing: z.enum(['tool_choice', 'none']),
+  temperature: z.number().min(0).max(2).optional(),
+  topP: z.number().min(0).max(1).optional(),
+  pricing: z
+    .strictObject({ inputPerM: z.number().min(0), outputPerM: z.number().min(0) })
+    .optional(),
+});
+
+type DoorYaml = z.infer<typeof doorYamlSchema>;
+
+const modelsYamlSchema = z
+  .strictObject({
+    // Legacy single-door shape (endpoint/protocol/tiers) — still loads (DR.1).
+    endpoint: z.string().min(1).optional(),
     protocol: z.enum(['openai', 'anthropic']).default('openai'),
-    tiers: z.strictObject({
-      main: z.string().min(1),
-      cheap: z.string().min(1),
-      reasoning: z.string().min(1).optional(),
-    }),
-  }),
+    tiers: z
+      .strictObject({
+        main: z.string().min(1),
+        cheap: z.string().min(1),
+        reasoning: z.string().min(1).optional(),
+      })
+      .optional(),
+    // Door registry shape (DR.1): exactly the three tier doors + the optional swap-in.
+    doors: z
+      .strictObject({
+        voice: doorYamlSchema,
+        mind: doorYamlSchema,
+        judge: doorYamlSchema,
+        voiceFallback: doorYamlSchema.optional(),
+      })
+      .optional(),
+  })
+  .refine(
+    (m) => m.doors !== undefined || (m.endpoint !== undefined && m.tiers !== undefined),
+    { message: 'models needs either doors.{voice,mind,judge} or the legacy endpoint/protocol/tiers' },
+  );
+
+const configSchema = z.strictObject({
+  models: modelsYamlSchema,
   bridge: z.strictObject({
     // botToken deliberately absent — env only; its presence here is a secret-in-yaml hit
     allowedChatIds: z.array(z.number().int()).min(1),
@@ -220,26 +291,90 @@ export const loadConfig = (
   }
 
   const botToken = env['THEA2_BOT_TOKEN'];
-  const apiKey = env['THEA2_MODEL_API_KEY'] ?? env['ZAI_API_KEY'];
   const envIssues: ConfigIssue[] = [];
   if (botToken === undefined || botToken === '') {
     envIssues.push({ path: ['bridge', 'botToken'], message: 'THEA2_BOT_TOKEN missing from env' });
   }
-  if (apiKey === undefined || apiKey === '') {
-    envIssues.push({
-      path: ['models', 'apiKey'],
-      message: 'THEA2_MODEL_API_KEY (or ZAI_API_KEY) missing from env',
-    });
-  }
-  if (envIssues.length > 0) throw new ConfigError('app/config-invalid', envIssues, yamlPath);
+
+  // ——— door resolution (DR.1): registry shape, or synthesized from the legacy shape ———
+  const mkDoor = (name: DoorName, d: DoorYaml, apiKey: string): ResolvedDoor => ({
+    name,
+    endpoint: d.endpoint,
+    protocol: d.protocol,
+    keyEnv: d.keyEnv,
+    apiKey,
+    model: d.model,
+    forcing: d.forcing,
+    ...(d.effort !== undefined ? { effort: d.effort } : {}),
+    ...(d.thinkingBudget !== undefined ? { thinkingBudget: d.thinkingBudget } : {}),
+    ...(d.temperature !== undefined ? { temperature: d.temperature } : {}),
+    ...(d.topP !== undefined ? { topP: d.topP } : {}),
+    ...(d.pricing !== undefined ? { pricing: d.pricing } : {}),
+  });
 
   const y = parsed.data as YamlConfig;
+  const doorKey = (name: DoorName, d: DoorYaml): string => {
+    const key = env[d.keyEnv];
+    if (key === undefined || key === '') {
+      envIssues.push({
+        path: ['models', 'doors', name, 'keyEnv'],
+        message: `${d.keyEnv} missing from env`,
+      });
+      return '';
+    }
+    return key;
+  };
+
+  let doors: DoorsConfig;
+  let tiers: { main: string; cheap: string; reasoning?: string | undefined };
+  if (y.models.doors !== undefined) {
+    const d = y.models.doors;
+    doors = {
+      voice: mkDoor('voice', d.voice, doorKey('voice', d.voice)),
+      mind: mkDoor('mind', d.mind, doorKey('mind', d.mind)),
+      judge: mkDoor('judge', d.judge, doorKey('judge', d.judge)),
+      ...(d.voiceFallback !== undefined
+        ? { voiceFallback: mkDoor('voiceFallback', d.voiceFallback, doorKey('voiceFallback', d.voiceFallback)) }
+        : {}),
+    };
+    tiers = { main: d.voice.model, cheap: d.mind.model, reasoning: d.judge.model };
+  } else {
+    // Legacy shape still boots (DR.1): endpoint/protocol/tiers synthesize the
+    // three tier doors over the ONE legacy key; voice=main, mind=cheap,
+    // judge=reasoning (falling back to main when only two tiers are configured).
+    // Forcing stays 'none' — the legacy client never added a door-level force.
+    const legacyKey = env['THEA2_MODEL_API_KEY'] ?? env['ZAI_API_KEY'];
+    if (legacyKey === undefined || legacyKey === '') {
+      envIssues.push({
+        path: ['models', 'apiKey'],
+        message: 'THEA2_MODEL_API_KEY (or ZAI_API_KEY) missing from env',
+      });
+    }
+    const legacyDoor = (name: DoorName, model: string): DoorYaml & { keyEnv: string } => ({
+      endpoint: y.models.endpoint!,
+      protocol: y.models.protocol,
+      keyEnv: env['THEA2_MODEL_API_KEY'] !== undefined && env['THEA2_MODEL_API_KEY'] !== '' ? 'THEA2_MODEL_API_KEY' : 'ZAI_API_KEY',
+      model,
+      forcing: 'none',
+    });
+    doors = {
+      voice: mkDoor('voice', legacyDoor('voice', y.models.tiers!.main), legacyKey ?? ''),
+      mind: mkDoor('mind', legacyDoor('mind', y.models.tiers!.cheap), legacyKey ?? ''),
+      judge: mkDoor('judge', legacyDoor('judge', y.models.tiers!.reasoning ?? y.models.tiers!.main), legacyKey ?? ''),
+    };
+    tiers = y.models.tiers!;
+  }
+
+  if (envIssues.length > 0) throw new ConfigError('app/config-invalid', envIssues, yamlPath);
+
   return {
     models: {
-      endpoint: y.models.endpoint,
-      apiKey: apiKey as string,
-      tiers: y.models.tiers,
-      protocol: y.models.protocol,
+      // Flattened voice-door view: the embedder + derive CLI ride the voice door.
+      endpoint: doors.voice.endpoint,
+      apiKey: doors.voice.apiKey,
+      protocol: doors.voice.protocol,
+      tiers,
+      doors,
     },
     bridge: { botToken: botToken as string, allowedChatIds: y.bridge.allowedChatIds },
     timezone: y.timezone,

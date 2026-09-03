@@ -132,7 +132,8 @@ describe('runJudge — scoring and aggregation', () => {
   });
 
   it('the structured-output ladder holds: a content-only reply is repaired once and the judge still scores', async () => {
-    // Rung (b) gets no emit tool from the model; the client's ONE cheap repair asks
+    // Rung (b) gets no emit tool from the model; the client's ONE repair asks (DR.6:
+    // repair keeps the requesting tier — the judge's reasoning tier, never a downgrade)
     // again as prompted JSON, and the scripted repair reply is a valid payload. The
     // judge rides the same ladder the loop does — that is the point of MockModel.
     const model = new MockModel();
@@ -141,7 +142,7 @@ describe('runJudge — scoring and aggregation', () => {
     const agg = await runJudge(rubricOf(), outbound(['a']), INBOUND, judgeDeps(model));
     expect(agg.runMeans).toEqual([4.5]);
     expect(model.calls).toHaveLength(2); // the repair is a second wire call
-    expect(model.calls[1]?.tier).toBe('cheap');
+    expect(model.calls[1]?.tier).toBe('reasoning');
   });
 
   it('a judge that answers out of range fails loudly (model/parse-failed), never clamps silently', async () => {

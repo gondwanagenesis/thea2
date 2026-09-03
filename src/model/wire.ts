@@ -7,7 +7,8 @@ import { z, type ZodType } from 'zod';
 import { canonicalJson } from '../kernel/index.js';
 import { modelError } from './errors.js';
 import { EMIT_TOOL_NAME, looseJsonParse, promptedJsonInstruction } from './json.js';
-import type { ChatMsg, ChatRequest, StopReason, ToolCall, ToolDef } from './types.js';
+import { ANTHROPIC_THINKING_BUDGETS } from './tiers.js';
+import type { ChatMsg, ChatRequest, Door, ReasoningEffort, StopReason, ThinkingControl, ToolCall, ToolDef } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Wire shapes (only the fields M03 sends or reads; unknown fields are ignored)
@@ -32,6 +33,10 @@ export interface WireBody {
   temperature: number;
   max_tokens: number;
   seed?: number;
+  /** P-DOOR DR.2: the reasoning control, openai spelling. */
+  reasoning_effort?: ReasoningEffort;
+  /** Door topP (DR.1), openai spelling. */
+  top_p?: number;
   tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: unknown } }>;
   tool_choice?: 'auto' | 'required' | { type: 'function'; function: { name: string } };
   response_format?: { type: 'json_schema'; json_schema: { name: string; strict: boolean; schema: unknown } };
@@ -202,7 +207,50 @@ export interface BuildBodyInput {
   model: string;
   rung: RequestRung | 'auto';
   seedSupported: boolean;
+  /** The serving door (DR.1): effort fallback, thinkingBudget, sampling defaults. Absent on the legacy single-door path — bytes stay legacy. */
+  door?: Door | undefined;
 }
+
+/**
+ * The effective reasoning control (DR.2): a caller/client override first, the
+ * door's own effort second. Undefined ⇒ the field stays off the body (legacy
+ * bytes). glm-5.* models never see 'none' — the openai wire maps it to
+ * 'minimal' (the door's smallest honest effort); other models take 'none'
+ * verbatim.
+ */
+export const reasoningEffortFor = (
+  req: ChatRequest<any>,
+  model: string,
+  door?: Door | undefined,
+): ReasoningEffort | undefined => {
+  const effort = req.reasoning ?? door?.effort;
+  if (effort === undefined) return undefined;
+  if (effort === 'none' && GLM5_RE.test(model)) return 'minimal';
+  return effort;
+};
+
+const GLM5_RE = /^glm-5\./;
+
+/**
+ * The effective reasoning control (DR.2), anthropic spelling: a caller's
+ * `thinking` rides verbatim EXCEPT `type:'disabled'`, which is dropped — this
+ * wire never emits disabled (glm-5.3-flash 500s on it; W1.1 door smoke).
+ * Otherwise thinking derives from the effective effort as
+ * `{type:'enabled', budget_tokens}` with the door's `thinkingBudget` outranking
+ * the effort table. Undefined ⇒ the field stays off the body.
+ */
+export const anthropicThinkingFor = (
+  req: ChatRequest<any>,
+  door?: Door | undefined,
+): ThinkingControl | undefined => {
+  if (req.thinking !== undefined) {
+    if (req.thinking.type === 'disabled') return undefined;
+    return req.thinking;
+  }
+  const effort = req.reasoning ?? door?.effort;
+  if (effort === undefined) return undefined;
+  return { type: 'enabled', budget_tokens: door?.thinkingBudget ?? ANTHROPIC_THINKING_BUDGETS[effort] };
+};
 
 /**
  * Builds the wire body. Rung decisions are made upstream (the ladder); this only
@@ -210,10 +258,14 @@ export interface BuildBodyInput {
  * tool, (c) a trailing system message carrying the schema in prose.
  */
 export const buildWireBody = (input: BuildBodyInput): WireBody => {
-  const { req, model, rung, seedSupported } = input;
+  const { req, model, rung, seedSupported, door } = input;
   const { schema } = req;
   const tools = req.tools !== undefined && req.tools.length > 0 ? toWireTools(req.tools) : undefined;
   const messages = [...toWireMessages(req.messages)];
+  // Door sampling defaults (DR.1): a configured door temperature/topP outranks
+  // the request default; top_p only ever rides from the door.
+  const temperature = door?.temperature ?? req.temperature;
+  const reasoningEffort = reasoningEffortFor(req, model, door);
 
   let responseFormat: WireBody['response_format'];
   // Legacy default stands when toolChoice is absent (goldens byte-identical):
@@ -255,9 +307,11 @@ export const buildWireBody = (input: BuildBodyInput): WireBody => {
   return {
     model,
     messages,
-    temperature: req.temperature,
+    temperature,
     max_tokens: req.maxTokens,
     ...(seedSupported && req.seedHint !== undefined ? { seed: req.seedHint } : {}),
+    ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
+    ...(door?.topP !== undefined ? { top_p: door.topP } : {}),
     ...(wireTools !== undefined ? { tools: wireTools } : {}),
     ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
     ...(responseFormat !== undefined ? { response_format: responseFormat } : {}),

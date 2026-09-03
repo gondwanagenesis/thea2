@@ -29,15 +29,15 @@ afterEach(() => {
 /** The two-bubble plan every hand-computed timeline below is built from. */
 const twoBubbles = (): DeliveryPlan =>
   planDelivery(
-    decision({ bubbles: ['hola que tal', 'te lo cuento'] }), // 12 chars each → typing 1200 ms at cps 10
+    decision({ bubbles: ['hola que tal', 'te lo cuento'] }), // 12 chars each → typing 343 ms at cps 35
     vec(),
     TELEGRAM_LIMITS,
-    fixedRng(0.5), // jitter draw 0.5 ⇒ gap exactly 750 ms
+    fixedRng(0.5), // jitter draw 0.5 ⇒ gap exactly 950 ms
   );
 
 const threeBubbles = (): DeliveryPlan =>
   planDelivery(
-    decision({ bubbles: ['primera', 'segunda', 'tercera'] }), // 7 chars each → typing 700 ms at cps 10
+    decision({ bubbles: ['primera', 'segunda', 'tercera'] }), // 7 chars each → typing 200 ms at cps 35
     vec(),
     TELEGRAM_LIMITS,
     fixedRng(0.5),
@@ -48,14 +48,11 @@ describe('executePlan — the exact timeline', () => {
     const clock = new TestClock(T0);
     const ch = FakeChannel({ clock });
     const plan = twoBubbles();
-    expect(plan.totalMs).toBe(3950); // 800 + 1200 + 750 + 1200 — the hand computation
+    expect(plan.totalMs).toBe(1636); // 0 + 343 + 950 + 343 — the hand computation
 
     const run = executePlan(plan, CHAT, ch, clock, new AbortController().signal);
-    await settle(); // the executor is now parked on the pre-delay waiter
-    await drive(clock, T0 + 799);
-    expect(ch.typings()).toEqual([]); // still inside the pre-delay, to the millisecond
-    await clock.advance(1); // T0+800 exactly
-    expect(ch.typings()).toEqual([{ chatId: CHAT, at: T0 + 800 }]);
+    await settle(); // nothing parks before the first fire: the pre-delay is 0 at the lock
+    expect(ch.typings()).toEqual([{ chatId: CHAT, at: T0 }]); // typing begins at the lock instant
 
     await drive(clock, T0 + plan.totalMs);
     const res = await run;
@@ -69,12 +66,12 @@ describe('executePlan — the exact timeline', () => {
       undelivered: [],
     });
     expect(ch.typings()).toEqual([
-      { chatId: CHAT, at: T0 + 800 }, // pre-delay over, typing for bubble 1
-      { chatId: CHAT, at: T0 + 2750 }, // inter-bubble gap over, typing for bubble 2
+      { chatId: CHAT, at: T0 }, // pre-delay over at the lock itself, typing for bubble 1
+      { chatId: CHAT, at: T0 + 1293 }, // inter-bubble gap over, typing for bubble 2
     ]);
     expect(ch.outbound()).toEqual([
-      { chatId: CHAT, text: 'hola que tal', msgId: FAKE_FIRST_MSG_ID, at: T0 + 2000 },
-      { chatId: CHAT, text: 'te lo cuento', msgId: FAKE_FIRST_MSG_ID + 1, at: T0 + 3950 },
+      { chatId: CHAT, text: 'hola que tal', msgId: FAKE_FIRST_MSG_ID, at: T0 + 343 },
+      { chatId: CHAT, text: 'te lo cuento', msgId: FAKE_FIRST_MSG_ID + 1, at: T0 + 1636 },
     ]);
     expect(clock.epochMs()).toBe(T0 + plan.totalMs); // the schedule, not a ms more
   });
@@ -124,17 +121,18 @@ describe('executePlan — the exact timeline', () => {
     const clock = new TestClock(T0);
     const ch = FakeChannel({ clock }); // real Telegram physics: 1100 ms per chat
     const plan = planDelivery(decision({ bubbles: ['a', 'b'] }), vec(), TELEGRAM_LIMITS, fixedRng(0.5));
-    // Planned total is 1750 ms, which would put send #2 at 1750 — 850 ms after
-    // send #1. The pacer must stretch the schedule; FakeChannel would throw
-    // bridge/limit-send-gap otherwise, so this assertion cannot pass by luck.
-    expect(plan.totalMs).toBe(1750);
+    // Planned total is 1008 ms (29 typing + 950 gap + 29 typing), which would
+    // put send #2 at 1008 — 979 ms after send #1 at 29. The pacer must stretch
+    // the schedule; FakeChannel would throw bridge/limit-send-gap otherwise, so
+    // this assertion cannot pass by luck.
+    expect(plan.totalMs).toBe(1008);
 
     const run = executePlan(plan, CHAT, ch, clock, new AbortController().signal);
     await settle();
     await drive(clock, T0 + plan.totalMs + TELEGRAM_LIMITS.minSendGapMs);
     await run;
 
-    expect(ch.outbound().map((s) => s.at - T0)).toEqual([900, 2000]); // send #2 held to send #1 + 1100
+    expect(ch.outbound().map((s) => s.at - T0)).toEqual([29, 1129]); // send #2 held to send #1 + 1100
   });
 
   it('a tighter synthetic channel is honored the same way', async () => {
@@ -147,7 +145,7 @@ describe('executePlan — the exact timeline', () => {
     await drive(clock, T0 + 20_000);
     await run;
 
-    expect(ch.outbound().map((s) => s.at - T0)).toEqual([900, 5900, 10_900]); // exactly minSendGapMs apart
+    expect(ch.outbound().map((s) => s.at - T0)).toEqual([29, 5029, 10_029]); // exactly minSendGapMs apart
   });
 });
 
@@ -159,7 +157,7 @@ describe('executePlan — mid-plan interruption', () => {
 
     const run = executePlan(threeBubbles(), CHAT, ch, clock, ac.signal);
     await settle();
-    await drive(clock, T0 + 2000); // send #1 (at 1500) done; parked before bubble 2's typing (at 2250)
+    await drive(clock, T0 + 1000); // send #1 (at 200) done; parked inside bubble 2's gap (until 1150)
     expect(ch.outbound().map((s) => s.text)).toEqual(['primera']);
 
     ac.abort(); // a new inbound arrived — M20 fires the signal
@@ -180,7 +178,7 @@ describe('executePlan — mid-plan interruption', () => {
     const ac = new AbortController();
     const run = executePlan(threeBubbles(), CHAT, ch, clock, ac.signal);
     await settle();
-    await drive(clock, T0 + 1000); // inside the first typing span (800..1500)
+    await drive(clock, T0 + 100); // inside the first typing span (0..200)
     ac.abort();
     const res = await run;
     expect(res.sent).toEqual([]);
@@ -269,7 +267,7 @@ describe('realize → ledger — what was delivered is exactly what reconcile se
       recordSend: (msgId, text) => ledger.recordOutbound('turn-1', msgId, text),
     });
     await settle();
-    await drive(clock, T0 + 2000); // 'primera' is out at T0+1500
+    await drive(clock, T0 + 1000); // 'primera' is out at T0+200, parked before bubble 2's gap ends
     ac.abort();
     const report = await run;
 
@@ -347,17 +345,77 @@ describe('realize → ledger — what was delivered is exactly what reconcile se
       recordSend: (msgId, text) => ledger.recordOutbound('turn-4', msgId, text),
     });
     await settle();
-    await drive(clock, T0 + 3000); // the plan runs to completion (send #2 at T0+2150, pacer-pushed)
+    await drive(clock, T0 + 3000); // the plan runs to completion (send #2 at T0+1129, pacer-pushed)
     const report = await run;
     const rows: LedgerRow[] = [];
     for await (const row of ledger.read()) rows.push(row);
     expect(rows.map((r) => r.kind)).toEqual(['outbound', 'outbound']);
     expect(rows.map((r) => (r.kind === 'outbound' ? r.text : ''))).toEqual(['una', 'dos']);
     expect(rows.map((r) => (r.kind === 'outbound' ? r.msgId : -1))).toEqual(report.sent.map((s) => s.msgId));
-    // recordSend runs once the plan has executed, so a row's ts is when the
-    // pipeline recorded it — the channel's own accept times live on the
-    // CapturedSend/ExecResult side, linked by msgId.
+    // recordSend runs per send, before the next step (v6 CA.2), so a row's ts
+    // is when the pipeline recorded it — the channel's own accept times live on
+    // the CapturedSend/ExecResult side, linked by msgId.
     const ts = rows.map((r) => (r.kind === 'outbound' ? r.ts : -1));
     for (let i = 1; i < ts.length; i++) expect(ts[i]!).toBeGreaterThanOrEqual(ts[i - 1]!);
+  });
+
+  it('outbound-rows-land-per-send', async () => {
+    // v6 CA.2 — each ledger row lands immediately after its ch.send resolves
+    // and before the next step runs: an abort mid-plan must leave the ledger
+    // holding exactly the delivered bubbles, and while the plan is still parked
+    // mid-flight the delivered rows are already in.
+    const clock = new TestClock(T0);
+    const ledger = openLedger(clock);
+    const ch = FakeChannel({ clock });
+    const ac = new AbortController();
+    const recorded: string[] = [];
+    await ledger.recordInbound(msg({ updateId: 10 }));
+    await ledger.linkTurn(10, 'turn-5');
+    await ledger.recordDecision('turn-5', { turnId: 'turn-5', plan: 'reply', at: clock.epochMs() });
+
+    const run = realize(decision({ bubbles: ['primera', 'segunda', 'tercera'] }), vec(), fixedRng(0.5), {
+      chatId: CHAT,
+      channel: ch,
+      clock,
+      signal: ac.signal,
+      recordSend: async (msgId, text) => {
+        recorded.push(text);
+        await ledger.recordOutbound('turn-5', msgId, text);
+      },
+    });
+    await settle();
+    await drive(clock, T0 + 1000); // send #1 out at T0+200; bubble 2 not due until T0+1350
+
+    // The plan is still parked mid-flight and bubble 1's row is already in the
+    // ledger — proof the recording is per send, not a replay after execution.
+    expect(recorded).toEqual(['primera']);
+    expect(await outboundTexts(ledger)).toEqual(['primera']);
+
+    ac.abort(); // a new inbound arrived mid-plan
+    const report = await run;
+
+    expect(report.aborted).toBe(true);
+    expect(report.sent.map((s) => s.text)).toEqual(['primera']);
+    expect(recorded).toEqual(['primera']);
+    expect(await outboundTexts(ledger)).toEqual(['primera']); // exactly the delivered bubbles
+  });
+
+  it('a recordSend throw propagates mid-plan — loud, never swallowed', async () => {
+    const clock = new TestClock(T0);
+    const ch = FakeChannel({ clock });
+    const run = realize(decision({ bubbles: ['primera', 'segunda'] }), vec(), fixedRng(0.5), {
+      chatId: CHAT,
+      channel: ch,
+      clock,
+      signal: new AbortController().signal,
+      recordSend: async () => {
+        throw new Error('ledger disk full');
+      },
+    });
+    await settle(); // parked on the first typing waiter
+    const rejection = expect(run).rejects.toThrowError(/ledger disk full/);
+    await drive(clock, T0 + 1000); // send #1 resolves at T0+29; its recording throws before the next step
+    await rejection;
+    expect(ch.outbound()).toHaveLength(1); // the send happened; its recording failed loudly
   });
 });

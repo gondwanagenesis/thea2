@@ -125,13 +125,13 @@ describe('buildAnthropicBody', () => {
     ]);
   });
 
-  it('sends no thinking key when the request does not set one (wire bodies unchanged)', () => {
+  it('sends no thinking key when the request does not set one and no door is present (legacy bytes)', () => {
     const body = buildAnthropicBody({ req: req(), model: 'glm-5.3-flash', rung: 'auto', seedSupported: false });
     expect('thinking' in body).toBe(false);
     expect(Object.keys(body).sort()).toEqual(['max_tokens', 'messages', 'model', 'temperature']);
   });
 
-  it('passes req.thinking through verbatim as the Anthropic thinking parameter', () => {
+  it('passes req.thinking through verbatim as the Anthropic thinking parameter — never disabled', () => {
     const enabled = buildAnthropicBody({
       req: req({ thinking: { type: 'enabled', budget_tokens: 1024 } }),
       model: 'glm-5.3-flash',
@@ -139,13 +139,16 @@ describe('buildAnthropicBody', () => {
       seedSupported: false,
     });
     expect(enabled.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
+    // P-DOOR DR.2: the builder never emits type:'disabled' — a caller asking
+    // for it gets the field DROPPED (the W1.1 smoke: glm-5.3-flash 500s on it),
+    // letting the door's default stand.
     const disabled = buildAnthropicBody({
       req: req({ thinking: { type: 'disabled' } }),
       model: 'glm-5.3-flash',
       rung: 'auto',
       seedSupported: false,
     });
-    expect(disabled.thinking).toEqual({ type: 'disabled' });
+    expect(disabled.thinking).toBeUndefined();
   });
 });
 
@@ -308,7 +311,7 @@ const foldedSend = (sse: string): Transport => async () => ({
   attempts: 1,
 });
 
-describe('chatCore — anthropic stop_reason handling', () => {
+describe('chatCore — anthropic stop_reason handling (DR.5 truncation guard)', () => {
   it('throws model/truncated (non-retryable, names the budget) for max_tokens with nothing visible', async () => {
     const core = chatCore({ router, protocol: 'anthropic', send: foldedSend(SSE_MAX_TOKENS_EMPTY) });
     const err = (await core(req({ maxTokens: 2048 }), undefined, 'auto').catch((e: unknown) => e)) as {
@@ -322,11 +325,11 @@ describe('chatCore — anthropic stop_reason handling', () => {
     expect(err.message).toContain('max_tokens');
   });
 
-  it('returns a max_tokens reply that has visible content, with stopReason set', async () => {
+  it('a max_tokens reply WITH visible content still fires the guard — a cut-off reply is not an answer', async () => {
     const core = chatCore({ router, protocol: 'anthropic', send: foldedSend(SSE_MAX_TOKENS_WITH_CONTENT) });
-    const r = await core(req(), undefined, 'auto');
-    expect(r.content).toBe('the thing about sea glass is that it takes about');
-    expect(r.stopReason).toBe('max_tokens');
+    await expect(core(req({ maxTokens: 2048 }), undefined, 'auto')).rejects.toThrowError(
+      expect.objectContaining({ code: 'model/truncated' }),
+    );
   });
 
   it('a normal end_turn reply carries stopReason end_turn', async () => {
@@ -335,7 +338,7 @@ describe('chatCore — anthropic stop_reason handling', () => {
     expect(r.stopReason).toBe('end_turn');
   });
 
-  it('max_tokens with a tool call but no text is NOT a truncation (the call is the decision)', async () => {
+  it('max_tokens with a tool call still fires the guard (DR.5 clause 1 is unconditional)', async () => {
     const withTool = SSE_MAX_TOKENS_EMPTY.replace(
       'event: message_delta',
       [
@@ -348,9 +351,9 @@ describe('chatCore — anthropic stop_reason handling', () => {
       ].join('\n'),
     );
     const core = chatCore({ router, protocol: 'anthropic', send: foldedSend(withTool) });
-    const r = await core(req(), undefined, 'auto');
-    expect(r.toolCalls).toEqual([{ id: 't1', name: 'emit', args: { a: 1 } }]);
-    expect(r.stopReason).toBe('max_tokens');
+    await expect(core(req({ maxTokens: 2048 }), undefined, 'auto')).rejects.toThrowError(
+      expect.objectContaining({ code: 'model/truncated' }),
+    );
   });
 });
 
