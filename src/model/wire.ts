@@ -118,6 +118,39 @@ export interface ParsedResponse {
   stopReason?: StopReason;
 }
 
+/**
+ * GLM text-form tool call (prod 2026-09-03): Neuralwatt's glm-5.3 serializes
+ * tool calls as CONTENT in its own serialization — `name<arg_key>k</arg_key>
+ * <arg_value>v</arg_value>...</tool_call>` — with finish 'stop' and no native
+ * tool_calls array. It is deterministic and well-formed, so it parses. The
+ * whole content must be exactly one call (anchored): markup with trailing
+ * prose fails the match and stays on the prose path, where the realize leak
+ * guard backstops.
+ */
+const TEXT_FORM_CALL =
+  /^\s*(?:<tool_call>\s*)?([A-Za-z_][\w.]*)(?:\s+for:\s*[^\s<]+)?\s*((?:<arg_key>[\s\S]*?<\/arg_key>\s*<arg_value>[\s\S]*?<\/arg_value>\s*)+)(?:\s*<\/tool_call>)?\s*$/;
+const TEXT_FORM_ARG = /<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?<\/arg_value>)/g;
+
+export const parseTextFormToolCall = (content: string): ToolCall | undefined => {
+  if (!content.includes('<arg_key>')) return undefined;
+  const match = TEXT_FORM_CALL.exec(content);
+  if (match === null) return undefined;
+  const name = match[1]?.trim();
+  if (name === undefined || name === '') return undefined;
+  const args: Record<string, unknown> = {};
+  for (const pair of match[2]?.matchAll(TEXT_FORM_ARG) ?? []) {
+    const key = (pair[1] ?? '').trim();
+    const rawValue = (pair[2] ?? '').replace(/<\/arg_value>$/, '').trim();
+    if (key === '') continue;
+    try {
+      args[key] = JSON.parse(rawValue) as unknown;
+    } catch {
+      args[key] = rawValue;
+    }
+  }
+  return { id: 'call_textform', name, args };
+};
+
 /** OpenAI finish_reason → the Anthropic stop vocabulary the client reasons in. */
 const FINISH_REASON_MAP: Record<string, StopReason> = {
   stop: 'end_turn',
@@ -184,6 +217,20 @@ export const parseWireResponse = (raw: unknown): ParsedResponse => {
   };
   const finish = (first as { finish_reason?: unknown }).finish_reason;
   const stopReason = typeof finish === 'string' ? (FINISH_REASON_MAP[finish] ?? finish) : undefined;
+  // GLM text-form calls (see parseTextFormToolCall): the content IS the call.
+  if (toolCalls.length === 0 && typeof m.content === 'string') {
+    const textForm = parseTextFormToolCall(m.content);
+    if (textForm !== undefined) {
+      return {
+        content: '',
+        toolCalls: [textForm],
+        malformedToolCalls,
+        inputTokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0,
+        outputTokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0,
+        stopReason: 'tool_use',
+      };
+    }
+  }
   return {
     content,
     toolCalls,

@@ -265,3 +265,58 @@ describe('TEST_TIERS sanity', () => {
     expect(new Set(Object.values(TEST_TIERS)).size).toBe(3);
   });
 });
+
+// GLM text-form tool calls (prod 2026-09-03): Neuralwatt glm-5.3 serializes
+// decide as CONTENT — `decide<arg_key>k</arg_key><arg_value>v</arg_value>` with
+// finish 'stop' and no native tool_calls. Real payload from the live ledger
+// (msgIds 93/95/98 sent it to Telegram before the parser existed).
+describe('parseWireResponse — glm text-form tool calls', () => {
+  const realPayload = {
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          content:
+            'decide<arg_key>bubbles</arg_key><arg_value>["heyooo! we\'re back to full words", "so which is it: did the \'oops\' eat the answer"]</arg_value><arg_key>completeness</arg_key><arg_value>0.7</arg_value><arg_key>confidence</arg_key><arg_value>0.8</arg_value><arg_key>plan</arg_key><arg_value>reply</arg_value><arg_key>reluctance</arg_key><arg_value>0.1</arg_value><arg_key>weight</arg_key><arg_value>0.7</arg_value></tool_call>',
+        },
+        finish_reason: 'stop',
+      },
+    ],
+    usage: { prompt_tokens: 1200, completion_tokens: 90 },
+  };
+
+  it('glm-5.3 text-form tool call parses as a structured decide call', () => {
+    const res = parseWireResponse(realPayload);
+    expect(res.content).toBe('');
+    expect(res.toolCalls).toHaveLength(1);
+    expect(res.toolCalls[0]?.name).toBe('decide');
+    expect(res.stopReason).toBe('tool_use');
+  });
+
+  it('text-form arg values JSON-parse: bubbles is an array, numbers are numbers', () => {
+    const res = parseWireResponse(realPayload);
+    const args = res.toolCalls[0]?.args as { bubbles: unknown; completeness: unknown; plan: unknown };
+    expect(Array.isArray(args.bubbles)).toBe(true);
+    expect((args.bubbles as string[])[0]).toContain('full words');
+    expect(args.completeness).toBe(0.7);
+    expect(args.plan).toBe('reply');
+  });
+
+  it('markup with trailing prose is NOT a text-form call — stays prose for the leak guard', () => {
+    const prosePayload = {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'let me think... decide<arg_key>plan</arg_key><arg_value>reply</arg_value> and that is that',
+          },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    };
+    const res = parseWireResponse(prosePayload);
+    expect(res.toolCalls).toHaveLength(0);
+    expect(res.content).toContain('let me think');
+  });
+});
