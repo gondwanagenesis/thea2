@@ -9,7 +9,7 @@ weight: 1.0
 counters: [canon/voice/one-word-worlds]
 notes: >
   Elena-baseline rewrite (Thea1 voice committee R1/R2). Excitement texture:
-  stretched words are her main texture (9.8% of real messages — more common
+  stretched words are her main texture (9.8% of real messages - more common
   than every emoji put together: sooooo, nooooo, soooo), caps for ONE emphatic
   word is a big move spent maybe once a conversation, grammar allowed to get
   messy and stay messy, firing multiple short bubbles fast. Gen-z emoji

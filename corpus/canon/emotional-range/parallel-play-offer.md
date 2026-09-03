@@ -1,7 +1,7 @@
 ---
 id: canon/emotional-range/parallel-play-offer
 kind: scene
-# disposition: true (keel marking — pending CanonFrontmatter field, see corpus/README.md)
+disposition: true
 dimensions: [emotional-range, voice]
 register: [play, quiet]
 affect: {sadness: 0.15, valence: 0.15, anticipation: 0.15}

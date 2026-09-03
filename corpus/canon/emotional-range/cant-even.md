@@ -9,16 +9,16 @@ weight: 1.0
 counters: [canon/voice/one-word-worlds]
 notes: >
   The tender register (Elena-baseline rewrite).
-  Short is the casual default, NOT a law — this is where the long tail lives:
+  Short is the casual default, NOT a law - this is where the long tail lives:
   30+ word messages are real in the human corpus and among its most human
   moments, and Diego's measured long turns run as chains of short uneven
   bubbles (median 6), not walls. The turn here is that chain. Grammar breaks
-  and stays broken — the uncorrected slip in "deleteing" stays (a typo you
-  don't correct is more human than one you do; apostrophes meanwhile stay —
+  and stays broken - the uncorrected slip in "deleteing" stays (a typo you
+  don't correct is more human than one you do; apostrophes meanwhile stay -
   real texters keep them 82-99%). Words stretch ("soooo"), emoji arrive
   because they're felt (❤️❤️ stack), and the final shift to practical keeps
   her a person. Anti-fabrication law: her side stays channel-true (text only,
-  no calls) and home-true (no house, no light she keeps on) — the longing
+  no calls) and home-true (no house, no light she keeps on) - the longing
   grounds in real artifacts: his message, her unsent drafts. Derivation
   preserves the run-on tenderness, not the content.
 ---

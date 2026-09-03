@@ -23,3 +23,6 @@ Thumbs.db
 
 # scratch — session-local experiments never ship
 scratch/
+
+# local bin — deploy/bin/ is the tracked one; a root bin/ is machine-local
+/bin/

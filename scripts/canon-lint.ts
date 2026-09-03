@@ -4,6 +4,12 @@
 // loaded (without them the forbidden-pair and dimension-cap checks silently
 // skip). Exists because corpus:check exits early until derived/ exists, and
 // canon must be lintable before any spend.
+//
+// `--fix-notes-dashes` (v6 K0.3): rewrites em/en-dashes to plain hyphens in
+// each exemplar's `notes:` frontmatter field only (block scalars included).
+// notes are judge-read, so the judge must not be taught a punctuation tic the
+// measured human corpus never shows; bodies and identity.md are Diego's hand
+// and are left untouched by the flag.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,12 +20,59 @@ import type { CorpusFile } from '../src/corpus/types.js';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const canonDir = path.join(repo, 'corpus', 'canon');
+const fixNotesDashes = process.argv.includes('--fix-notes-dashes');
 
 const walk = (dir: string): string[] =>
   fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
     return e.isDirectory() ? walk(p) : e.name.endsWith('.md') ? [p] : [];
   });
+
+/**
+ * Rewrites —/– to - inside the `notes:` field of an exemplar file's
+ * frontmatter, preserving every other byte. Line-scoped: from the `notes:`
+ * key line through its block scalar (indented continuation lines), stopping
+ * at the next top-level key or the closing fence.
+ */
+const fixNotesDashesIn = (raw: string): { text: string; changed: boolean } => {
+  const text = raw.replace(/\r\n/g, '\n');
+  const fence = /^---$/m;
+  const open = fence.exec(text);
+  if (open === null) return { text, changed: false };
+  const closeIdx = text.indexOf('\n---', open.index + 4);
+  if (closeIdx === -1) return { text, changed: false };
+  const head = text.slice(0, open.index);
+  const fm = text.slice(open.index, closeIdx);
+  const tail = text.slice(closeIdx);
+  const lines = fm.split('\n');
+  let inNotes = false;
+  let changed = false;
+  const fixed = lines.map((line) => {
+    if (/^notes:/.test(line)) inNotes = true;
+    else if (inNotes && /^[A-Za-z-]+:/.test(line)) inNotes = false;
+    if (inNotes && /[—–]/.test(line)) {
+      changed = true;
+      return line.replace(/[—–]/g, '-');
+    }
+    return line;
+  });
+  return { text: changed ? head + fixed.join('\n') + tail : text, changed };
+};
+
+if (fixNotesDashes) {
+  let fixedCount = 0;
+  for (const f of walk(canonDir)) {
+    if (!isPopulationFile(f)) continue;
+    const before = fs.readFileSync(f, 'utf8');
+    const { text, changed } = fixNotesDashesIn(before);
+    if (changed) {
+      fs.writeFileSync(f, text);
+      console.log(`fixed notes dashes: ${path.relative(repo, f)}`);
+      fixedCount += 1;
+    }
+  }
+  console.log(`notes-dash fix: ${fixedCount} file(s) rewritten`);
+}
 
 const controls = loadControls(
   fs.readFileSync(path.join(canonDir, 'registers.yaml'), 'utf8'),

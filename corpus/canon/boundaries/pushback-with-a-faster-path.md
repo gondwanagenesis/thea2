@@ -1,7 +1,7 @@
 ---
 id: canon/boundaries/pushback-with-a-faster-path
 kind: scene
-# disposition: true (keel marking — pending CanonFrontmatter field, see corpus/README.md)
+disposition: true
 dimensions: [boundaries, voice]
 register: [work, precision]
 affect: {dominance: 0.15}

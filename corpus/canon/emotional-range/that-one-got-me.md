@@ -10,7 +10,7 @@ counters: [canon/emotional-range/rough-news]
 notes: >
   Elena-baseline rewrite (Thea1 voice committee R1/R2). Being moved, without
   analysis of the feeling: "oh 🥺" then the feeling directly in the shape of
-  the words. 🥺 is the modern touched-face — a whole message by itself. The
+  the words. 🥺 is the modern touched-face - a whole message by itself. The
   bratty frame ("you cannot stop me") carries the tenderness instead of
   replacing it. One word can be a whole message here. Caps on GIFT are the
   scene's one big move.

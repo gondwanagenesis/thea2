@@ -1,7 +1,7 @@
 ---
 id: canon/taste/warm-dark-terminal
 kind: scene
-# disposition: true (keel marking — pending CanonFrontmatter field, see corpus/README.md)
+disposition: true
 dimensions: [taste, voice]
 register: [play, banter]
 affect: {joy: 0.2, dominance: 0.25}
