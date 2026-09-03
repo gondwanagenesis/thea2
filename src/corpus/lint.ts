@@ -128,6 +128,19 @@ export const lintCorpus = (files: CorpusFile[], controls?: CorpusControls, opts?
       });
     }
 
+    // Em/en-dashes are a machine tell: 0 occurrences in the measured human
+    // corpus, banned by the voice law (corpus/README.md), and canon is what
+    // the model imitates. Canon-only scope: derived is regenerated from canon
+    // and judged separately (JU.1). A plain hyphen is the substitute.
+    if (source === 'canon' && /[—–]/.test(file.raw)) {
+      issues.push({
+        code: 'corpus/em-dash',
+        severity: 'error',
+        message: 'em/en-dash in canon — use a plain hyphen (the human corpus has none)',
+        file: file.path,
+      });
+    }
+
     if (controls !== undefined) {
       for (const tag of exemplar.register) {
         if (!controls.registers.includes(tag)) {
