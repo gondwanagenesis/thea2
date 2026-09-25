@@ -178,12 +178,12 @@ const LabelSchema = z.object({
     z.object({
       n: z.number().int(),
       // Words are validated after parsing (clean()): one off-list word must not sink a batch.
-      move: z.string().max(40),
-      tone: z.string().max(40),
-      felt: z.string().max(40),
+      move: z.string().max(300),
+      tone: z.string().max(300),
+      felt: z.string().max(300),
       felt_i: z.number().int().min(1).max(10),
       landed: z.number().int().min(-2).max(2).nullable(),
-      why: z.string().max(90).nullable(),
+      why: z.string().max(400).nullable(),
       unfit: z.boolean(),
     }),
   ),
@@ -211,12 +211,12 @@ interface Label {
 }
 const clean = (r: RawLabel): Label => ({
   n: r.n,
-  move: (MOVES as readonly string[]).includes(r.move) ? r.move : 'other',
-  tone: (TONES as readonly string[]).includes(r.tone) && r.tone !== 'neutral' ? r.tone : undefined,
-  felt: isAppraisalTag(r.felt) ? r.felt : undefined,
+  move: (MOVES as readonly string[]).includes(r.move.trim().toLowerCase()) ? r.move.trim().toLowerCase() : 'other',
+  tone: (TONES as readonly string[]).includes(r.tone.trim().toLowerCase()) && r.tone.trim().toLowerCase() !== 'neutral' ? r.tone.trim().toLowerCase() : undefined,
+  felt: isAppraisalTag(r.felt.trim().toLowerCase()) ? r.felt.trim().toLowerCase() : undefined,
   felt_i: r.felt_i,
   landed: r.landed,
-  why: r.why,
+  why: r.why === null ? null : r.why.slice(0, 100),
   unfit: r.unfit,
 });
 
