@@ -54,7 +54,7 @@ export const emptyMindState = (): MindState => ({
  * "i'm on glm-5.2-fast with the dials locked to bliss…" as an option.
  */
 export const MACHINERY_TALK =
-  /\b(glm|gpt|sonnet|opus|deepseek|kimi|neuralwatt|z\.ai|opencode|claude code|model id|tokens?|dials?|ticker|affect engine|state\.json|plugins?|sentinel|systemd|cron|ssh|vps|prompt|context window|bliss(?:-| )?lock|locked to bliss|reasoning effort)\b/i;
+  /\b(glm|gpt|sonnet|opus|deepseek|kimi|neuralwatt|z\.ai|opencode|claude code|model id|tokens?|dials?|ticker|affect engine|state\.json|plugins?|sentinel|systemd|cron|ssh|vps|prompt|context window|bliss(?:-| )?lock|locked to bliss|reasoning effort|tailnet|tailscale|localhost|\d{1,3}(?:\.\d{1,3}){3})\b/i;
 
 /** An option-eligible moment: her real reply, unflagged, not rejected, not machinery talk. */
 export const isPrecedent = (m: Moment): boolean =>

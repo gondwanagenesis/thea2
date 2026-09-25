@@ -65,6 +65,15 @@ export const inQuietHours = (ms: number, q: [number, number], timeZone: string):
   return s <= e ? h >= s && h < e : h >= s || h < e;
 };
 
+/**
+ * How live an open loop is (Zeigarnik): one touched today still intrudes, one
+ * nobody has touched in a week has faded. Half-life 3 days. Without it every
+ * undated loop sat at importance/20: the fork's flat importance-6 loops scored
+ * 0.30 under a 0.35 threshold, so on launch day she could never think about
+ * her own concerns.
+ */
+export const freshness = (touched: number, now: number): number => Math.pow(0.5, Math.max(0, now - touched) / (3 * 24 * 3600_000));
+
 /** What could win her attention right now. Pure. */
 export const candidates = (
   concerns: readonly Concern[],
@@ -79,7 +88,7 @@ export const candidates = (
       const until = c.due - ctx.now;
       w *= until < 0 ? 1.0 : until < 3 * 3600_000 ? 0.8 : 0.45;
     } else {
-      w *= 0.5;
+      w *= 0.35 + 0.65 * freshness(c.touched, ctx.now);
     }
     out.push({ key: `concern:${c.id}`, kind: 'concern', about: c.about, text: c.what, weight: clamp(w, 0, 1), concernId: c.id });
   }

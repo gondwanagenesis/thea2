@@ -10,7 +10,7 @@ import { initialAffectState, openAffectStore } from '../../src/affect/index.js';
 import { makeRng, TestClock } from '../../src/kernel/index.js';
 import { MockModel } from '../../src/model/index.js';
 import { openEventLog } from '../../src/events/index.js';
-import { candidates, habituation, inQuietHours, openMindStore, pickItem, sleepOnce, wanderOnce, type WanderDeps } from '../../src/mind/index.js';
+import { candidates, freshness, habituation, inQuietHours, openMindStore, pickItem, sleepOnce, wanderOnce, type WanderDeps } from '../../src/mind/index.js';
 import { addMoments, concern, moment, T0, tmpDir } from './helpers.js';
 
 const H = 3600_000;
@@ -30,6 +30,22 @@ describe('law 1.4 — thoughts arise from what is unresolved', () => {
     expect(keys).not.toContain('concern:c2');
     expect(keys.some((k) => k.startsWith('feeling:sadness'))).toBe(true);
     expect(keys).toContain('missing');
+  });
+
+  it('an undated loop touched today can win attention; one untouched for weeks fades (the launch-day fork: 12 loops, all importance 6, none could ever win)', () => {
+    const s = initialAffectState(T0);
+    const D = 24 * H;
+    const items = candidates(
+      [concern({ id: 'fresh', importance: 6, touched: T0 - 2 * H }), concern({ id: 'day', importance: 6, touched: T0 - D }), concern({ id: 'stale', importance: 6, touched: T0 - 21 * D })],
+      s,
+      { now: T0, patienceMin: 120 },
+    );
+    const weight = (id: string): number => items.find((i) => i.key === `concern:${id}`)?.weight ?? -1;
+    expect(freshness(T0 - 3 * D, T0)).toBeCloseTo(0.5, 6);
+    expect(weight('fresh')).toBeGreaterThan(0.35);
+    expect(weight('day')).toBeGreaterThan(0.35);
+    expect(weight('stale')).toBeLessThan(0.35);
+    expect(pickItem(items, { day: 'd', thoughts: 0, textsFirst: 0, habit: {} }, T0, 0.35)?.key).toBe('concern:fresh');
   });
 
   it('habituation: what just won attention rests (half-life 6 h), so the same thought cannot win twice in a row', () => {

@@ -27,6 +27,7 @@ import { initialAffectState, type AffectState } from '../src/affect/index.js';
 import { COUPLING_BASELINES, signature } from '../src/coupling/index.js';
 import {
   isAppraisalTag,
+  MACHINERY_TALK,
   openMindStore,
   replyText,
   situationText,
@@ -366,7 +367,7 @@ const readConcerns = (nowMs: number): Concern[] => {
     const status = String(th['status'] ?? 'open');
     if (status === 'done' || status === 'closed' || status === 'resolved') continue;
     const text = String(th['text'] ?? '').trim();
-    if (text === '' || PETNAME.test(text) || MACHINERY.test(text)) continue;
+    if (text === '' || PETNAME.test(text) || MACHINERY.test(text) || MACHINERY_TALK.test(text)) continue;
     const created = Date.parse(String(th['created_at'] ?? '')) || nowMs;
     const dueRaw = th['due'];
     const due = typeof dueRaw === 'string' ? Date.parse(dueRaw) : typeof dueRaw === 'number' ? dueRaw : NaN;
