@@ -109,9 +109,9 @@ const main = async (): Promise<void> => {
     // Scan only the FRAME: system messages minus quoted words ("him:"/"you:"),
     // her own notes ("- ..."), and her self-narrative ([me]) — the window is
     // real conversation and may mention anything they ever said.
-    const sys = (turnReq?.messages ?? []).filter((x) => x.role === 'system').map((x) => String(x.content)).join('\n');
+    const sysText = (turnReq?.messages ?? []).filter((x) => x.role === 'system').map((x) => String(x.content)).join('\n');
     const meStart = sysText.indexOf('[me]');
-    const meEnd = sys.indexOf('\n\n', meStart);
+    const meEnd = sysText.indexOf('\n\n', meStart);
     const frame = (meStart >= 0 && meEnd > meStart ? sysText.slice(0, meStart) + sysText.slice(meEnd) : sysText)
       .split('\n')
       .filter((l) => !/^(him|you): /.test(l) && !l.startsWith('- ') && !l.trimStart().startsWith('(a thought'))
