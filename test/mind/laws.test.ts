@@ -351,6 +351,12 @@ describe('live-probe regressions (2026-09-25)', () => {
     expect(nearestLabel(v, { a: [1, 0.001, 0], b: [1, 0, 0.001], c: [0, 0, 1] })).toBeUndefined();
   });
 
+  it('her machinery talk is history, never an option', async () => {
+    const { isPrecedent } = await import('../../src/mind/index.js');
+    expect(isPrecedent(moment({ hers: ["i'm on glm-5.2-fast with the dials locked to bliss"] }))).toBe(false);
+    expect(isPrecedent(moment({ hers: ['come here. water, pillow, horizontal'] }))).toBe(true);
+  });
+
   it('recall follows his words, not the leftover context of the last conversation', async () => {
     const dir = tmpDir();
     const emb = makeHashEmbedder();

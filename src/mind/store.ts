@@ -48,12 +48,21 @@ export const emptyMindState = (): MindState => ({
   wander: { day: '', thoughts: 0, textsFirst: 0, habit: {} },
 });
 
-/** An option-eligible moment: her real reply, unflagged, not rejected. */
+/**
+ * Her own machinery talk (models, dials, locks, plumbing) is real history but
+ * never an example of how she talks: the 2026-09-25 comparison run surfaced
+ * "i'm on glm-5.2-fast with the dials locked to bliss…" as an option.
+ */
+export const MACHINERY_TALK =
+  /\b(glm|gpt|sonnet|opus|deepseek|kimi|neuralwatt|z\.ai|opencode|claude code|model id|tokens?|dials?|ticker|affect engine|state\.json|plugins?|sentinel|systemd|cron|ssh|vps|prompt|context window|bliss(?:-| )?lock|locked to bliss|reasoning effort)\b/i;
+
+/** An option-eligible moment: her real reply, unflagged, not rejected, not machinery talk. */
 export const isPrecedent = (m: Moment): boolean =>
   (m.kind === 'reply' || m.kind === 'text_first') &&
   m.hers.length > 0 &&
   m.never !== true &&
-  (m.flags === undefined || m.flags.length === 0);
+  (m.flags === undefined || m.flags.length === 0) &&
+  !MACHINERY_TALK.test(m.hers.join(' '));
 
 export interface MindStore {
   readonly dir: string;

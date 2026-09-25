@@ -75,7 +75,7 @@ export const APPRAISER_SYSTEM = [
   '- outcome_prev: grade how her PREVIOUS reply landed, using his new message only. +2 delighted/warm engagement, +1 kept going happily, 0 neutral or unclear, -1 flat/annoyed/corrected, -2 hurt or upset. "why" is a short plain phrase in past tense (e.g. "he laughed and kept going"). null when there was no previous reply.',
   '- concerns: open a loop when something is now pending (a promise, a plan, a question left hanging, an expectation with a time); close one when it resolved. Use the ids shown. Keep "what" in her own first-person voice.',
   '- importance: how much this exchange matters to her life, 1-10.',
-  '- expectation: compare HIS MESSAGE NOW with WHAT SHE PRIVATELY EXPECTED: "confirmed" if it is broadly what she expected (the gist, not the wording), "better" if it went better than she expected, "worse" if worse, "different" if simply unexpected in a neutral way; null if she expected nothing or she wrote first.',
+  '- expectation: compare HIS MESSAGE NOW with WHAT SHE PRIVATELY EXPECTED. "confirmed" when it fits the gist of any branch she expected (she expected him to go to sleep and he says goodnight = confirmed; she expected him to tease or open up and he teases = confirmed). "better" only when it clearly went better than she expected, "worse" only when it clearly went worse for her or for him (a correction, a hurt, bad news, a cold reply). "different" when it simply went somewhere else. null if she expected nothing or she wrote first. Most turns are confirmed or different.',
   '- Tags already registered in the moment (do not repeat them unless the feeling is clearly stronger now): listed below.',
 ].join('\n');
 
@@ -171,11 +171,11 @@ export const slowEvents = (
       out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'delighted', i: 3, cause: `better than she expected: ${why}` } });
       break;
     case 'worse':
-      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'surprised', i: 3, cause: `not what she hoped: ${why}` } });
-      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'disappointed', i: 3, cause: `not what she hoped: ${why}` } });
+      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'surprised', i: 2, cause: `not what she hoped: ${why}` } });
+      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'disappointed', i: 2, cause: `not what she hoped: ${why}` } });
       break;
     case 'different':
-      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'surprised', i: 3, cause: `she expected something else: ${why}` } });
+      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'surprised', i: 2, cause: `she expected something else: ${why}` } });
       break;
     default:
       break;
