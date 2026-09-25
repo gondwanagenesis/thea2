@@ -78,7 +78,8 @@ export const EXPECTED_INBOUND: Record<string, InboundMsg> = {
     text: 'ella tampoco duerme',
     speaker: { person: 'tg:999000111', channel: 'telegram' },
   },
-  // A photo WITH a caption is a real message: the caption is what was said.
+  // A photo WITH a caption is a real message: the caption is what was said,
+  // and (v9) the photo rides along for the body's eyes.
   photo_message: {
     updateId: 405,
     msgId: 7002,
@@ -86,6 +87,37 @@ export const EXPECTED_INBOUND: Record<string, InboundMsg> = {
     ts: 1788000120 * 1000,
     text: 'mira esto',
     speaker: { person: 'diego', channel: 'telegram' },
+    media: { kind: 'photo', fileId: 'AgACAgIAAxkBAAI-fakefileid' },
+  },
+  // v9: a photo with no words is still a message to her — the senses look at it.
+  photo_no_caption: {
+    updateId: 409,
+    msgId: 7005,
+    chatId: DIEGO_TG_ID,
+    ts: 1788000240 * 1000,
+    text: '',
+    speaker: { person: 'diego', channel: 'telegram' },
+    media: { kind: 'photo', fileId: 'AgACAgIAAxkBAAI-fakefileid2' },
+  },
+  // v9: a sticker is a message too (its emoji is what it says).
+  sticker_message: {
+    updateId: 410,
+    msgId: 7006,
+    chatId: DIEGO_TG_ID,
+    ts: 1788000270 * 1000,
+    text: '',
+    speaker: { person: 'diego', channel: 'telegram' },
+    media: { kind: 'sticker', fileId: 'CAACAgIAAxkBAAI-fakesticker', emoji: '\u{1F422}', animated: false },
+  },
+  // v9: an edited text is a turn that knows it is an edit (Thea1 parity).
+  edited_message: {
+    updateId: 402,
+    msgId: 7001,
+    chatId: DIEGO_TG_ID,
+    ts: 1788000000 * 1000,
+    text: 'estás despierta? ya son las tres (editado)',
+    speaker: { person: 'diego', channel: 'telegram' },
+    edited: true,
   },
 };
 
@@ -98,38 +130,11 @@ const UNKNOWN_SPEAKER: SpeakerRef = { person: 'unknown', channel: 'telegram' };
  * has no entry: nothing can be committed past an update Telegram never numbered.
  */
 export const EXPECTED_SKIPPED_INBOUND: Record<string, InboundMsg> = {
-  edited_message: {
-    updateId: 402,
-    msgId: 7001,
-    chatId: DIEGO_TG_ID,
-    ts: 1788000000 * 1000,
-    text: '',
-    speaker: UNKNOWN_SPEAKER,
-    skipped: { reason: 'edited_message' },
-  },
   reaction_removed: {
     updateId: 404,
     msgId: 7001,
     chatId: DIEGO_TG_ID,
     ts: 1788000300 * 1000,
-    text: '',
-    speaker: UNKNOWN_SPEAKER,
-    skipped: { reason: 'non_text' },
-  },
-  photo_no_caption: {
-    updateId: 409,
-    msgId: 7005,
-    chatId: DIEGO_TG_ID,
-    ts: 1788000240 * 1000,
-    text: '',
-    speaker: UNKNOWN_SPEAKER,
-    skipped: { reason: 'non_text' },
-  },
-  sticker_message: {
-    updateId: 410,
-    msgId: 7006,
-    chatId: DIEGO_TG_ID,
-    ts: 1788000270 * 1000,
     text: '',
     speaker: UNKNOWN_SPEAKER,
     skipped: { reason: 'non_text' },

@@ -26,4 +26,4 @@ export { appraiseSlow, slowEvents, appraiserUser, APPRAISER_SYSTEM, SlowAppraisa
 export { encodeLived, inferFollowed, bestOption, applyOutcome, markShown, FOLLOW_THRESHOLD, RECONSOLIDATION_RHO, type EncodeInput } from './remember.js';
 export { wanderOnce, wanderJob, candidates, pickItem, habituation, freshness, dayKey, inQuietHours, ThoughtSchema, type Item, type WanderCfg, type WanderDeps } from './wander.js';
 export { sleepOnce, sleepJob, SelfRewriteSchema, type SleepDeps } from './sleep.js';
-export { makeMindPipeline, UNDELIVERED_HEAD, type MindPipeline, type MindPipelineDeps, type SelfEntryHandle } from './pipeline.js';
+export { makeMindPipeline, UNDELIVERED_HEAD, type BodySeam, type MindPipeline, type MindPipelineDeps, type SelfEntryHandle } from './pipeline.js';

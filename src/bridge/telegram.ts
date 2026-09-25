@@ -17,7 +17,9 @@ import { parseUpdate, defaultSpeakerResolver, type SpeakerResolver } from './wir
 import {
   TELEGRAM_LIMITS,
   type Channel,
+  type ChannelBody,
   type ChannelLimits,
+  type OutboundMedia,
   type InboundMsg,
   type PollFailedEvent,
   type SendFailedEvent,
@@ -199,8 +201,125 @@ export const telegramChannel = (deps: TelegramChannelDeps): Channel => {
     },
 
     updates: (signal) => pollUpdates(deps, call, speaker, pollTimeoutSec, signal),
+
+    body: telegramBody(call),
   };
 };
+
+// ---------------------------------------------------------------------------
+// v9 body — files in, media out, reactions, polls, quoted replies
+// ---------------------------------------------------------------------------
+
+/** Media uploads are larger and slower than text; this backstop is for a dead socket only. */
+const UPLOAD_TIMEOUT_MS = 180_000;
+
+const MEDIA_METHOD: Record<OutboundMedia['kind'], { method: string; field: string }> = {
+  photo: { method: 'sendPhoto', field: 'photo' },
+  voice: { method: 'sendVoice', field: 'voice' },
+  video: { method: 'sendVideo', field: 'video' },
+  animation: { method: 'sendAnimation', field: 'animation' },
+  document: { method: 'sendDocument', field: 'document' },
+  audio: { method: 'sendAudio', field: 'audio' },
+};
+
+const msgIdOf = (body: TelegramBody, method: string): number => {
+  const id = (body.result as { message_id?: unknown } | undefined)?.message_id;
+  if (typeof id !== 'number') throw new BridgeError('bridge/telegram-error', `${method}: result carries no message_id`);
+  return id;
+};
+
+const multipartCall = async (
+  call: { doFetch: typeof fetch; base: string; token: string },
+  method: string,
+  fields: Record<string, string | number | undefined>,
+  file: { field: string; bytes: Uint8Array; filename: string; mime: string },
+): Promise<TelegramBody> => {
+  const redact = (text: string): string => (call.token === '' ? text : text.split(call.token).join('***'));
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) if (v !== undefined) form.append(k, String(v));
+  form.append(file.field, new Blob([Uint8Array.from(file.bytes)], { type: file.mime }), file.filename);
+  let res: Response;
+  try {
+    res = await call.doFetch(`${call.base}/bot${call.token}/${method}`, { method: 'POST', body: form, signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS) });
+  } catch (e) {
+    throw new BridgeError('bridge/transport', `${method}: ${errMsg(e)}`, { cause: e });
+  }
+  const text = await res.text();
+  let body: TelegramBody = {};
+  try {
+    body = JSON.parse(text) as TelegramBody;
+  } catch {
+    // non-JSON error page: the status below says what happened
+  }
+  if (!res.ok || body.ok !== true) {
+    const rateLimited = res.status === 429;
+    throw new BridgeError(rateLimited ? 'bridge/rate-limit' : 'bridge/telegram-error', `${method}: HTTP ${res.status} ${redact(truncate(text))}`, {
+      cause: { status: res.status },
+      retryAfterMs: rateLimited ? retryAfterOf(body) : undefined,
+    });
+  }
+  return body;
+};
+
+const telegramBody = (call: { doFetch: typeof fetch; base: string; token: string }): ChannelBody => ({
+  fetchFile: async (fileId) => {
+    const info = await httpCall(call, 'getFile', { file_id: fileId });
+    const path = (info.result as { file_path?: unknown } | undefined)?.file_path;
+    if (typeof path !== 'string') throw new BridgeError('bridge/telegram-error', 'getFile: no file_path (over the 20 MB bot limit?)');
+    let res: Response;
+    try {
+      res = await call.doFetch(`${call.base}/file/bot${call.token}/${path}`, { signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS) });
+    } catch (e) {
+      throw new BridgeError('bridge/transport', `file download: ${errMsg(e)}`, { cause: e });
+    }
+    if (!res.ok) throw new BridgeError('bridge/telegram-error', `file download: HTTP ${res.status}`);
+    return { bytes: new Uint8Array(await res.arrayBuffer()), path };
+  },
+
+  sendMedia: async (chatId, m, opts) => {
+    const spec = MEDIA_METHOD[m.kind];
+    const body = await multipartCall(
+      call,
+      spec.method,
+      {
+        chat_id: chatId,
+        caption: m.caption !== undefined && m.caption !== '' ? m.caption.slice(0, 1024) : undefined,
+        duration: m.durationSec !== undefined ? Math.round(m.durationSec) : undefined,
+        reply_to_message_id: opts?.replyTo,
+        allow_sending_without_reply: opts?.replyTo !== undefined ? 'true' : undefined,
+      },
+      { field: spec.field, bytes: m.bytes, filename: m.filename, mime: m.mime },
+    );
+    return { msgId: msgIdOf(body, spec.method) };
+  },
+
+  sendReply: async (chatId, text, replyTo) => {
+    const body = await httpCall(call, 'sendMessage', {
+      chat_id: chatId,
+      text,
+      reply_parameters: { message_id: replyTo, allow_sending_without_reply: true },
+    });
+    return { msgId: msgIdOf(body, 'sendMessage') };
+  },
+
+  react: async (chatId, msgId, emoji) => {
+    await httpCall(call, 'setMessageReaction', { chat_id: chatId, message_id: msgId, reaction: [{ type: 'emoji', emoji }] });
+  },
+
+  sendPoll: async (chatId, question, options) => {
+    const body = await httpCall(call, 'sendPoll', {
+      chat_id: chatId,
+      question: question.slice(0, 300),
+      options: options.map((o) => ({ text: o.slice(0, 100) })),
+      is_anonymous: false,
+    });
+    return { msgId: msgIdOf(body, 'sendPoll') };
+  },
+
+  action: async (chatId, a) => {
+    await httpCall(call, 'sendChatAction', { chat_id: chatId, action: a });
+  },
+});
 
 const pollUpdates = async function* (
   deps: TelegramChannelDeps,

@@ -26,6 +26,51 @@ export interface InboundMsg {
    * them — an unrecorded skip re-polls forever — and never owed a reply.
    */
   skipped?: { reason: string } | undefined;
+  /**
+   * v9: what came with (or instead of) the words — a photo, a voice note, a
+   * file, a place. The bridge only names it; the body's senses resolve it into
+   * material (download, look, listen, read) inside the turn.
+   */
+  media?: InboundMedia | undefined;
+  /** v9: the earlier message this one answers (Telegram's reply_to_message). */
+  replyTo?: { msgId: number; text: string; fromBot: boolean } | undefined;
+  /** v9: an edit of an earlier message — `text` is the new version. */
+  edited?: boolean | undefined;
+}
+
+/** v9: the non-text part of an inbound message, as the wire named it. */
+export type InboundMedia =
+  | { kind: 'photo'; fileId: string }
+  | { kind: 'document'; fileId: string; fileName: string; mime?: string | undefined; bytes?: number | undefined }
+  | { kind: 'voice' | 'audio'; fileId: string; durationSec: number; mime?: string | undefined; title?: string | undefined }
+  | { kind: 'video' | 'video_note' | 'animation'; fileId: string; durationSec: number; mime?: string | undefined }
+  | { kind: 'sticker'; fileId: string; emoji?: string | undefined; setName?: string | undefined; animated: boolean }
+  | { kind: 'location'; lat: number; lon: number; live: boolean; title?: string | undefined; address?: string | undefined };
+
+/** v9: something she sends that is not a text bubble. */
+export interface OutboundMedia {
+  kind: 'photo' | 'voice' | 'video' | 'animation' | 'document' | 'audio';
+  bytes: Uint8Array;
+  filename: string;
+  mime: string;
+  caption?: string | undefined;
+  durationSec?: number | undefined;
+}
+
+export type ChatAction = 'typing' | 'record_voice' | 'upload_photo' | 'upload_video' | 'upload_document' | 'choose_sticker';
+
+/**
+ * v9: the body's reach into the channel — files in, media out, reactions,
+ * polls, quoted replies, chat actions. Optional on Channel so a text-only
+ * double stays a valid Channel; the body checks for it and degrades to text.
+ */
+export interface ChannelBody {
+  fetchFile(fileId: string): Promise<{ bytes: Uint8Array; path: string }>;
+  sendMedia(chatId: number, m: OutboundMedia, opts?: { replyTo?: number | undefined }): Promise<{ msgId: number }>;
+  sendReply(chatId: number, text: string, replyTo: number): Promise<{ msgId: number }>;
+  react(chatId: number, msgId: number, emoji: string): Promise<void>;
+  sendPoll(chatId: number, question: string, options: readonly string[]): Promise<{ msgId: number }>;
+  action(chatId: number, a: ChatAction): Promise<void>;
 }
 
 /**
@@ -55,6 +100,8 @@ export interface Channel {
   send(chatId: number, text: string): Promise<{ msgId: number }>;
   typing(chatId: number): Promise<void>;
   readonly limits: ChannelLimits;
+  /** v9: media, reactions, polls, quoted replies. Absent on a text-only channel. */
+  readonly body?: ChannelBody | undefined;
 }
 
 /**

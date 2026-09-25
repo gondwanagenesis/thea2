@@ -4,7 +4,7 @@
 // over recorded getUpdates fixtures (test/bridge/fixtures), so a wire-shape drift
 // cannot silently change what the pipeline is told a message said.
 
-import type { InboundMsg, SpeakerRef } from './types.js';
+import type { InboundMedia, InboundMsg, SpeakerRef } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Wire shapes (only the fields M15 reads; unknown fields are ignored)
@@ -32,6 +32,24 @@ export interface WireMessage {
   text?: string;
   /** Media captions: a photo WITH a caption is a text message whose text is the caption. */
   caption?: string;
+  // v9 — the media the body resolves (only the fields read here).
+  photo?: Array<{ file_id?: string; file_size?: number; width?: number; height?: number }>;
+  document?: WireFile & { file_name?: string };
+  voice?: WireFile & { duration?: number };
+  audio?: WireFile & { duration?: number; title?: string; performer?: string };
+  video?: WireFile & { duration?: number };
+  video_note?: WireFile & { duration?: number };
+  animation?: WireFile & { duration?: number };
+  sticker?: { file_id?: string; emoji?: string; set_name?: string; is_animated?: boolean; is_video?: boolean };
+  location?: { latitude?: number; longitude?: number; live_period?: number };
+  venue?: { location?: { latitude?: number; longitude?: number }; title?: string; address?: string };
+  reply_to_message?: WireMessage;
+}
+
+export interface WireFile {
+  file_id?: string;
+  mime_type?: string;
+  file_size?: number;
 }
 
 export interface WireReactionUpdated {
@@ -76,7 +94,7 @@ export const defaultSpeakerResolver: SpeakerResolver = ({ from }) => ({
 // Parsing
 // ---------------------------------------------------------------------------
 
-export type SkipReason = 'edited_message' | 'non_text' | 'unsupported' | 'malformed';
+export type SkipReason = 'edited_message' | 'non_text' | 'unsupported' | 'malformed' | 'live_location';
 
 export type ParsedUpdate =
   | { ok: true; msg: InboundMsg }
@@ -122,9 +140,10 @@ export const parseUpdate = (raw: unknown, speaker: SpeakerResolver = defaultSpea
   const u = raw as WireUpdate;
   const updateId = u.update_id;
   if (typeof updateId !== 'number' || !Number.isInteger(updateId)) return notOk('malformed', 'update_id missing');
-  // Edits are observed (they arrive in allowed_updates) and deliberately ignored:
-  // she answers what was said to her, not its post-hoc revision.
-  if (u.edited_message !== undefined) return skipMsg(updateId, u.edited_message, 'edited_message');
+  // v9 edits: a live-location ping is a silent where-update (recorded, never
+  // owed a reply); an edited text is a turn that knows it is an edit; any other
+  // edit (a re-cropped photo, a caption-less change) stays a skip.
+  if (u.edited_message !== undefined) return parseEdit(updateId, u.edited_message, speaker);
   if (u.channel_post !== undefined) return skipMsg(updateId, u.channel_post, 'unsupported');
   const reaction = u.message_reaction;
   if (reaction !== undefined) return parseReaction(updateId, reaction, speaker);
@@ -141,8 +160,13 @@ const parseMessage = (updateId: number, m: WireMessage, speaker: SpeakerResolver
     return skipMsg(updateId, m, 'malformed');
   }
   // A photo WITH a caption is a real message: the caption is what was said.
-  const text = typeof m.text === 'string' && m.text.length > 0 ? m.text : m.caption;
-  if (typeof text !== 'string' || text.length === 0) return skipMsg(updateId, m, 'non_text');
+  const said = typeof m.text === 'string' && m.text.length > 0 ? m.text : m.caption;
+  const text = typeof said === 'string' ? said : '';
+  const media = mediaOf(m);
+  // v9: a photo, voice note, file or place with no words is still a message
+  // to her — the body's senses turn it into material inside the turn.
+  if (text.length === 0 && media === undefined) return skipMsg(updateId, m, 'non_text');
+  const replyTo = replyOf(m);
   return {
     ok: true,
     msg: {
@@ -152,8 +176,112 @@ const parseMessage = (updateId: number, m: WireMessage, speaker: SpeakerResolver
       ts: date * 1000,
       text,
       speaker: speaker({ from: m.from, chat: m.chat }),
+      ...(media !== undefined ? { media } : {}),
+      ...(replyTo !== undefined ? { replyTo } : {}),
     },
   };
+};
+
+const parseEdit = (updateId: number, m: WireMessage, speaker: SpeakerResolver): ParsedUpdate => {
+  const loc = m.location;
+  if (loc !== undefined && typeof loc.latitude === 'number' && typeof loc.longitude === 'number') {
+    const skip = skipMsg(updateId, m, 'live_location');
+    if (!skip.ok) return skip;
+    return {
+      ok: true,
+      msg: {
+        ...skip.msg,
+        speaker: speaker({ from: m.from, chat: m.chat }),
+        media: { kind: 'location', lat: loc.latitude, lon: loc.longitude, live: true },
+      },
+    };
+  }
+  const said = typeof m.text === 'string' && m.text.length > 0 ? m.text : m.caption;
+  if (typeof said !== 'string' || said.length === 0) return skipMsg(updateId, m, 'edited_message');
+  const parsed = parseMessage(updateId, { text: said, ...pick(m) }, speaker);
+  if (!parsed.ok || parsed.msg.skipped !== undefined) return parsed;
+  // Media on an edit was answered when it first arrived: only the new words are news.
+  const { media: _media, ...rest } = parsed.msg;
+  return { ok: true, msg: { ...rest, edited: true } };
+};
+
+const pick = (m: WireMessage): WireMessage => ({
+  ...(m.message_id !== undefined ? { message_id: m.message_id } : {}),
+  ...(m.from !== undefined ? { from: m.from } : {}),
+  ...(m.chat !== undefined ? { chat: m.chat } : {}),
+  ...(m.date !== undefined ? { date: m.date } : {}),
+  ...(m.reply_to_message !== undefined ? { reply_to_message: m.reply_to_message } : {}),
+});
+
+const fileIdOf = (f: WireFile | undefined): string | undefined =>
+  f !== undefined && typeof f.file_id === 'string' && f.file_id.length > 0 ? f.file_id : undefined;
+
+const secs = (d: number | undefined): number => (typeof d === 'number' && d >= 0 ? d : 0);
+
+const photoArea = (p: { file_size?: number; width?: number; height?: number }): number => p.file_size ?? (p.width ?? 0) * (p.height ?? 0);
+
+/** Drops undefined-valued keys: an InboundMsg is canonical-JSON'd into the ledger, and undefined has no canonical form. */
+const defined = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+
+/** The one media item a message carries, most specific first (a GIF arrives as animation AND document). */
+export const mediaOf = (m: WireMessage): InboundMedia | undefined => {
+  const found = rawMediaOf(m);
+  return found === undefined ? undefined : defined(found);
+};
+
+const rawMediaOf = (m: WireMessage): InboundMedia | undefined => {
+  if (Array.isArray(m.photo) && m.photo.length > 0) {
+    const best = [...m.photo].sort((a, b) => photoArea(b) - photoArea(a))[0];
+    const id = best?.file_id;
+    if (typeof id === 'string' && id.length > 0) return { kind: 'photo', fileId: id };
+  }
+  const video = fileIdOf(m.video);
+  if (video !== undefined) return { kind: 'video', fileId: video, durationSec: secs(m.video?.duration), mime: m.video?.mime_type };
+  const note = fileIdOf(m.video_note);
+  if (note !== undefined) return { kind: 'video_note', fileId: note, durationSec: secs(m.video_note?.duration) };
+  const anim = fileIdOf(m.animation);
+  if (anim !== undefined) return { kind: 'animation', fileId: anim, durationSec: secs(m.animation?.duration), mime: m.animation?.mime_type };
+  const voice = fileIdOf(m.voice);
+  if (voice !== undefined) return { kind: 'voice', fileId: voice, durationSec: secs(m.voice?.duration), mime: m.voice?.mime_type };
+  const audio = fileIdOf(m.audio);
+  if (audio !== undefined) {
+    const title = [m.audio?.performer, m.audio?.title].filter((x): x is string => typeof x === 'string' && x.length > 0).join(' — ');
+    return { kind: 'audio', fileId: audio, durationSec: secs(m.audio?.duration), mime: m.audio?.mime_type, ...(title !== '' ? { title } : {}) };
+  }
+  const doc = fileIdOf(m.document);
+  if (doc !== undefined) {
+    return { kind: 'document', fileId: doc, fileName: m.document?.file_name ?? 'file', mime: m.document?.mime_type, bytes: m.document?.file_size };
+  }
+  const st = m.sticker;
+  if (st !== undefined && typeof st.file_id === 'string' && st.file_id.length > 0) {
+    return { kind: 'sticker', fileId: st.file_id, emoji: st.emoji, setName: st.set_name, animated: st.is_animated === true || st.is_video === true };
+  }
+  const venueLoc = m.venue?.location;
+  if (venueLoc !== undefined && typeof venueLoc.latitude === 'number' && typeof venueLoc.longitude === 'number') {
+    return { kind: 'location', lat: venueLoc.latitude, lon: venueLoc.longitude, live: false, title: m.venue?.title, address: m.venue?.address };
+  }
+  const loc = m.location;
+  if (loc !== undefined && typeof loc.latitude === 'number' && typeof loc.longitude === 'number') {
+    return { kind: 'location', lat: loc.latitude, lon: loc.longitude, live: typeof loc.live_period === 'number' && loc.live_period > 0 };
+  }
+  return undefined;
+};
+
+const replyLabel = (r: WireMessage): string => {
+  const said = typeof r.text === 'string' && r.text.length > 0 ? r.text : (r.caption ?? '');
+  if (said.length > 0) return said;
+  if (r.photo !== undefined) return '[a photo]';
+  if (r.voice !== undefined) return '[a voice note]';
+  if (r.video !== undefined || r.video_note !== undefined) return '[a video]';
+  if (r.document !== undefined) return `[a file: ${r.document.file_name ?? 'file'}]`;
+  if (r.sticker !== undefined) return `[a sticker${r.sticker.emoji !== undefined ? ` ${r.sticker.emoji}` : ''}]`;
+  return '';
+};
+
+const replyOf = (m: WireMessage): InboundMsg['replyTo'] => {
+  const r = m.reply_to_message;
+  if (r === undefined || typeof r.message_id !== 'number') return undefined;
+  return { msgId: r.message_id, text: replyLabel(r).slice(0, 600), fromBot: r.from?.is_bot === true };
 };
 
 const parseReaction = (updateId: number, r: WireReactionUpdated, speaker: SpeakerResolver): ParsedUpdate => {

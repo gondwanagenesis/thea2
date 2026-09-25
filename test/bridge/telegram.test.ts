@@ -210,7 +210,7 @@ describe('telegramChannel — updates (long poll)', () => {
 
   it('AC: parses accepted fixtures and skip-stamps the rest — a skipped update is recorded for the offset, never turned', async () => {
     const { fetchImpl, queue } = scriptedFetch();
-    queue.push(okUpdates([fixture('text_message'), fixture('edited_message'), fixture('reaction')]));
+    queue.push(okUpdates([fixture('text_message'), fixture('channel_post'), fixture('reaction')]));
     const ch = telegramChannel(channelDeps({ fetchImpl, speaker: testSpeaker }));
     const ac = new AbortController();
     const got: InboundMsg[] = [];
@@ -220,7 +220,7 @@ describe('telegramChannel — updates (long poll)', () => {
     }
     expect(got).toEqual([
       EXPECTED_INBOUND['text_message']!,
-      EXPECTED_SKIPPED_INBOUND['edited_message']!,
+      EXPECTED_SKIPPED_INBOUND['channel_post']!,
       EXPECTED_INBOUND['reaction']!,
     ]);
   });

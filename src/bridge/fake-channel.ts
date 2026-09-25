@@ -10,8 +10,11 @@ import { BridgeError } from './errors.js';
 import {
   TELEGRAM_LIMITS,
   type Channel,
+  type ChannelBody,
   type ChannelLimits,
+  type ChatAction,
   type InboundMsg,
+  type OutboundMedia,
   type SpeakerRef,
 } from './types.js';
 
@@ -23,7 +26,19 @@ export interface FakeChannelOpts {
   chatId?: number | undefined;
   /** Speaker stamped onto injected reactions. */
   reactionSpeaker?: SpeakerRef | undefined;
+  /** v9: bytes fetchFile returns per file id (a missing id is a download failure). */
+  files?: Record<string, Uint8Array> | undefined;
+  /** v9: false = a text-only channel (no body), the pre-v9 shape. */
+  body?: boolean | undefined;
 }
+
+/** v9: one captured non-text act (media, reaction, poll, quoted reply, chat action). */
+export type CapturedBodyAct =
+  | { kind: 'media'; chatId: number; media: Omit<OutboundMedia, 'bytes'> & { size: number }; replyTo?: number | undefined; msgId: number; at: number }
+  | { kind: 'reply'; chatId: number; text: string; replyTo: number; msgId: number; at: number }
+  | { kind: 'react'; chatId: number; msgId: number; emoji: string; at: number }
+  | { kind: 'poll'; chatId: number; question: string; options: string[]; msgId: number; at: number }
+  | { kind: 'action'; chatId: number; action: ChatAction; at: number };
 
 export interface CapturedSend {
   chatId: number;
@@ -48,6 +63,8 @@ export interface FakeChannelExtras {
   typings(): CapturedTyping[];
   /** Queue depth: how many inbound updates updates() has not yet yielded. */
   pending(): number;
+  /** v9: captured media / reactions / polls / quoted replies / chat actions, in order. */
+  bodyActs(): CapturedBodyAct[];
 }
 
 export const FAKE_FIRST_MSG_ID = 1000;
@@ -65,6 +82,38 @@ export const FakeChannel = (opts: FakeChannelOpts = {}): Channel & FakeChannelEx
   const waiters: Array<() => void> = [];
   let nextMsgId = FAKE_FIRST_MSG_ID;
   let nextUpdateId = 1;
+  const acts: CapturedBodyAct[] = [];
+  const files = opts.files ?? {};
+  const body: ChannelBody = {
+    fetchFile: async (fileId) => {
+      const bytes = files[fileId];
+      if (bytes === undefined) throw new BridgeError('bridge/telegram-error', `getFile: no file ${fileId}`);
+      return { bytes, path: `fake/${fileId}` };
+    },
+    sendMedia: async (to, m, o) => {
+      const msgId = nextMsgId++;
+      const { bytes, ...rest } = m;
+      acts.push({ kind: 'media', chatId: to, media: { ...rest, size: bytes.length }, replyTo: o?.replyTo, msgId, at: clock.epochMs() });
+      return { msgId };
+    },
+    sendReply: async (to, text, replyTo) => {
+      const msgId = nextMsgId++;
+      sends.push({ chatId: to, text, msgId, at: clock.epochMs() });
+      acts.push({ kind: 'reply', chatId: to, text, replyTo, msgId, at: clock.epochMs() });
+      return { msgId };
+    },
+    react: async (to, msgId, emoji) => {
+      acts.push({ kind: 'react', chatId: to, msgId, emoji, at: clock.epochMs() });
+    },
+    sendPoll: async (to, question, options) => {
+      const msgId = nextMsgId++;
+      acts.push({ kind: 'poll', chatId: to, question, options: [...options], msgId, at: clock.epochMs() });
+      return { msgId };
+    },
+    action: async (to, action) => {
+      acts.push({ kind: 'action', chatId: to, action, at: clock.epochMs() });
+    },
+  };
 
   const notify = (): void => {
     const wake = waiters.shift();
@@ -91,6 +140,10 @@ export const FakeChannel = (opts: FakeChannelOpts = {}): Channel & FakeChannelEx
       });
       notify();
     },
+
+    ...(opts.body === false ? {} : { body }),
+
+    bodyActs: () => [...acts],
 
     outbound: () => [...sends],
     typings: () => [...typingLog],

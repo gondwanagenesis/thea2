@@ -26,7 +26,8 @@ export const V8_OUTPUT_CONTRACT =
   '[format]\n' +
   'Answer by calling the `decide` tool once, last. bubbles are the messages you send, in order, one per bubble. ' +
   "plan 'silent' sends nothing; 'defer' means later. confidence, weight, reluctance and completeness are 0 to 1 and pace the sending. " +
-  'expect is private and never sent: one short line on what you think happens next. Nothing outside the tool call is sent.';
+  'expect is private and never sent: one short line on what you think happens next. Nothing outside the tool call is sent. ' +
+  'Any other tools act for real (a voice note is sent when you call it); use them before decide.';
 
 /** Frame text may never tell her what she feels, how to talk, or show her machinery. */
 export const TELLING_PATTERNS: readonly RegExp[] = [
@@ -103,6 +104,8 @@ export interface ComposeInput {
   who: string;
   /** Self-initiated turn: nothing new from him. */
   selfEntry?: boolean | undefined;
+  /** v9: facts about his present the body knows (where he is, his local time and sky) — material lines for [now]. */
+  nowFacts?: readonly string[] | undefined;
 }
 
 const renderMoment = (m: Moment, tz: string): Segment[] => {
@@ -179,7 +182,8 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
       : i.selfEntry === true
         ? ` ${i.who} last wrote ${ago(i.now - i.lastHisAt)}.`
         : ` before this, ${i.who} last wrote ${ago(i.now - i.lastHisAt)}.`;
-  trailer.push({ kind: 'frame', text: `[now]\n${weekday} ${clock} his time.${since}${i.selfEntry === true ? ' no new message from him.' : ''}` });
+  const facts = (i.nowFacts ?? []).filter((f) => f.trim() !== '').map((f) => `\n${f}`).join('');
+  trailer.push({ kind: 'frame', text: `[now]\n${weekday} ${clock} his time.${since}${i.selfEntry === true ? ' no new message from him.' : ''}${facts}` });
   return { head, trailer };
 };
 

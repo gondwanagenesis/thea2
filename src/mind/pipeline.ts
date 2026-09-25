@@ -56,6 +56,24 @@ export interface SelfEntryHandle {
   sent: Promise<number>;
 }
 
+/**
+ * v9: the body, as the mind sees it (app wires src/body into this; mind never
+ * imports body). Senses resolve an inbound into the text the turn runs on;
+ * tools send media inside a turn and report it at the end; a voice note gets
+ * a spoken answer.
+ */
+export interface BodySeam {
+  perceive(m: InboundMsg): Promise<{ text: string; voice: boolean }>;
+  begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined }): void;
+  /** What she sent besides text bubbles during the turn (already on the ledger). */
+  end(turnId: string): Array<{ msgId: number; text: string }>;
+  /** Speak the reply as a voice note; undefined = could not (the text path takes over). */
+  speak(chatId: number, text: string, turnId: string): Promise<{ msgId: number } | undefined>;
+  onSkipped(m: InboundMsg): void;
+  /** Facts about his present for [now] (where he is, his local time and sky). */
+  nowFacts?(): string[];
+}
+
 export interface MindPipelineDeps {
   model: ModelClient;
   /** Tried once when the primary door fails outright (decidedBy 'failure'). */
@@ -80,6 +98,8 @@ export interface MindPipelineDeps {
   timezone: string;
   /** Fraction of today's idle budget left (0..1) — energy reads it. */
   budgetLeft: () => number;
+  /** v9 body (senses + hands). Absent ⇒ text-only v8. */
+  body?: BodySeam | undefined;
 }
 
 export interface MindPipeline {
@@ -213,10 +233,25 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     return { sensed, evoked, fast, met };
   };
 
-  const runTurn = async (item: Queued): Promise<void> => {
-    const { m, turnId } = item;
+  const runTurn = async (raw: Queued): Promise<void> => {
     const t0 = deps.clock.epochMs();
-    const selfEntry = item.kind !== undefined;
+    const selfEntry = raw.kind !== undefined;
+    // v9 SENSE, part one: what came with his words (a photo, his voice, a file,
+    // a place) becomes the text this turn runs on — before anything is recalled.
+    let item = raw;
+    let voiceReply = false;
+    if (deps.body !== undefined && !selfEntry) {
+      void deps.channel.typing(raw.m.chatId).catch(() => undefined);
+      try {
+        const p = await deps.body.perceive(raw.m);
+        item = { ...raw, m: { ...raw.m, text: p.text } };
+        voiceReply = p.voice;
+      } catch (e) {
+        emit('incident.body_sense_failed', { turnId: raw.turnId, error: asError(e).message }, raw.turnId);
+      }
+    }
+    deps.body?.begin(item.turnId, { chatId: item.m.chatId, ...(selfEntry ? {} : { inboundMsgId: item.m.msgId }) });
+    const { m, turnId } = item;
 
     await deps.affect.applyEvents([], { source: 'other' }); // bring the engine to now
     const before = contextLines(deps.window);
@@ -242,6 +277,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       lastHisAt: selfEntry ? st.lastHisAt : st.lastHisAt,
       who,
       selfEntry,
+      nowFacts: deps.body?.nowFacts?.() ?? [],
     });
     const hits = packet.lint();
     if (hits.length > 0) emit('incident.mind_told', { turnId, hits }, turnId);
@@ -326,23 +362,39 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     }
 
     if (decision.plan !== 'reply' || decision.bubbles.length === 0) {
-      await settle(item, decision, [], before, sensed, fast, met, shownIds);
-      settleSelfOutcome(turnId, 0);
+      // v9: a turn can speak through its hands alone (a voice note, a photo, a reaction).
+      const bodySent = deps.body?.end(turnId) ?? [];
+      await settle(item, decision, bodySent, before, sensed, fast, met, shownIds);
+      settleSelfOutcome(turnId, bodySent.length);
       return;
     }
 
     const abort = new AbortController();
     live = { abort, armed: true };
     const stale = queue.length > 0 && !selfEntry;
-    const report = stale
-      ? { plan: decision.plan, sent: [] as Array<{ msgId: number; text: string }>, aborted: true, undelivered: [...decision.bubbles] }
-      : await realize(decision, sig, deps.rng.fork(`realize:${turnId}`), {
-          chatId: m.chatId,
-          channel: deps.channel,
-          clock: deps.clock,
-          signal: abort.signal,
-          recordSend: (msgId, text) => deps.ledger.recordOutbound(turnId, msgId, text),
-        });
+    // v9: he spoke, so she answers out loud — the same words, as one voice note.
+    // A voice that fails falls back to the text path; nothing is ever lost to it.
+    const spoken =
+      !stale && voiceReply && deps.body !== undefined
+        ? await deps.body.speak(m.chatId, decision.bubbles.join('\n'), turnId)
+        : undefined;
+    let report: { sent: Array<{ msgId: number; text: string }>; aborted: boolean; undelivered: string[] };
+    if (spoken !== undefined) {
+      const words = decision.bubbles.join('\n');
+      await deps.ledger.recordOutbound(turnId, spoken.msgId, `[voice note] ${words}`);
+      report = { sent: [{ msgId: spoken.msgId, text: words }], aborted: false, undelivered: [] };
+    } else if (stale) {
+      report = { sent: [], aborted: true, undelivered: [...decision.bubbles] };
+    } else {
+      const r = await realize(decision, sig, deps.rng.fork(`realize:${turnId}`), {
+        chatId: m.chatId,
+        channel: deps.channel,
+        clock: deps.clock,
+        signal: abort.signal,
+        recordSend: (msgId, text) => deps.ledger.recordOutbound(turnId, msgId, text),
+      });
+      report = { sent: [...r.sent], aborted: r.aborted, undelivered: [...r.undelivered] };
+    }
     live = null;
 
     if (report.aborted && report.undelivered.length > 0 && !selfEntry) {
@@ -356,8 +408,9 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       });
     }
 
-    settleSelfOutcome(turnId, report.sent.length);
-    await settle(item, decision, report.sent, before, sensed, fast, met, shownIds);
+    const bodySent = deps.body?.end(turnId) ?? [];
+    settleSelfOutcome(turnId, report.sent.length + bodySent.length);
+    await settle(item, decision, [...bodySent, ...report.sent], before, sensed, fast, met, shownIds);
     emit('app.turn_done', { turnId, plan: decision.plan, sent: report.sent.length, undelivered: report.undelivered.length, ms: deps.clock.epochMs() - t0, mind: 'v8' }, turnId);
   };
 
@@ -567,6 +620,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     inbound: (m) => {
       if (m.skipped !== undefined) {
         emit('bridge.update_skipped', { updateId: m.updateId, chatId: m.chatId, reason: m.skipped.reason });
+        if (deps.allowedChatIds.includes(m.chatId)) deps.body?.onSkipped(m);
         return undefined;
       }
       if (m.chatId !== undefined && !deps.allowedChatIds.includes(m.chatId)) {

@@ -32,6 +32,8 @@ import {
   type MindPipeline,
   type MindStore,
 } from '../mind/index.js';
+import { describeWhere, loadWhere, makeBody, type Body, type Exec, type OpenAIBody } from '../body/index.js';
+import type { BodySeam } from '../mind/index.js';
 import { makeEmbedder } from './embedder.js';
 import { withStderrMirror } from './compose.js';
 import { affectSnapshotJob, reconcileJob, runReconcile, type RecoverLostDeps } from './maintenance-jobs.js';
@@ -50,7 +52,28 @@ export interface ComposeV8Opts {
   fetchImpl?: typeof fetch | undefined;
   /** Scheduler jobs — hermetic tests inject their own (usually none). */
   jobs?: Job[] | undefined;
+  /** v9 body seams — hermetic tests script ffmpeg/pdftotext and the OpenAI senses. */
+  bodyExec?: Exec | undefined;
+  bodyOpenAI?: OpenAIBody | undefined;
 }
+
+/** How fresh a shared location must be to stay a fact about his present. */
+const WHERE_FRESH_MS = 3 * 24 * 3600_000;
+
+/** The body, as the mind's BodySeam: plus the [now] facts it knows. */
+export const bodySeam = (body: Body, clock: Clock): BodySeam => ({
+  perceive: (m) => body.perceive(m),
+  begin: (turnId, ctx) => body.begin(turnId, ctx),
+  end: (turnId) => body.end(turnId),
+  speak: (chatId, text, turnId) => body.speak(chatId, text, turnId),
+  onSkipped: (m) => body.onSkipped(m),
+  nowFacts: () => {
+    const w = loadWhere(body.house);
+    const now = clock.epochMs();
+    if (w === undefined || now - w.at > WHERE_FRESH_MS) return [];
+    return [`where he is: ${describeWhere(w, now)}.`];
+  },
+});
 
 export interface V8System {
   cfg: Thea2Config;
@@ -68,6 +91,8 @@ export interface V8System {
   mind: MindStore;
   loopCfg: LoopConfig;
   pipeline: MindPipeline;
+  /** v9 body (absent on a text-only config). */
+  body?: Body | undefined;
   sched: SchedulerHandle;
   jobNames: readonly string[];
   reconcile: () => Promise<void>;
@@ -133,7 +158,38 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
   });
 
   const root = process.cwd();
+  const channel =
+    opts.channel ??
+    (preset === 'prod'
+      ? telegramChannel({ token: cfg.bridge.botToken, clock, rng: rng.fork('bridge'), committedOffset: async () => (await offsets.read()).committed, log: events })
+      : FakeChannel({ clock }));
+  const ledger = openMessageLedger(paths.ledger, { clock, reconcileWindowMs: cfg.reconcile.lostReplyWindowMin * 60_000 });
+  const offsets = openOffsetStore(paths.offsets);
+
   const tools = createToolRegistry();
+  // v9 body: senses + hands (plan thea2-v9-parity.md). Registered BEFORE the
+  // gate compiles — the gate default-denies any tool it was not told about.
+  const ownerChatId = cfg.bridge.allowedChatIds[0] ?? 0;
+  const body: Body | undefined =
+    cfg.body === undefined
+      ? undefined
+      : makeBody({
+          cfg: { ...cfg.body, dir: v(cfg.body.dir) },
+          channel,
+          clock,
+          events,
+          ownerChatId,
+          mood: () => {
+            const s = affect.current();
+            return { arousal: s.dials.arousal, pleasure: s.dials.pleasure };
+          },
+          recordOutbound: (turnId, msgId, text) => ledger.recordOutbound(turnId, msgId, text),
+          ...(opts.bodyExec !== undefined ? { exec: opts.bodyExec } : {}),
+          ...(opts.bodyOpenAI !== undefined ? { openai: opts.bodyOpenAI } : {}),
+          ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
+        });
+  const bodyTools = body?.register(tools) ?? [];
+  if (body !== undefined) await events.emit('app.boot', { stage: 'body', tools: bodyTools, house: body.house.root });
   // v8 reads its own matrix (coupling-v8.yaml: the anti-escalation law made true
   // on real felt signatures); v7's coupling.yaml stays untouched for v7.
   const couplingPath = fs.existsSync(path.resolve(root, 'coupling-v8.yaml')) ? path.resolve(root, 'coupling-v8.yaml') : path.resolve(root, 'coupling.yaml');
@@ -147,6 +203,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
       doors.mind.apiKey,
       doors.judge.apiKey,
       ...(doors.voiceFallback !== undefined ? [doors.voiceFallback.apiKey] : []),
+      ...(cfg.body !== undefined
+        ? [cfg.body.openaiKey, cfg.body.falKey, cfg.body.braveKey, cfg.body.elevenKey].filter((k): k is string => k !== undefined && k !== '')
+        : []),
     ],
     knownTools: tools.names(),
   });
@@ -187,13 +246,6 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     fallbackModel = doors.voiceFallback !== undefined ? clientFor(doors.voiceFallback, 'voiceFallback') : undefined;
   }
 
-  const channel =
-    opts.channel ??
-    (preset === 'prod'
-      ? telegramChannel({ token: cfg.bridge.botToken, clock, rng: rng.fork('bridge'), committedOffset: async () => (await offsets.read()).committed, log: events })
-      : FakeChannel({ clock }));
-  const ledger = openMessageLedger(paths.ledger, { clock, reconcileWindowMs: cfg.reconcile.lostReplyWindowMin * 60_000 });
-  const offsets = openOffsetStore(paths.offsets);
 
   const loopCfg = resolveLoopConfig({ turnTokenBudget: cfg.budgets.turnTokens });
   const window = openSessionWindow(paths.memory, { model, clock, events });
@@ -242,8 +294,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     personLabel,
     timezone: cfg.timezone,
     budgetLeft,
+    ...(body !== undefined ? { body: bodySeam(body, clock) } : {}),
   });
-  await events.emit('app.boot', { stage: 'pipeline', mind: 'v8', fallback: fallbackModel !== undefined });
+  await events.emit('app.boot', { stage: 'pipeline', mind: 'v8', fallback: fallbackModel !== undefined, body: body !== undefined });
 
   const CONVERSATION_QUIET_MS = 10 * 60_000;
   const conversationActive = (): boolean =>
@@ -312,6 +365,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     mind,
     loopCfg,
     pipeline,
+    ...(body !== undefined ? { body } : {}),
     sched,
     jobNames: jobs.map((j) => j.name),
     reconcile: async () => {

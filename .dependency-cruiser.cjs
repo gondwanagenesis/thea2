@@ -44,6 +44,10 @@ const MODULES = {
     "kernel", "events", "model", "embed", "affect", "coupling", "memory",
     "inhibit", "loop", "realize", "bridge", "sched",
   ],
+  // v9 body (plan thea2-v9-parity.md): senses + hands. It may read the mind's
+  // stores (recall, her house of memories); the mind reaches it only through
+  // the BodySeam it declares, so there is no cycle.
+  "src/body": ["kernel", "events", "model", "embed", "affect", "bridge", "loop", "mind", "sched"],
   "src/app": [
     "kernel", "events", "model", "embed", "affect", "coupling", "corpus",
     "memory", "assemble", "inhibit", "loop", "realize", "bridge", "sched",
@@ -54,6 +58,8 @@ const MODULES = {
     "consolidate", "probes", "life", "siblings", "derive", "spine",
     // v8: compose-v8 wires the mind pipeline.
     "mind",
+    // v9: compose-v8 wires the body.
+    "body",
   ],
 };
 

@@ -63,12 +63,35 @@ export interface Thea2Config {
   embedder: { kind: 'fastembed' | 'api' | 'hash'; model?: string | undefined; dim?: number | undefined };
   /** v8 mind block (see configSchema). Absent ⇒ the v7 exemplar composition. */
   mind?: MindConfig | undefined;
+  /** v9 body block. Absent ⇒ text-only (v8). */
+  body?: BodyConfig | undefined;
   /**
    * M21: the pinned OpenCode spine child. Absent ⇒ absent registration — the
    * native loop serves (rule 5). Present ⇒ compose constructs the runner; the
    * `opencode` binary must be provisioned first (M.6, install.sh block).
    */
   spine?: SpineBlockYaml | undefined;
+}
+
+/**
+ * v9 body (plan thea2-v9-parity.md): her senses and hands. Keys resolve from
+ * env names like every door key; an absent optional key is an absent
+ * capability (the tool is not registered), never a crash.
+ */
+export interface BodyConfig {
+  dir: string;
+  openaiKey: string;
+  openaiEndpoint: string;
+  visionModel: string;
+  transcribeModel: string;
+  listenModel: string;
+  ttsModel: string;
+  ttsVoice: string;
+  falKey?: string | undefined;
+  braveKey?: string | undefined;
+  elevenKey?: string | undefined;
+  elevenVoice?: string | undefined;
+  walletMonthUsd: number;
 }
 
 /** v8 "Nothing Told" mind settings (defaults applied by the schema). */
@@ -159,6 +182,9 @@ const findSecrets = (node: unknown, path: (string | number)[] = []): ConfigIssue
 
 // A [start, end) window of LOCAL hours; `start > end` wraps midnight (23 → 8).
 // Equal endpoints would be "no window" or "all day" — ambiguous, rejected.
+/** An env VARIABLE NAME (config law: `*Env` keys name variables, never hold values). */
+const envName = z.string().min(1).regex(/^[A-Z][A-Z0-9_]*$/, 'must name an env variable (UPPER_SNAKE_CASE)');
+
 const quietHoursSchema = z
   .tuple([z.number().int().min(0).max(23), z.number().int().min(0).max(23)])
   .refine(([a, b]) => a !== b, { message: 'quietHours start and end must differ ([start, end), wrapping past midnight allowed)' });
@@ -295,6 +321,26 @@ const configSchema = z.strictObject({
       textFirstPerDay: z.number().int().min(0).max(20).default(3),
       /** Local hour (his zone) the nightly sleep pass runs. */
       sleepHourLocal: z.number().int().min(0).max(23).default(4),
+    })
+    .optional(),
+  /** v9 body (plan thea2-v9-parity.md). Present ⇒ senses + tools are wired. */
+  body: z
+    .strictObject({
+      dir: z.string().min(1).default('var/house'),
+      openaiKeyEnv: envName,
+      openaiEndpoint: z.string().url().default('https://api.openai.com/v1'),
+      visionModel: z.string().min(1).default('gpt-5.6-sol'),
+      transcribeModel: z.string().min(1).default('gpt-4o-transcribe'),
+      listenModel: z.string().min(1).default('gpt-audio-1.5'),
+      ttsModel: z.string().min(1).default('gpt-4o-mini-tts'),
+      ttsVoice: z.string().min(1).default('coral'),
+      /** Optional: the voice name lives in env (copied from Thea1's box env, never in git). */
+      ttsVoiceEnv: envName.optional(),
+      falKeyEnv: envName.optional(),
+      braveKeyEnv: envName.optional(),
+      elevenKeyEnv: envName.optional(),
+      elevenVoiceEnv: envName.optional(),
+      walletMonthUsd: z.number().min(0).max(1000).default(10),
     })
     .optional(),
 });
@@ -446,5 +492,34 @@ export const loadConfig = (
     embedder: y.embedder,
     ...(y.spine !== undefined ? { spine: y.spine } : {}),
     ...(y.mind !== undefined ? { mind: y.mind } : {}),
+    ...(y.body !== undefined ? { body: resolveBody(y.body, env) } : {}),
+  };
+};
+
+const optEnv = (env: Record<string, string | undefined>, name: string | undefined): string | undefined => {
+  if (name === undefined) return undefined;
+  const v = env[name];
+  return v !== undefined && v.trim() !== '' ? v.trim() : undefined;
+};
+
+const resolveBody = (b: NonNullable<YamlConfig['body']>, env: Record<string, string | undefined>): BodyConfig => {
+  const openaiKey = optEnv(env, b.openaiKeyEnv);
+  if (openaiKey === undefined) {
+    throw new ConfigError('app/config-invalid', [{ path: ['body', 'openaiKeyEnv'], message: `${b.openaiKeyEnv} missing from env` }], 'body');
+  }
+  return {
+    dir: b.dir,
+    openaiKey,
+    openaiEndpoint: b.openaiEndpoint,
+    visionModel: b.visionModel,
+    transcribeModel: b.transcribeModel,
+    listenModel: b.listenModel,
+    ttsModel: b.ttsModel,
+    ttsVoice: optEnv(env, b.ttsVoiceEnv) ?? b.ttsVoice,
+    falKey: optEnv(env, b.falKeyEnv),
+    braveKey: optEnv(env, b.braveKeyEnv),
+    elevenKey: optEnv(env, b.elevenKeyEnv),
+    elevenVoice: optEnv(env, b.elevenVoiceEnv),
+    walletMonthUsd: b.walletMonthUsd,
   };
 };
