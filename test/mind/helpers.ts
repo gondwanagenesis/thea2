@@ -54,8 +54,8 @@ export const concern = (over: Partial<Concern> = {}): Concern => ({
 /** Adds moments with their situation + reply vectors computed the way the importer does. */
 export const addMoments = async (store: MindStore, embedder: Embedder, ms: Moment[]): Promise<void> => {
   for (const m of ms) {
-    const [sit, reply] = await embedder.embed([situationText(m.before, m.his), replyText(m.hers)]);
-    store.add(m, { ...(sit !== undefined ? { sit } : {}), ...(reply !== undefined ? { reply } : {}) });
+    const [sit, reply, his] = await embedder.embed([situationText(m.before, m.his), replyText(m.hers), m.his === '' ? '(silence)' : m.his]);
+    store.add(m, { ...(sit !== undefined ? { sit } : {}), ...(reply !== undefined ? { reply } : {}), ...(his !== undefined && m.his !== '' ? { his } : {}) });
   }
   await store.flush();
 };

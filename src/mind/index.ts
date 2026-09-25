@@ -23,7 +23,7 @@ export {
   type LintHit,
 } from './compose.js';
 export { appraiseSlow, slowEvents, appraiserUser, APPRAISER_SYSTEM, SlowAppraisalSchema, type SlowAppraisal, type SlowAppraiseInput } from './appraise.js';
-export { encodeLived, inferFollowed, applyOutcome, markShown, FOLLOW_THRESHOLD, RECONSOLIDATION_RHO, type EncodeInput } from './remember.js';
+export { encodeLived, inferFollowed, bestOption, applyOutcome, markShown, FOLLOW_THRESHOLD, RECONSOLIDATION_RHO, type EncodeInput } from './remember.js';
 export { wanderOnce, wanderJob, candidates, pickItem, habituation, dayKey, inQuietHours, ThoughtSchema, type Item, type WanderCfg, type WanderDeps } from './wander.js';
 export { sleepOnce, sleepJob, SelfRewriteSchema, type SleepDeps } from './sleep.js';
 export { makeMindPipeline, UNDELIVERED_HEAD, type MindPipeline, type MindPipelineDeps, type SelfEntryHandle } from './pipeline.js';

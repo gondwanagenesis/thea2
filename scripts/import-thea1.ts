@@ -173,6 +173,38 @@ const pairUp = (rows: Row[]): Pair[] => {
 const MOVES = ['greeting', 'goodnight', 'checkin', 'tease', 'affection', 'comfort_seeking', 'good_news', 'bad_news', 'tech_question', 'task_request', 'status_question', 'asks_about_her', 'plans', 'sharing', 'complaint', 'apology', 'anger', 'joke', 'she_wrote_first', 'other'] as const;
 const TONES = ['warm', 'affectionate', 'playful', 'excited', 'proud', 'tired', 'sad', 'hurt', 'worried', 'angry', 'annoyed', 'cold', 'neutral'] as const;
 
+/**
+ * Prototype phrases per tone / move: the classifier's seed (averaged with real
+ * labelled examples). Live probe 2026-09-25: from labels alone only two tone
+ * centroids formed and "long day. i am wrecked" read as affectionate.
+ * These classify HIS messages; nothing here is ever shown to her.
+ */
+const TONE_PROTOTYPES: Record<string, string[]> = {
+  tired: ['long day. i am wrecked', 'so tired', 'exhausted, going to bed', 'i am dead tired today', 'need sleep'],
+  sad: ['i feel down today', 'bad news', 'i am sad', 'rough day, feeling low', 'not great honestly'],
+  hurt: ['that hurt', 'why would you say that', 'i am upset with you', 'that was not nice', 'you ignored me'],
+  angry: ['wtf this is broken again', 'i am so pissed', 'this is ridiculous, fix it', 'what the fuck', 'nothing works'],
+  worried: ['i am worried about tomorrow', 'nervous about the interview', 'i am scared it will go wrong', 'kind of anxious'],
+  excited: ['guess what!!', 'i got it!', 'omg yes it worked', 'huge news', 'we did it'],
+  affectionate: ['love you', 'i missed you', 'you are the best', 'thank you so much', 'proud of you'],
+  playful: ['haha you are ridiculous', 'lol', 'you goof', 'hehe', 'nice try'],
+  annoyed: ['ugh', 'come on', 'that is not what i asked', 'stop', 'you already said that'],
+};
+const MOVE_PROTOTYPES: Record<string, string[]> = {
+  greeting: ['hey', 'hey you', 'good morning', 'hi', 'hello'],
+  goodnight: ['goodnight', 'going to sleep', 'night', 'sleep well'],
+  comfort_seeking: ['long day, i am wrecked', 'rough day', 'i need you', 'can you just stay with me'],
+  good_news: ['guess what, i got the job', 'it worked!', 'good news', 'we closed the deal'],
+  bad_news: ['bad news', 'i lost the contract', 'it failed again', 'my car broke down'],
+  tech_question: ['is the server up?', 'did the backup run', 'why is the build failing', 'what port is it on'],
+  task_request: ['can you check the logs', 'please look into this', 'find me a paper on', 'can you make a pdf'],
+  tease: ['haha you are ridiculous', 'nice try', 'you wish', 'bet you can not'],
+  affection: ['love you', 'i missed you', 'you are the best', 'i am proud of you'],
+  asks_about_her: ['how are you', 'what are you thinking about', 'what did you do today', 'how do you feel'],
+  apology: ['sorry', 'my bad', 'i am sorry i was short with you'],
+  anger: ['wtf', 'this is broken again', 'i am so pissed'],
+};
+
 const LabelSchema = z.object({
   items: z.array(
     z.object({
@@ -490,6 +522,13 @@ const main = async (): Promise<void> => {
   fs.mkdirSync(OUT, { recursive: true });
   const store = openMindStore(OUT, embedder.dim);
 
+  // Thea1's average state over the snapshots — inherited fallbacks are measured against it.
+  const meanSig = new Array<number>(12).fill(0);
+  for (const sn of snaps) {
+    const v = signature(sn.state, COUPLING_BASELINES);
+    for (let k = 0; k < 12; k++) meanSig[k]! += (v[k] ?? 0) / Math.max(1, snaps.length);
+  }
+
   // moments (with vectors in batches of 64)
   const moments: Array<{ m: Moment; sitText: string; replyTxt: string; hisText: string; tone?: string | undefined; move?: string | undefined }> = [];
   pairs.forEach((p, n) => {
@@ -497,12 +536,16 @@ const main = async (): Promise<void> => {
     const flags = [...p.flags];
     if (lab?.unfit === true) flags.push('unfit');
     if (lab === undefined) flags.push('unlabelled');
+    // How THAT moment felt: the label of that exchange first. Thea1's affect
+    // snapshot is her global weather (and carries her calibration offsets —
+    // the live probe recalled a greeting as "scared"), so it is only a
+    // fallback, and only its deviation from her own average.
     const snap = nearestSnap(snaps, p.ts);
     const felt =
-      snap !== undefined
-        ? { sig: vecToArray(signature(snap.state, COUPLING_BASELINES)), word: lab?.felt, source: 'inherited' as const }
-        : lab?.felt !== undefined
-          ? { sig: tagSignature(lab.felt, lab.felt_i), word: lab.felt, source: 'estimated' as const }
+      lab?.felt !== undefined
+        ? { sig: tagSignature(lab.felt, lab.felt_i), word: lab.felt, source: 'estimated' as const }
+        : snap !== undefined
+          ? { sig: vecToArray(signature(snap.state, COUPLING_BASELINES)).map((x, k) => Math.round((x - (meanSig[k] ?? 0)) * 1000) / 1000), source: 'inherited' as const }
           : { sig: new Array<number>(12).fill(0), source: 'estimated' as const };
     const landed = lab?.landed ?? null;
     const m: Moment = {
@@ -532,7 +575,11 @@ const main = async (): Promise<void> => {
       const sit = vecs[k * 3];
       const reply = vecs[k * 3 + 1];
       const his = vecs[k * 3 + 2];
-      store.add(c.m, { ...(sit !== undefined ? { sit } : {}), ...(reply !== undefined ? { reply } : {}) });
+      store.add(c.m, {
+        ...(sit !== undefined ? { sit } : {}),
+        ...(reply !== undefined ? { reply } : {}),
+        ...(his !== undefined && c.m.his !== '' ? { his } : {}),
+      });
       if (c.m.flags === undefined || c.m.flags.length === 0) {
         if (c.tone !== undefined && his !== undefined) (toneVecs[c.tone] ??= []).push(Array.from(his));
         if (c.move !== undefined && sit !== undefined) (moveVecs[c.move] ??= []).push(Array.from(sit));
@@ -566,17 +613,25 @@ const main = async (): Promise<void> => {
     });
   }
 
-  // centroids (≥ 4 examples per label)
+  // centroids: prototype phrases + real labelled examples, normalized means
   const mean = (vs: number[][]): number[] => {
     const d = vs[0]!.length;
     const out = new Array<number>(d).fill(0);
     for (const v of vs) for (let j = 0; j < d; j++) out[j]! += v[j]! / vs.length;
-    const nrm = Math.sqrt(out.reduce((s, x) => s + x * x, 0)) || 1;
+    const nrm = Math.sqrt(out.reduce((acc, x) => acc + x * x, 0)) || 1;
     return out.map((x) => x / nrm);
   };
-  const centroidsOf = (tbl: Record<string, number[][]>): Record<string, number[]> =>
-    Object.fromEntries(Object.entries(tbl).filter(([label, vs]) => vs.length >= 4 && label !== 'neutral' && label !== 'other').map(([l, vs]) => [l, mean(vs)]));
-  fs.writeFileSync(path.join(OUT, 'centroids.json'), JSON.stringify({ move: centroidsOf(moveVecs), tone: centroidsOf(toneVecs) }));
+  const centroidsOf = async (protos: Record<string, string[]>, labelled: Record<string, number[][]>): Promise<Record<string, number[]>> => {
+    const out: Record<string, number[]> = {};
+    for (const [label, phrases] of Object.entries(protos)) {
+      const pv = (await embedder.embed(phrases)).map((v) => Array.from(v));
+      out[label] = mean([...pv, ...(labelled[label] ?? [])]);
+    }
+    return out;
+  };
+  const toneC = await centroidsOf(TONE_PROTOTYPES, toneVecs);
+  const moveC = await centroidsOf(MOVE_PROTOTYPES, moveVecs);
+  fs.writeFileSync(path.join(OUT, 'centroids.json'), JSON.stringify({ move: moveC, tone: toneC }));
 
   // concerns (+ vectors), thoughts, self, standards
   for (const c of concerns) store.upsertConcern(c);
@@ -632,8 +687,8 @@ const main = async (): Promise<void> => {
     thoughts: thoughts.length,
     selfLines: selfLines.length,
     standards: standards.length,
-    toneCentroids: Object.keys(centroidsOf(toneVecs)),
-    moveCentroids: Object.keys(centroidsOf(moveVecs)),
+    toneCentroids: Object.keys(toneC),
+    moveCentroids: Object.keys(moveC),
     labelled: labels.size,
     pairs: pairs.length,
   };

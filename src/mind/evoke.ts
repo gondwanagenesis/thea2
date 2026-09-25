@@ -56,7 +56,10 @@ export const EVOKE_DEFAULTS: EvokeConfig = {
 export const EVOKE_WEIGHTS = { sim: 0.45, move: 0.15, value: 0.15, mood: 0.15, gold: 0.1 } as const;
 
 export interface EvokeInput {
+  /** Situation vector (context + his words). */
   queryVec: Float32Array;
+  /** His words alone. When present, similarity is 0.6·his + 0.4·situation. */
+  hisQueryVec?: Float32Array | undefined;
   move?: string | undefined;
   /** Her live state as a deviation vector. */
   a: Vec12;
@@ -135,7 +138,13 @@ export const evoke = (store: MindStore, input: EvokeInput): Evoked => {
   for (const m of store.moments()) {
     const v = store.sitVec(m.id);
     if (v === undefined) continue;
-    const sim = cosine(input.queryVec, v);
+    // The 2026-09-25 live probe: a short message ("long day. i am wrecked")
+    // was drowned by the previous conversation in the situation vector and
+    // recalled tech threads. His words lead; context tilts.
+    const hv = input.hisQueryVec !== undefined ? store.hisVec(m.id) : undefined;
+    const sim = hv !== undefined && input.hisQueryVec !== undefined
+      ? 0.6 * cosine(input.hisQueryVec, hv) + 0.4 * cosine(input.queryVec, v)
+      : cosine(input.queryVec, v);
     if (eligibleOption(m, input)) candidates.push(scoreMoment(m, sim, input));
     else if ((m.kind === 'diary' || m.kind === 'thought') && m.never !== true && input.now - m.ts >= cfg.recentWindowMs) {
       memoryCands.push({ m, score: sim, sim, mood: 0 });

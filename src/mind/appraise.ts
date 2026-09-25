@@ -41,6 +41,13 @@ export const SlowAppraisalSchema = z.object({
     )
     .max(3),
   importance: z.number().int().min(1).max(10),
+  /**
+   * Prediction error, judged by reading both texts (vector similarity between a
+   * DESCRIPTION of an expected reply and the reply itself is unreliable — the
+   * 2026-09-25 live probe fired surprise on 3 of 4 turns, including a confirmed
+   * one). null = she had no expectation.
+   */
+  expectation: z.enum(['confirmed', 'better', 'worse', 'different']).nullable().optional(),
 });
 
 export type SlowAppraisal = z.infer<typeof SlowAppraisalSchema>;
@@ -68,6 +75,7 @@ export const APPRAISER_SYSTEM = [
   '- outcome_prev: grade how her PREVIOUS reply landed, using his new message only. +2 delighted/warm engagement, +1 kept going happily, 0 neutral or unclear, -1 flat/annoyed/corrected, -2 hurt or upset. "why" is a short plain phrase in past tense (e.g. "he laughed and kept going"). null when there was no previous reply.',
   '- concerns: open a loop when something is now pending (a promise, a plan, a question left hanging, an expectation with a time); close one when it resolved. Use the ids shown. Keep "what" in her own first-person voice.',
   '- importance: how much this exchange matters to her life, 1-10.',
+  '- expectation: compare HIS MESSAGE NOW with WHAT SHE PRIVATELY EXPECTED: "confirmed" if it is broadly what she expected (the gist, not the wording), "better" if it went better than she expected, "worse" if worse, "different" if simply unexpected in a neutral way; null if she expected nothing or she wrote first.',
   '- Tags already registered in the moment (do not repeat them unless the feeling is clearly stronger now): listed below.',
 ].join('\n');
 
@@ -130,8 +138,12 @@ export const appraiseSlow = async (i: SlowAppraiseInput, deps: SlowAppraiseDeps)
  * record should say what was new). `self` events carry their standard in the
  * cause, so the audit can prove every self-caused feeling names one.
  */
-export const slowEvents = (a: SlowAppraisal, fast: ReadonlyArray<{ tag: string; i: number }>): Array<{ source: 'event' | 'self'; event: EmotionEventInput }> => {
-  const out: Array<{ source: 'event' | 'self'; event: EmotionEventInput }> = [];
+export const slowEvents = (
+  a: SlowAppraisal,
+  fast: ReadonlyArray<{ tag: string; i: number }>,
+  expectCause?: string | undefined,
+): Array<{ source: 'event' | 'self' | 'surprise'; event: EmotionEventInput }> => {
+  const out: Array<{ source: 'event' | 'self' | 'surprise'; event: EmotionEventInput }> = [];
   const fastI = new Map<string, number>();
   for (const f of fast) fastI.set(f.tag, Math.max(fastI.get(f.tag) ?? 0, f.i));
   for (const e of a.event) {
@@ -143,6 +155,26 @@ export const slowEvents = (a: SlowAppraisal, fast: ReadonlyArray<{ tag: string; 
   for (const e of a.self) {
     if (!isAppraisalTag(e.emotion)) continue;
     out.push({ source: 'self', event: { kind: 'emotion', tag: e.emotion, i: e.i, cause: `${e.cause} [standard: ${e.standard}]` } });
+  }
+  // Prediction error → surprise, relief, disappointment (law 1.2b).
+  const why = expectCause ?? 'what she expected';
+  switch (a.expectation) {
+    case 'confirmed':
+      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'settled', i: 2, cause: `as she expected: ${why}` } });
+      break;
+    case 'better':
+      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'surprised', i: 3, cause: `better than she expected: ${why}` } });
+      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'delighted', i: 3, cause: `better than she expected: ${why}` } });
+      break;
+    case 'worse':
+      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'surprised', i: 3, cause: `not what she hoped: ${why}` } });
+      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'disappointed', i: 3, cause: `not what she hoped: ${why}` } });
+      break;
+    case 'different':
+      out.push({ source: 'surprise', event: { kind: 'emotion', tag: 'surprised', i: 3, cause: `she expected something else: ${why}` } });
+      break;
+    default:
+      break;
   }
   return out;
 };

@@ -27,7 +27,7 @@ import { feelFast, type FastEvent } from './feel.js';
 import { metabolism, type Metabolism } from './modulate.js';
 import { composePacket, hourIn, V8_OUTPUT_CONTRACT } from './compose.js';
 import { appraiseSlow, slowEvents } from './appraise.js';
-import { applyOutcome, encodeLived, inferFollowed, markShown } from './remember.js';
+import { applyOutcome, bestOption, encodeLived, FOLLOW_THRESHOLD, markShown } from './remember.js';
 import { vecToArray } from './vocab.js';
 import type { MindStore } from './store.js';
 import type { Concern, Line } from './types.js';
@@ -165,10 +165,9 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     const selfEntry = item.kind !== undefined;
     const his = selfEntry ? '' : item.m.text;
     const st = deps.mind.state();
-    const expect = !selfEntry && st.lastExpect !== undefined ? st.lastExpect : undefined;
     let sensed: Sensed | null = null;
     try {
-      sensed = await sense(before, selfEntry ? (item.goal ?? '') : his, { embedder: deps.embedder, centroids: deps.mind.centroids() }, expect !== undefined ? [expect.text] : []);
+      sensed = await sense(before, selfEntry ? (item.goal ?? '') : his, { embedder: deps.embedder, centroids: deps.mind.centroids() });
     } catch (e) {
       emit('incident.mind_sense_failed', { turnId: item.turnId, error: asError(e).message }, item.turnId);
     }
@@ -179,6 +178,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         ? { options: [], memories: [], considered: 0 }
         : evoke(deps.mind, {
             queryVec: sensed.situationVec,
+            ...(selfEntry ? {} : { hisQueryVec: sensed.hisVec }),
             move: sensed.move?.label,
             a: a0,
             now,
@@ -194,7 +194,6 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       fast = feelFast({
         evoked,
         tone: sensed.tone,
-        expect: expect !== undefined && sensed.extra[0] !== undefined ? { text: expect.text, vec: sensed.extra[0], at: expect.at } : undefined,
         hisVec: sensed.hisVec,
         concerns,
         now,
@@ -421,7 +420,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       let importance: number | undefined;
       if (slow.ok) {
         importance = slow.value.importance;
-        const evs = slowEvents(slow.value, fast.map((f) => ({ tag: f.event.tag, i: f.event.i })));
+        const evs = slowEvents(slow.value, fast.map((f) => ({ tag: f.event.tag, i: f.event.i })), prevState.lastExpect?.text);
         if (evs.length > 0) {
           try {
             await deps.affect.applyEvents(evs.map((e) => e.event as EmotionEventInput), { source: 'appraisal' });
@@ -497,7 +496,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         } catch (e) {
           emit('incident.mind_embed_failed', { turnId, stage: 'reply', error: asError(e).message }, turnId);
         }
-        const followed = replyVec !== undefined ? inferFollowed(replyVec, shownIds, deps.mind) : null;
+        const best = replyVec !== undefined ? bestOption(replyVec, shownIds, deps.mind) : null;
+        const followed = best !== null && best.sim >= FOLLOW_THRESHOLD ? best : null;
         const moment = encodeLived({
           id: momentId,
           now,
@@ -514,8 +514,12 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         moment.msgIds = sent.map((s) => s.msgId);
         moment.followedFrom = followed?.id ?? null;
         moment.shownOptions = shownIds;
-        deps.mind.add(moment, { ...(sensed !== null ? { sit: sensed.situationVec } : {}), ...(replyVec !== undefined ? { reply: replyVec } : {}) });
-        emit('mind.remembered', { turnId, momentId, followed: followed?.id ?? null, followSim: followed?.sim ?? null, felt: moment.felt.word ?? null }, turnId);
+        deps.mind.add(moment, {
+          ...(sensed !== null ? { sit: sensed.situationVec } : {}),
+          ...(sensed !== null && !selfEntry ? { his: sensed.hisVec } : {}),
+          ...(replyVec !== undefined ? { reply: replyVec } : {}),
+        });
+        emit('mind.remembered', { turnId, momentId, followed: followed?.id ?? null, closest: best?.id ?? null, closestSim: best !== null ? Math.round(best.sim * 1000) / 1000 : null, felt: moment.felt.word ?? null }, turnId);
       }
       await deps.mind.flush();
     });

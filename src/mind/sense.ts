@@ -31,14 +31,20 @@ const dot = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
   return na === 0 || nb === 0 ? 0 : d / Math.sqrt(na * nb);
 };
 
-/** Nearest centroid label, or undefined below the floor (an unknown move is honest). */
-export const nearestLabel = (vec: Float32Array, table: Record<string, number[]>, floor = 0.25): Label | undefined => {
-  let best: Label | undefined;
-  for (const [label, c] of Object.entries(table)) {
-    const s = dot(vec, c);
-    if (best === undefined || s > best.score) best = { label, score: s };
-  }
-  return best !== undefined && best.score >= floor ? best : undefined;
+/**
+ * Nearest centroid label, or undefined when it cannot be honest: below the
+ * floor, fewer than three labels in the table (live probe 2026-09-25: a
+ * one-label table stamped EVERY message with it), or no clear margin over the
+ * runner-up.
+ */
+export const nearestLabel = (vec: Float32Array, table: Record<string, number[]>, floor = 0.25, margin = 0.015): Label | undefined => {
+  const entries = Object.entries(table);
+  if (entries.length < 3) return undefined;
+  const scored = entries.map(([label, c]) => ({ label, score: dot(vec, c) })).sort((a, b) => b.score - a.score);
+  const best = scored[0]!;
+  const second = scored[1]!;
+  if (best.score < floor || best.score - second.score < margin) return undefined;
+  return best;
 };
 
 export interface Sensed {

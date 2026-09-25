@@ -123,6 +123,10 @@ const main = async (): Promise<void> => {
     for (const f of felt) out(`felt ${f}`);
     out(`her state now: ${top()}`);
     out(`telling in prompt: ${telling.length === 0 ? 'none' : telling.join(', ')} · incidents: ${incidents.length === 0 ? 'none' : incidents.join(', ')}`);
+    const rem = evs.find((e) => e.kind === 'mind.remembered')?.payload;
+    if (rem !== undefined) out(`closest option to what she said: ${String(rem['closestSim'] ?? '—')} (followed: ${rem['followed'] === null ? 'no, something new' : 'yes'})`);
+    const outcome = evs.find((e) => e.kind === 'mind.outcome')?.payload;
+    if (outcome !== undefined) out(`her previous reply landed ${String(outcome['landed'])} (rpe ${Number(outcome['rpe']).toFixed(2)})`);
     const expect = sys.mind.state().lastExpect;
     if (expect !== undefined && expect.at >= t0) out(`she privately expects: ${expect.text}`);
   }

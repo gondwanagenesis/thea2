@@ -63,8 +63,10 @@ export interface MindStore {
   precedents(): Moment[];
   sitVec(id: string): Float32Array | undefined;
   replyVec(id: string): Float32Array | undefined;
+  /** His words alone (no context) — recall matches primarily on these. */
+  hisVec(id: string): Float32Array | undefined;
   /** Add a moment (+ vectors). Written to disk at the next flush; vectors immediately. */
-  add(m: Moment, vecs?: { sit?: Float32Array | undefined; reply?: Float32Array | undefined }): void;
+  add(m: Moment, vecs?: { sit?: Float32Array | undefined; reply?: Float32Array | undefined; his?: Float32Array | undefined }): void;
   update(id: string, patch: Partial<Moment>): void;
   concerns(): readonly Concern[];
   openConcerns(): Concern[];
@@ -101,6 +103,7 @@ export const openMindStore = (dir: string, dim: number): MindStore => {
   const sit: VecFile = openVecFile(dir, 'sit', dim);
   const reply: VecFile = openVecFile(dir, 'reply', dim);
   const concernVecs: VecFile = openVecFile(dir, 'concern', dim);
+  const his: VecFile = openVecFile(dir, 'his', dim);
 
   let dirtyMoments = false;
   let dirtyConcerns = false;
@@ -114,12 +117,14 @@ export const openMindStore = (dir: string, dim: number): MindStore => {
     precedents: () => moments.filter(isPrecedent),
     sitVec: (id) => sit.get(id),
     replyVec: (id) => reply.get(id),
+    hisVec: (id) => his.get(id),
     add: (m, vecs) => {
       if (byId.has(m.id)) throw new Error(`mind/store: duplicate moment id ${m.id}`);
       moments.push(m);
       byId.set(m.id, m);
       if (vecs?.sit !== undefined) sit.append(m.id, vecs.sit);
       if (vecs?.reply !== undefined) reply.append(m.id, vecs.reply);
+      if (vecs?.his !== undefined) his.append(m.id, vecs.his);
       dirtyMoments = true;
     },
     update: (id, patch) => {

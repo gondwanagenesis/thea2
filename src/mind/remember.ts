@@ -15,8 +15,8 @@ import { nearestTag } from './vocab.js';
 import type { MindStore } from './store.js';
 import type { Line, Moment, Outcome } from './types.js';
 
-/** Cosine above which her reply counts as following a shown option (text-embedding-3-small). */
-export const FOLLOW_THRESHOLD = 0.72;
+/** Cosine above which her reply counts as following a shown option (text-embedding-3-small; recalibrate from mind.remembered closestSim). */
+export const FOLLOW_THRESHOLD = 0.65;
 /** How far one recall can pull a memory's feeling toward the present (per event). */
 export const RECONSOLIDATION_RHO = 0.1;
 
@@ -55,8 +55,8 @@ export const encodeLived = (i: EncodeInput): Moment => ({
   followed: 0,
 });
 
-/** Which shown option (if any) her reply followed. */
-export const inferFollowed = (
+/** The shown option closest to her reply (any similarity) — logged so the follow threshold can be calibrated live. */
+export const bestOption = (
   replyVec: Float32Array,
   shownIds: readonly string[],
   store: MindStore,
@@ -68,6 +68,16 @@ export const inferFollowed = (
     const s = cosine(replyVec, v);
     if (best === null || s > best.sim) best = { id, sim: s };
   }
+  return best;
+};
+
+/** Which shown option (if any) her reply followed. */
+export const inferFollowed = (
+  replyVec: Float32Array,
+  shownIds: readonly string[],
+  store: MindStore,
+): { id: string; sim: number } | null => {
+  const best = bestOption(replyVec, shownIds, store);
   return best !== null && best.sim >= FOLLOW_THRESHOLD ? best : null;
 };
 

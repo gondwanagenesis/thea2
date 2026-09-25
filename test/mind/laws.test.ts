@@ -121,17 +121,20 @@ describe('law 1.2 — feelings are caused (and never by her own reply)', () => {
     expect(feelFast({ evoked: empty, hisVec: hv, concerns: [], now: T0 })).toEqual([]);
   });
 
-  it('surprise is a gap between expectation and event; a confirmed expectation settles', () => {
-    const surprised = feelFast({ evoked: empty, hisVec: hv, concerns: [], now: T0, expect: { text: 'he goes to sleep', vec: new Float32Array([0, 1, 0, 0]), at: T0 - 3600_000 } });
-    expect(surprised.map((e) => e.event.tag)).toContain('surprised');
-    expect(surprised.every((e) => e.source === 'surprise')).toBe(true);
-    const confirmed = feelFast({ evoked: empty, hisVec: hv, concerns: [], now: T0, expect: { text: 'he says hi', vec: new Float32Array([1, 0, 0, 0]), at: T0 - 3600_000 } });
-    expect(confirmed.map((e) => e.event.tag)).toEqual(['settled']);
+  it('surprise is a gap between expectation and event (judged by the slow appraisal); a confirmed expectation settles', () => {
+    const base = { event: [], self: [], outcome_prev: null, concerns: [], importance: 3 };
+    const tags = (e: 'confirmed' | 'better' | 'worse' | 'different' | null) =>
+      slowEvents({ ...base, expectation: e }, [], 'he goes to sleep').map((x) => `${x.source}:${x.event.tag}`);
+    expect(tags('confirmed')).toEqual(['surprise:settled']);
+    expect(tags('better')).toEqual(['surprise:surprised', 'surprise:delighted']);
+    expect(tags('worse')).toEqual(['surprise:surprised', 'surprise:disappointed']);
+    expect(tags(null)).toEqual([]);
+    expect(slowEvents({ ...base, expectation: 'worse' }, [], 'he goes to sleep')[0]!.event.cause).toContain('he goes to sleep');
   });
 
-  it('an expectation older than 36 h no longer surprises', () => {
-    const stale = feelFast({ evoked: empty, hisVec: hv, concerns: [], now: T0, expect: { text: 'x', vec: new Float32Array([0, 1, 0, 0]), at: T0 - 3 * DAY } });
-    expect(stale).toEqual([]);
+  it('the fast path has no surprise channel at all (vector similarity misjudged it live)', () => {
+    const ev = feelFast({ evoked: empty, hisVec: hv, concerns: [], now: T0 });
+    expect(ev.some((e) => (e.source as string) === 'surprise')).toBe(false);
   });
 
   it('his tone lands (a bounded reflex); an unknown tone moves nothing', () => {
@@ -336,5 +339,31 @@ describe('law 1.5 — experience changes her: value, conditioning, extinction, r
     const dist = (x: number[], y: number[]) => Math.sqrt(x.reduce((s, v, i) => s + (v - (y[i] ?? 0)) ** 2, 0));
     expect(dist(after, target)).toBeLessThan(dist(before, target));
     expect(dist(after, before)).toBeLessThan(0.2); // one recall nudges, never rewrites
+  });
+});
+
+describe('live-probe regressions (2026-09-25)', () => {
+  it('labels refuse to guess: a one-label table, or a near tie, labels nothing', async () => {
+    const { nearestLabel } = await import('../../src/mind/index.js');
+    const v = new Float32Array([1, 0, 0]);
+    expect(nearestLabel(v, { only: [1, 0, 0] })).toBeUndefined();
+    expect(nearestLabel(v, { a: [1, 0, 0], b: [0, 1, 0], c: [0, 0, 1] })?.label).toBe('a');
+    expect(nearestLabel(v, { a: [1, 0.001, 0], b: [1, 0, 0.001], c: [0, 0, 1] })).toBeUndefined();
+  });
+
+  it('recall follows his words, not the leftover context of the last conversation', async () => {
+    const dir = tmpDir();
+    const emb = makeHashEmbedder();
+    const store = openMindStore(dir, emb.dim);
+    const ctx = [{ who: 'him' as const, text: 'check the tailnet ports on the laptop anomalocaris' }, { who: 'her' as const, text: 'tailnet ports are open, the laptop is asleep' }];
+    await addMoments(store, emb, [
+      moment({ id: 'comfort', before: [], his: 'long day, i am wrecked and tired', hers: ['come here. water, pillow, horizontal'] }),
+      moment({ id: 'tech', before: ctx, his: 'check the tailnet ports again', hers: ['ports open, laptop still asleep'] }),
+    ]);
+    const { situationText } = await import('../../src/mind/index.js');
+    const [sitQ, hisQ] = await emb.embed([situationText(ctx, 'long day. i am wrecked'), 'long day. i am wrecked']);
+    const run = (withHis: boolean) =>
+      evoke(store, { queryVec: sitQ!, ...(withHis ? { hisQueryVec: hisQ! } : {}), a: signature(initialAffectState(T0), COUPLING_BASELINES), now: T0, turn: 1, rng: makeRng('x'), coupling, cfg: { ...EVOKE_DEFAULTS, k: 1, sampleTemp: 0 } }).options[0]?.m.id;
+    expect(run(true)).toBe('comfort');
   });
 });
