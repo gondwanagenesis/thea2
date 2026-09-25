@@ -106,7 +106,17 @@ const main = async (): Promise<void> => {
     const firstAt = sent[0]?.at;
     const turnReq = requests.slice(reqBefore).find((r) => r.taskClass === 'turn');
     const prompt = (turnReq?.messages ?? []).map((x) => String(x.content)).join('\n');
-    const telling = TELLING_PATTERNS.filter((re) => re.test(prompt.replace(/^(him|you): .*$/gm, ''))).map((re) => re.source.slice(0, 40));
+    // Scan only the FRAME: system messages minus quoted words ("him:"/"you:"),
+    // her own notes ("- ..."), and her self-narrative ([me]) — the window is
+    // real conversation and may mention anything they ever said.
+    const sys = (turnReq?.messages ?? []).filter((x) => x.role === 'system').map((x) => String(x.content)).join('\n');
+    const meStart = sysText.indexOf('[me]');
+    const meEnd = sys.indexOf('\n\n', meStart);
+    const frame = (meStart >= 0 && meEnd > meStart ? sysText.slice(0, meStart) + sysText.slice(meEnd) : sysText)
+      .split('\n')
+      .filter((l) => !/^(him|you): /.test(l) && !l.startsWith('- ') && !l.trimStart().startsWith('(a thought'))
+      .join('\n');
+    const telling = TELLING_PATTERNS.filter((re) => re.test(frame)).map((re) => re.source.slice(0, 40));
     // events for this turn
     const evs: Array<{ kind: string; payload: Record<string, unknown> }> = [];
     for await (const e of sys.events.replay()) if (e.ts >= t0) evs.push({ kind: e.kind, payload: e.payload as Record<string, unknown> });

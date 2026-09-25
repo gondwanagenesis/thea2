@@ -117,7 +117,11 @@ export const appraiseSlow = async (i: SlowAppraiseInput, deps: SlowAppraiseDeps)
     const res = await deps.model.chat(
       {
         taskClass: 'appraisal',
-        tier: 'cheap',
+        // The voice door (Sol). Live probe 2026-09-25: the cheap door graded
+        // "that last one sounded kind of robotic" as her reply landing WELL (+1).
+        // Her learning is only as real as this judgment; it runs after the
+        // reply, so the stronger model costs no latency (~$0.008/turn).
+        tier: 'main',
         messages,
         schema: SlowAppraisalSchema,
         schemaName: 'SlowAppraisal',
