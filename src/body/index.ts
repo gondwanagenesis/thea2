@@ -18,7 +18,7 @@ export * from './types.js';
 export { openHouse, safeName, type House } from './house.js';
 export { openAIBody, OpenAIBodyError, type OpenAIBody } from './openai.js';
 export { nodeExec } from './exec.js';
-export { makeSenses, PHOTO_PROMPT, FRAMES_PROMPT, LISTEN_PROMPT, FILE_OPENING_CHARS, type Senses } from './senses.js';
+export { makeSenses, howItSounds, PHOTO_PROMPT, FRAMES_PROMPT, LISTEN_PROMPT, FILE_OPENING_CHARS, type Senses } from './senses.js';
 export { makeMouth, speakable, deliveryFor, type Mouth } from './voice.js';
 export { bodyTools, REACTIONS, type TurnBodyCtx, type ToolDeps } from './tools.js';
 export { locate, describeWhere, loadWhere, saveWhere } from './where.js';

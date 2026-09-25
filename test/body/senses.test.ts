@@ -7,7 +7,7 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { TestClock } from '../../src/kernel/index.js';
 import { FakeChannel, type InboundMsg } from '../../src/bridge/index.js';
-import { makeSenses, openHouse, FILE_OPENING_CHARS } from '../../src/body/index.js';
+import { howItSounds, makeSenses, openHouse, FILE_OPENING_CHARS } from '../../src/body/index.js';
 import { CHAT, T0, tmpDir } from '../mind/helpers.js';
 import { FILES, fakeExec, fakeOpenAI, whereFetch } from './helpers.js';
 
@@ -104,5 +104,12 @@ describe('v9 senses', () => {
     const p = await senses.perceive(msg({ media: { kind: 'photo', fileId: 'missing' } }));
     expect(p.text).toBe("[he sent a photo — it didn't come through: it failed to load]");
     expect(p.trace[0]?.ok).toBe(false);
+  });
+});
+
+describe('how he sounds', () => {
+  it('a listener that answers in JSON still gives a phrase; empty backgrounds are dropped', () => {
+    expect(howItSounds('{"tone": "warm and relaxed", "energy": "low-key", "pace": "steady", "background": "no noticeable noise"}')).toBe('warm and relaxed, low-key energy, steady pace');
+    expect(howItSounds('tired and quiet, traffic behind him.')).toBe('tired and quiet, traffic behind him');
   });
 });

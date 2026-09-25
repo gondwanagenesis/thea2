@@ -67,7 +67,10 @@ const main = async (): Promise<void> => {
       },
     };
   };
-  const channel = FakeChannel({ clock, chatId: cfg.bridge.allowedChatIds[0] ?? 0 });
+  // v9: '@voice:/path.ogg rest', '@photo:/path.jpg caption', '@doc:/path.pdf', '@video:/path.mp4'
+  // send a real file through the real senses (the FakeChannel serves the bytes).
+  const files: Record<string, Uint8Array> = {};
+  const channel = FakeChannel({ clock, chatId: cfg.bridge.allowedChatIds[0] ?? 0, files });
   const sys = await composeV8(cfg, 'probe-harness', {
     varDir: base,
     clock,
@@ -95,11 +98,23 @@ const main = async (): Promise<void> => {
   let msgId = 90_000;
   const chatId = cfg.bridge.allowedChatIds[0] ?? 0;
   const person = Object.keys(cfg.people)[0] ?? `tg:${chatId}`;
-  for (const text of MSGS) {
+  let fileN = 0;
+  for (const raw of MSGS) {
     const before = channel.outbound().length;
+    const actsBefore = channel.bodyActs().length;
     const reqBefore = requests.length;
     const t0 = clock.epochMs();
-    const m: InboundMsg = { updateId: ++updateId, msgId: ++msgId, chatId, ts: t0, text, speaker: { channel: 'telegram', person } };
+    let text = raw;
+    let media: InboundMsg['media'];
+    const mm = /^@(voice|photo|doc|video):(\S+)\s*([\s\S]*)$/.exec(raw);
+    if (mm !== null) {
+      const [, kind, file, rest] = mm as unknown as [string, string, string, string];
+      const id = `probe-file-${++fileN}`;
+      files[id] = new Uint8Array(fs.readFileSync(file));
+      media = kind === 'voice' ? { kind: 'voice', fileId: id, durationSec: 5 } : kind === 'photo' ? { kind: 'photo', fileId: id } : kind === 'video' ? { kind: 'video', fileId: id, durationSec: 5 } : { kind: 'document', fileId: id, fileName: path.basename(file) };
+      text = rest;
+    }
+    const m: InboundMsg = { updateId: ++updateId, msgId: ++msgId, chatId, ts: t0, text, speaker: { channel: 'telegram', person }, ...(media !== undefined ? { media } : {}) };
     await ingestUpdates({ ledger: sys.ledger, offsets: sys.offsets, handle: (mm) => sys.pipeline.inbound(mm) }, [m]);
     await sys.pipeline.drain();
     const sent = channel.outbound().slice(before);
@@ -124,8 +139,19 @@ const main = async (): Promise<void> => {
     const felt = evs.filter((e) => e.kind === 'mind.felt').map((e) => `${String(e.payload['stage'])}: ${(e.payload['events'] as Array<{ source: string; tag: string; i: number }>).map((x) => `${x.tag}(${x.i},${x.source})`).join(' ') || '-'}`);
     const incidents = evs.filter((e) => e.kind.startsWith('incident.')).map((e) => e.kind);
     out('\n────────────────────────────────────────');
-    out(`HIM: ${text}`);
+    out(`HIM: ${raw}`);
+    const sensed = evs.find((e) => e.kind === 'body.sensed')?.payload;
+    if (sensed !== undefined) out(`senses: ${JSON.stringify(sensed['trace'])}`);
+    const turnUser = (turnReq?.messages ?? []).filter((x) => x.role === 'user').map((x) => String(x.content)).slice(-1)[0];
+    if (media !== undefined && turnUser !== undefined) out(`what the turn saw: ${turnUser.slice(0, 600)}`);
     for (const s of sent) out(`HER: ${s.text}`);
+    for (const a of channel.bodyActs().slice(actsBefore)) {
+      if (a.kind === 'media') out(`HER (${a.media.kind}, ${a.media.size} bytes${a.media.durationSec !== undefined ? `, ${a.media.durationSec.toFixed(1)}s` : ''})`);
+      else if (a.kind === 'react') out(`HER (reacted ${a.emoji})`);
+      else if (a.kind === 'poll') out(`HER (poll) ${a.question}`);
+    }
+    const lastLived = sys.mind.moments().filter((x) => x.source === 'lived').slice(-1)[0];
+    if (lastLived !== undefined && channel.bodyActs().length > actsBefore) out(`remembered as: ${lastLived.hers.join(' / ').slice(0, 300)}`);
     out(`first bubble after ${firstAt !== undefined ? ((firstAt - t0) / 1000).toFixed(1) : '—'} s · ${sent.length} bubble(s) · temperature ${turnReq?.temperature ?? '—'} · prompt ${prompt.length} chars`);
     const opts = (evoked?.['options'] as string[] | undefined) ?? [];
     out(`came to mind (${opts.length} of ${String(evoked?.['considered'] ?? '?')}): ${opts.map((id) => { const mm = sys.mind.get(id); return mm === undefined ? id : `"${mm.hers.join(' / ').slice(0, 60)}"`; }).join(' | ')}`);

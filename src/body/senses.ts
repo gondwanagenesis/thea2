@@ -36,7 +36,24 @@ export const PHOTO_PROMPT =
 export const FRAMES_PROMPT =
   'These are stills from one short video, in order. Describe what the video shows and what happens across it, the people and their expressions, the setting, and any text. Plain description, 2 to 5 sentences.';
 export const LISTEN_PROMPT =
-  'In one short line, describe how the speaker sounds: tone, energy, pace, and anything in the background. Do not repeat or summarise the words.';
+  "In a few plain words (a phrase, not JSON), say how the speaker sounds: tone, energy, pace, and anything in the background, like 'tired and quiet, traffic behind him'. Do not repeat or summarise the words.";
+
+/** A listener that answers in JSON anyway ({"tone": …}) still gives a phrase. */
+export const howItSounds = (raw: string): string => {
+  const t = raw.trim();
+  if (t.startsWith('{')) {
+    try {
+      const o = JSON.parse(t) as Record<string, unknown>;
+      return Object.entries(o)
+        .filter(([, v]) => typeof v === 'string' && v.trim() !== '' && !/^(none|no noticeable|n\/a)/i.test(v.trim()))
+        .map(([k, v]) => (k === 'pace' || k === 'energy' ? `${String(v)} ${k}` : String(v)))
+        .join(', ');
+    } catch {
+      return t.replace(/[{}"]/g, '');
+    }
+  }
+  return t.replace(/\s+/g, ' ').replace(/\.$/, '');
+};
 
 /** How much of a file she sees at once in the turn; the rest is a read_file away. */
 export const FILE_OPENING_CHARS = 1500;
@@ -113,7 +130,8 @@ export const makeSenses = (d: SensesDeps): Senses => {
           ]);
           mark('ears', true);
           if (media.kind === 'voice') {
-            const head = `[voice note, ${mmss(media.durationSec)}${how !== '' ? ` — ${how.replace(/\s+/g, ' ').replace(/\.$/, '')}` : ''}]`;
+            const sound = howItSounds(how);
+            const head = `[voice note, ${mmss(media.durationSec)}${sound !== '' ? ` — ${sound}` : ''}]`;
             return { lines: [head], said: words, voice: true, saved: d.house.rel(saved) };
           }
           return { lines: [`[audio${media.title !== undefined ? ` "${media.title}"` : ''}, ${mmss(media.durationSec)}${words !== '' ? `: "${words.slice(0, 1500)}"` : ' — no words in it'}]`], saved: d.house.rel(saved) };

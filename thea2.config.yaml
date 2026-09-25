@@ -87,3 +87,17 @@ mind:
   thoughtsPerDay: 12
   textFirstPerDay: 3
   sleepHourLocal: 4
+# v9 body (plan ~/.claude/plans/thea2-v9-parity.md): her senses and hands.
+# Only env NAMES here. THEA2_TTS_VOICE is her voice (the same one Thea1's voice
+# notes use), copied on-box; an absent optional key = that capability absent.
+body:
+  dir: var/house
+  openaiKeyEnv: THEA2_OPENAI_KEY
+  visionModel: gpt-5.6-sol
+  transcribeModel: gpt-4o-transcribe
+  listenModel: gpt-audio-1.5
+  ttsModel: gpt-4o-mini-tts
+  ttsVoiceEnv: THEA2_TTS_VOICE
+  falKeyEnv: THEA2_FAL_KEY
+  braveKeyEnv: THEA2_BRAVE_KEY
+  walletMonthUsd: 10
