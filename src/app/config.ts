@@ -60,13 +60,24 @@ export interface Thea2Config {
   inhibitionPlacement: 'trailing' | 'merged';
   gravity: { seedWeight: number }; // g, default 0.7
   reconcile: { lostReplyWindowMin: number };
-  embedder: { kind: 'fastembed' | 'api' | 'hash'; model?: string | undefined };
+  embedder: { kind: 'fastembed' | 'api' | 'hash'; model?: string | undefined; dim?: number | undefined };
+  /** v8 mind block (see configSchema). Absent ⇒ the v7 exemplar composition. */
+  mind?: MindConfig | undefined;
   /**
    * M21: the pinned OpenCode spine child. Absent ⇒ absent registration — the
    * native loop serves (rule 5). Present ⇒ compose constructs the runner; the
    * `opencode` binary must be provisioned first (M.6, install.sh block).
    */
   spine?: SpineBlockYaml | undefined;
+}
+
+/** v8 "Nothing Told" mind settings (defaults applied by the schema). */
+export interface MindConfig {
+  engine: 'v8';
+  dir: string;
+  thoughtsPerDay: number;
+  textFirstPerDay: number;
+  sleepHourLocal: number;
 }
 
 export interface ConfigIssue {
@@ -191,6 +202,10 @@ const doorYamlSchema = z.strictObject({
   pricing: z
     .strictObject({ inputPerM: z.number().min(0), outputPerM: z.number().min(0) })
     .optional(),
+  /** v8: the one reasoning setting this door's model accepts with tools (outranks class defaults). */
+  effortLock: z.enum(EFFORTS).optional(),
+  /** v8: the token-cap field the door accepts (OpenAI gpt-5.x: max_completion_tokens). */
+  outputCapParam: z.enum(['max_tokens', 'max_completion_tokens']).optional(),
 });
 
 type DoorYaml = z.infer<typeof doorYamlSchema>;
@@ -261,8 +276,27 @@ const configSchema = z.strictObject({
   embedder: z.strictObject({
     kind: z.enum(['fastembed', 'api', 'hash']),
     model: z.string().min(1).optional(),
+    /** Vector width the API returns (text-embedding-3-small = 1536). Absent ⇒ 384. */
+    dim: z.number().int().positive().optional(),
   }),
   spine: spineBlockSchema.optional(),
+  /**
+   * v8 "Nothing Told" (plan thea2-v8-nothing-told.md). Present ⇒ thead composes
+   * the mind pipeline (src/mind) instead of the exemplar corpus. Absent ⇒ the
+   * v7 composition, unchanged.
+   */
+  mind: z
+    .strictObject({
+      engine: z.literal('v8'),
+      dir: z.string().min(1).default('var/mind'),
+      /** Idle-mind budget: thoughts she may have per day (the wander job's cap). */
+      thoughtsPerDay: z.number().int().min(0).max(200).default(12),
+      /** Texts she may start per day (intentions that become messages). */
+      textFirstPerDay: z.number().int().min(0).max(20).default(3),
+      /** Local hour (his zone) the nightly sleep pass runs. */
+      sleepHourLocal: z.number().int().min(0).max(23).default(4),
+    })
+    .optional(),
 });
 
 type YamlConfig = z.infer<typeof configSchema>;
@@ -328,6 +362,8 @@ export const loadConfig = (
     ...(d.temperature !== undefined ? { temperature: d.temperature } : {}),
     ...(d.topP !== undefined ? { topP: d.topP } : {}),
     ...(d.pricing !== undefined ? { pricing: d.pricing } : {}),
+    ...(d.effortLock !== undefined ? { effortLock: d.effortLock } : {}),
+    ...(d.outputCapParam !== undefined ? { outputCapParam: d.outputCapParam } : {}),
   });
 
   const y = parsed.data as YamlConfig;
@@ -409,5 +445,6 @@ export const loadConfig = (
     reconcile: y.reconcile,
     embedder: y.embedder,
     ...(y.spine !== undefined ? { spine: y.spine } : {}),
+    ...(y.mind !== undefined ? { mind: y.mind } : {}),
   };
 };

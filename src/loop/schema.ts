@@ -47,6 +47,8 @@ export const ModelDecisionSchema = z.object({
   weight: unit,
   reluctance: unit,
   completeness: unit,
+  /** v8: her private expectation of what happens next (never sent; feeds surprise). */
+  expect: z.string().max(400).optional(),
 });
 
 /**
@@ -72,6 +74,8 @@ export const DecisionObjectSchema = z.object({
   spawns: z.array(SpawnRecordSchema),
   /** Every gate verdict recorded this turn — candidate-call path and plan path both. */
   inhibitions: z.array(VerdictSchema),
+  /** v8: her private expectation, carried from the model decision (never sent). */
+  expect: z.string().max(400).optional(),
 });
 
 export const decisionIssue = (e: z.ZodError): string =>

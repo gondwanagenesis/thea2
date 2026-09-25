@@ -9,6 +9,7 @@ import { makeApiEmbedder, makeHashEmbedder, type Embedder } from '../embed/index
 export interface EmbedderConfig {
   kind: 'hash' | 'api' | 'fastembed';
   model?: string | undefined;
+  dim?: number | undefined;
 }
 
 export const makeEmbedder = (
@@ -24,6 +25,7 @@ export const makeEmbedder = (
     return makeApiEmbedder({
       baseUrl: deps.baseUrl,
       model: cfg.model,
+      ...(cfg.dim !== undefined ? { dim: cfg.dim } : {}),
       apiKey: deps.apiKey,
       // The transport is injected everywhere; composition is the one place the
       // global is legal to name (api-embedder's own contract note).

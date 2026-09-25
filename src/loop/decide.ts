@@ -37,6 +37,7 @@ export const decideToolDef: ToolDef = {
       weight: { ...unit, description: 'how much this matters to you' },
       reluctance: { ...unit, description: 'how much you would rather not say it' },
       completeness: { ...unit, description: 'how finished the thought is' },
+      expect: { type: 'string', description: 'private, never sent: one short line on what you think happens next' },
     },
     required: ['plan', 'bubbles', 'confidence', 'weight', 'reluctance', 'completeness'],
   },

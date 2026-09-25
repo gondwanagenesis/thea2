@@ -4,9 +4,23 @@
 // detached afterturn, then stops the scheduler. In-flight turns are DRAINED,
 // never aborted, at shutdown — a half-said reply is worse than a late one.
 
-import { ingestUpdates } from '../bridge/index.js';
+import { ingestUpdates, type Channel, type InboundMsg, type MessageLedger, type OffsetStore } from '../bridge/index.js';
 import type { EventLog } from '../events/index.js';
-import type { System } from './compose.js';
+
+/**
+ * What thead needs from a composed system — v7's System and v8's V8System
+ * both satisfy it structurally, so one process edge serves either mind.
+ */
+export interface TheadSystem {
+  cfg: { bridge: { allowedChatIds: number[] } };
+  channel: Channel;
+  events: EventLog;
+  ledger: MessageLedger;
+  offsets: OffsetStore;
+  pipeline: { inbound(m: InboundMsg): string | undefined };
+  reconcile(): Promise<void>;
+  stop(): Promise<void>;
+}
 
 export interface TheadHandle {
   stop(): Promise<void>;
@@ -18,7 +32,7 @@ export interface TheadHandle {
   readonly events: EventLog;
 }
 
-export const startThead = (sys: System, opts: { signal?: AbortSignal | undefined } = {}): TheadHandle => {
+export const startThead = (sys: TheadSystem, opts: { signal?: AbortSignal | undefined } = {}): TheadHandle => {
   const ac = new AbortController();
   if (opts.signal !== undefined) {
     if (opts.signal.aborted) ac.abort();

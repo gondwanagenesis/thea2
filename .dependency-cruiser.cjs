@@ -37,6 +37,13 @@ const MODULES = {
   "src/life": ["kernel", "events", "model", "affect", "memory", "loop", "sched"],
   "src/siblings": ["kernel", "events", "model", "sched", "probes"],
   "src/probes": ["kernel", "events", "model", "embed", "corpus", "affect"],
+  // v8 "Nothing Told" (plan thea2-v8-nothing-told.md): the mind pipeline —
+  // evoke/feel/modulate/compose/appraise/remember/wander/sleep. It drives the
+  // loop with its own packet and replaces the exemplar corpus in a v8 boot.
+  "src/mind": [
+    "kernel", "events", "model", "embed", "affect", "coupling", "memory",
+    "inhibit", "loop", "realize", "bridge", "sched",
+  ],
   "src/app": [
     "kernel", "events", "model", "embed", "affect", "coupling", "corpus",
     "memory", "assemble", "inhibit", "loop", "realize", "bridge", "sched",
@@ -45,6 +52,8 @@ const MODULES = {
     // (routing table) and derive (the S7 CLI verbs) into compose/cli.
     // W2 (v7): the spine runner — compose registers the SpineRunner (M21).
     "consolidate", "probes", "life", "siblings", "derive", "spine",
+    // v8: compose-v8 wires the mind pipeline.
+    "mind",
   ],
 };
 

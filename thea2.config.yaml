@@ -1,35 +1,40 @@
-# Thea2 production config. Secrets NEVER live here (AGENTS rule 7) —
-# door keys arrive via /etc/thea2/keys.env under each door's keyEnv name.
-# loadConfig rejects any secret-shaped value in this file at startup.
+# Thea2 production config — v8 "Nothing Told" (plan thea2-v8-nothing-told.md).
+# Secrets NEVER live here (AGENTS rule 7) — door keys arrive via
+# /etc/thea2/keys.env under each door's keyEnv name. loadConfig rejects any
+# secret-shaped value in this file at startup. Unknown keys are rejected.
 #
-# sync'd with src/app/config.ts schema (M20). Unknown keys are rejected.
-#
-# P-DOOR door registry (DR.1; ADR-010). voice = Neuralwatt glm-5.3 at
-# reasoning_effort low (D.6-1); z.ai's anthropic door stays as voiceFallback
-# (the coding-plan door); mind/judge per D.6-2. Legacy endpoint/protocol/tiers
-# configs still load and synthesize the three tier doors.
+# Doors (v8, measured 2026-09-25 from the VPS):
+#   voice         OpenAI gpt-5.6-sol — the SAME brain as the original Thea, so a
+#                 comparison of the two Theas compares theories, not models.
+#                 /chat/completions accepts function tools on this model ONLY
+#                 with reasoning_effort 'none' (400 otherwise) and rejects
+#                 `max_tokens` (needs max_completion_tokens). Temperature is
+#                 honored at effort none — the metabolism channel sets it per turn,
+#                 so the door carries NO temperature (a door temperature outranks
+#                 the request).
+#   voiceFallback Neuralwatt glm-5.3 effort low (1.1 s TTFT measured), tried once
+#                 when a turn fails outright on the voice door.
+#   mind          Neuralwatt deepseek-v4-flash — slow appraisal, labelling.
+#   judge         Neuralwatt kimi-k3 — unused by v8 today; the registry needs it.
 models:
   doors:
     voice:
+      endpoint: https://api.openai.com/v1
+      protocol: openai
+      keyEnv: THEA2_OPENAI_KEY
+      model: gpt-5.6-sol
+      effortLock: none
+      outputCapParam: max_completion_tokens
+      forcing: tool_choice
+      pricing: { inputPerM: 4, outputPerM: 20 }
+    voiceFallback:
       endpoint: https://api.neuralwatt.com/v1
       protocol: openai
       keyEnv: THEA2_NEURALWATT_KEY
       model: glm-5.3
       effort: low
-      # tool_choice (prod hotfix 2026-09-03): with forcing none, glm-5.3 sometimes
-      # wrote the decide call as pseudo-XML text and the prose path SENT it to
-      # Telegram (ledger msgIds 93/95). Forcing returns a structured call; the
-      # door smoke proved NW honors it. DR.1 deviation recorded in STATUS.
       forcing: tool_choice
-      temperature: 0.7
       topP: 0.95
-    voiceFallback:
-      endpoint: https://api.z.ai/api/anthropic
-      protocol: anthropic
-      keyEnv: THEA2_MODEL_API_KEY
-      model: glm-5.3-flash
-      thinkingBudget: 512
-      forcing: tool_choice
     mind:
       endpoint: https://api.neuralwatt.com/v1
       protocol: openai
@@ -44,19 +49,14 @@ models:
       model: kimi-k3
       effort: none
       forcing: tool_choice
-# The people registry (Round 3): her [INTERLOCUTOR] line says his name, not a
-# raw tg id. Keyed by the bridge's speaker person id.
 people:
   "tg:6971556140":
     name: Diego
     language: es
 bridge:
-  # Diego's telegram chat id — the ONLY chat the bridge answers. Filled from
-  # the first live getUpdates poll (2026-09-02, NEOGEO private chat).
+  # Diego's telegram chat id — the ONLY chat the bridge answers.
   allowedChatIds: [6971556140]
-# Diego's zone: quiet hours, the daily heartbeat cap, and the day census are
-# read in THIS zone (Phase 1, 2026-09-02 — they were UTC before, which gagged
-# her 04:00–11:00 Madrid and freed her at 03:00).
+# Diego's zone: quiet hours, the day census, the sleep hour are read in THIS zone.
 timezone: Europe/Madrid
 affect:
   statePath: var/affect/state.json
@@ -69,23 +69,18 @@ budgets:
   windowTokens: 10000
   turnTokens: 24000
 inhibitionPlacement: trailing
-gravity:
-  seedWeight: 0.7
 reconcile:
   lostReplyWindowMin: 10
 embedder:
-  # DEVIATION (recorded in M20 "As built"): kind 'fastembed' is NOT built yet —
-  # it lands at S9 and fails loud if configured now. Until then prod runs the
-  # hash embedder: same identity everywhere (corpus index + episodes + queries),
-  # weaker semantics. When S9 lands, switch the kind AND rebuild var/cache/corpus.
-  kind: hash
-  # model: BAAI/bge-small-en-v1.5   # uncomment with kind: api|fastembed at S9
-# M21 spine (P-LOOP/P-SPINE wiring, enabled 2026-09-03): Thea's turn rides the
-# pinned OpenCode spine child. Delete this block to return to the native loop
-# (rule 5). The token NEVER lives here — THEA2_SPINE_TOKEN arrives via
-# /etc/thea2/keys.env (systemd EnvironmentFile); her turns' model is the voice
-# door, passed in at the wiring site (compose), never pinned in this block.
-spine:
-  version: '1.18.3'
-  port: 4096
-  authTokenEnv: THEA2_SPINE_TOKEN
+  # v8: real vectors (the v7 hash embedder made recall lexical noise).
+  # Rides the voice door's endpoint + key (OpenAI).
+  kind: api
+  model: text-embedding-3-small
+  dim: 1536
+mind:
+  engine: v8
+  dir: var/mind
+  # Idle mind budget: at most 12 private thoughts and 3 texts she starts per day.
+  thoughtsPerDay: 12
+  textFirstPerDay: 3
+  sleepHourLocal: 4

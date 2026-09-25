@@ -90,6 +90,11 @@ export interface LoopConfig {
   spawns: SpawnsMode;
   /** FA.2 — the turn-class transport dial for the voice door (see TurnTransportConfig). */
   turnTransport: TurnTransportConfig;
+  /**
+   * v8: the [OUTPUT] contract text. Absent ⇒ decide.ts OUTPUT_CONTRACT (v7).
+   * v8 supplies a mechanics-only contract (no scenes, no D:/T: grammar).
+   */
+  outputContract?: string | undefined;
 }
 
 /**

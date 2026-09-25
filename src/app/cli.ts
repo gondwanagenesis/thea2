@@ -23,6 +23,7 @@ import type { EventEnvelope } from '../events/index.js';
 import { exportProposals } from '../consolidate/index.js';
 import { loadConfig } from './config.js';
 import { compose, type System } from './compose.js';
+import { composeV8 } from './compose-v8.js';
 import { processIsAlive, readLock, THEAD_LOCK_PATH } from './lock.js';
 import { startThead, type TheadHandle } from './thead.js';
 import { corpusCheckVerb, deriveVerb } from './derive-cli.js';
@@ -71,9 +72,11 @@ export const cliMain = async (
 
   switch (verb) {
     case 'thead': {
-      const sys = await compose(loadConfig(configPath, env), 'prod');
+      const cfg = loadConfig(configPath, env);
+      // v8 "Nothing Told": the mind block selects the mind pipeline; absent = v7 unchanged.
+      const sys = cfg.mind !== undefined ? await composeV8(cfg, 'prod') : await compose(cfg, 'prod');
       const handle = startThead(sys);
-      io.out(`thea2 thead up — chat ${sys.cfg.bridge.allowedChatIds.join(', ')}, model ${sys.cfg.models.tiers.main}`);
+      io.out(`thea2 thead up — chat ${sys.cfg.bridge.allowedChatIds.join(', ')}, model ${sys.cfg.models.tiers.main}${cfg.mind !== undefined ? ', mind v8' : ''}`);
       onThead?.(handle); // main.ts wires SIGINT/SIGTERM → handle.stop()
       await new Promise<void>(() => {
         /* runs until the process exits */

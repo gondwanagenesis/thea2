@@ -31,7 +31,9 @@ export interface WireBody {
   model: string;
   messages: WireMessage[];
   temperature: number;
-  max_tokens: number;
+  /** Exactly one of the two token caps rides, per the door's `outputCapParam`. */
+  max_tokens?: number;
+  max_completion_tokens?: number;
   seed?: number;
   /** P-DOOR DR.2: the reasoning control, openai spelling. */
   reasoning_effort?: ReasoningEffort;
@@ -270,6 +272,8 @@ export const reasoningEffortFor = (
   model: string,
   door?: Door | undefined,
 ): ReasoningEffort | undefined => {
+  // v8: a locked door speaks one reasoning setting, whatever the class asks.
+  if (door?.effortLock !== undefined) return door.effortLock;
   const effort = req.reasoning ?? door?.effort;
   if (effort === undefined) return undefined;
   if (effort === 'none' && GLM5_RE.test(model)) return 'minimal';
@@ -355,7 +359,9 @@ export const buildWireBody = (input: BuildBodyInput): WireBody => {
     model,
     messages,
     temperature,
-    max_tokens: req.maxTokens,
+    ...(door?.outputCapParam === 'max_completion_tokens'
+      ? { max_completion_tokens: req.maxTokens }
+      : { max_tokens: req.maxTokens }),
     ...(seedSupported && req.seedHint !== undefined ? { seed: req.seedHint } : {}),
     ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
     ...(door?.topP !== undefined ? { top_p: door.topP } : {}),

@@ -1,0 +1,52 @@
+# Affect → memory coupling, v8 ("Nothing Told"). Read by composeV8 only; the v7
+# composition keeps coupling.yaml unchanged.
+#
+# score += clamp( aᵀ·M·e + Σ formRules, −λ, +λ )     (same law as v2)
+#   a = her live state (12-dim deviation vector)
+#   e = a MEMORY's felt signature (derived from the ticker's own tag tables —
+#       real feelings, not hand-tagged scenes)
+#
+# Why v3 (2026-09-25): measured on ticker-derived signatures, v2's matrix made
+# every aversive state recall more of itself at the rail (sad room → sad/low
+# memories +0.22/+0.25, anger → angry +0.057 over any steadying memory, fear →
+# relief −0.104). v2 was tuned against hand-tagged 2-4-dim scene signatures;
+# real felt vectors carry a full primary at 1.0, so the aversive diagonals
+# dominated the corrective off-diagonals. v3 keeps the SAME design law — feel
+# it, never feed it; tension reaches for the times she steadied things — with
+# weights that make it true on real signatures. The property tests in
+# test/mind/laws.test.ts pin the behavior (anti-escalation per state).
+
+version: 3
+lambda: 0.25
+
+matrix:
+  # --- congruent: positive states may compound (that is what joy does)
+  - {from: joy,          to: joy,          w: 0.60, why: 'a good mood reaches for bright memories'}
+  - {from: anticipation, to: anticipation, w: 0.45, why: 'excitement recalls forward-leaning moments'}
+  - {from: pride,        to: pride,        w: 0.45, why: 'an earned win recalls other earned wins'}
+  - {from: valence,      to: valence,      w: 0.30, why: 'overall warmth is self-consistent; halved from v2 so a low day does not pull low memories by itself'}
+  - {from: arousal,      to: arousal,      w: 0.40, why: 'energy matches energy'}
+  - {from: surprise,     to: surprise,     w: 0.30, why: 'a startle recalls quick pivots, briefly'}
+
+  # --- aversive diagonals: faint (she feels it; recall does not feed it)
+  - {from: sadness, to: sadness, w: 0.10, why: 'sad memories stay reachable, barely tilted'}
+  - {from: shame,   to: shame,   w: 0.06, why: 'owning an L gets a little room, never a residence'}
+  - {from: anger,   to: anger,   w: 0.02, why: 'an angry moment almost never wants an angrier precedent'}
+  - {from: disgust, to: disgust, w: 0.02, why: 'same family as anger'}
+  - {from: fear,    to: fear,    w: -0.10, why: 'worry pushes away worried memories and toward ones where the fear resolved (relieved carries fear −1)'}
+
+  # --- corrective (repair): aversive states reach for warmth and steadiness
+  - {from: sadness, to: joy,       w: 0.22, why: 'sad air reaches for the tender/warm times, not co-collapse'}
+  - {from: sadness, to: valence,   w: 0.30, why: 'warm-steady moments over heavy ones'}
+  - {from: sadness, to: arousal,   w: -0.20, why: 'sad slows her down; bouncy memories read false'}
+  - {from: anger,   to: joy,       w: 0.25, why: 'heat in the room recalls the times it cooled'}
+  - {from: anger,   to: valence,   w: 0.40, why: 'repair and de-escalation over escalation'}
+  - {from: anger,   to: dominance, w: 0.15, why: 'grounded and direct, not loud'}
+  - {from: fear,    to: dominance, w: 0.30, why: 'worry recalls steady hands'}
+  - {from: fear,    to: joy,       w: 0.15, why: 'worry recalls the times it turned out fine'}
+  - {from: shame,   to: joy,       w: 0.15, why: 'after an L, a little light'}
+  - {from: arousal, to: sadness,   w: -0.25, why: 'high energy does not drag heavy memories into the room'}
+
+form_rules:
+  - {when: {dim: arousal, min:  0.4}, boostTag: banter, gain: 0.10, why: 'high energy favors quick clipped shapes'}
+  - {when: {dim: arousal, max: -0.4}, boostTag: quiet,  gain: 0.10, why: 'low energy favors the quiet room'}

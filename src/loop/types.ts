@@ -111,6 +111,8 @@ export interface DecisionObject {
   toolTrace: ToolStep[];
   spawns: SpawnRecord[];
   inhibitions: Verdict[];
+  /** v8: her private expectation of what happens next (never sent). */
+  expect?: string | undefined;
 }
 
 /** What the model authors of a decision. The rest of the DecisionObject is loop-owned. */
@@ -121,6 +123,8 @@ export interface ModelDecision {
   weight: number;
   reluctance: number;
   completeness: number;
+  /** v8: her private expectation of what happens next (never sent). */
+  expect?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------

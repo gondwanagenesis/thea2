@@ -42,6 +42,15 @@ export interface Door {
   temperature?: number | undefined;
   topP?: number | undefined;
   pricing?: DoorPricing | undefined;
+  /**
+   * v8: a door whose model accepts exactly ONE reasoning setting with tools
+   * (gpt-5.6-sol on /chat/completions rejects function tools unless
+   * reasoning_effort is 'none' — measured 2026-09-25). Outranks the class
+   * default AND any caller override on this door's wire.
+   */
+  effortLock?: ReasoningEffort | undefined;
+  /** v8: the token-cap field name this door accepts (OpenAI gpt-5.x rejects `max_tokens`). */
+  outputCapParam?: 'max_tokens' | 'max_completion_tokens' | undefined;
 }
 
 /** The decide tool's wire name (DR.3 forcing keys on it; the loop's DECIDE_TOOL_NAME matches). */

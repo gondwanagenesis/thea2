@@ -81,6 +81,8 @@ const normalizeDecision = (raw: unknown): unknown => {
     weight: clamp01(r['weight']),
     reluctance: clamp01(r['reluctance']),
     completeness: clamp01(r['completeness']),
+    // v8: a private expectation rides through when it is a usable string.
+    ...(typeof r['expect'] === 'string' && r['expect'].trim() !== '' ? { expect: r['expect'].trim().slice(0, 400) } : {}),
   };
 };
 
@@ -211,6 +213,7 @@ const lockDecision = (state: TurnState, decision: ModelDecision): DecisionObject
     toolTrace: state.toolTrace,
     spawns: state.spawns,
     inhibitions: state.inhibitions,
+    ...(decision.expect !== undefined ? { expect: decision.expect } : {}),
   };
   const check = DecisionObjectSchema.safeParse(d);
   if (!check.success) {
@@ -384,7 +387,8 @@ export const runLoop: RunLoop = async (entry, deps) => {
         window: deps.window,
         turnText: situation,
         placement: cfg.inhibitionPlacement,
-        outputContract: OUTPUT_CONTRACT,
+        // v8 supplies its own mechanics-only contract; v7 keeps the default.
+        outputContract: cfg.outputContract ?? OUTPUT_CONTRACT,
       });
 
       /** Records how a decision arrived; a prose fold is worth knowing about. */

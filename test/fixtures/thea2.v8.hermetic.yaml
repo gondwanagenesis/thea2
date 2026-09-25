@@ -1,0 +1,35 @@
+# Thea2 v8 hermetic fixture — the mind e2e tests boot THIS config through
+# composeV8 (var/ redirected under the test's tmp dir). No secrets (AGENTS
+# rule 7): token + key arrive via env in the harness.
+models:
+  endpoint: https://hermetic.invalid/v1
+  tiers:
+    main: mock-main
+    cheap: mock-cheap
+    reasoning: mock-reasoning
+bridge:
+  allowedChatIds: [861800000]
+people:
+  diego:
+    name: Diego
+timezone: Europe/Madrid
+affect:
+  statePath: var/affect/state.json
+  quietHours: [1, 7]
+sched:
+  statePath: var/sched/state.json
+budgets:
+  packetTokens: 6000
+  windowTokens: 10000
+  turnTokens: 24000
+inhibitionPlacement: trailing
+reconcile:
+  lostReplyWindowMin: 10
+embedder:
+  kind: hash
+mind:
+  engine: v8
+  dir: var/mind
+  thoughtsPerDay: 4
+  textFirstPerDay: 2
+  sleepHourLocal: 4
