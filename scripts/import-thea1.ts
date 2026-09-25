@@ -26,7 +26,6 @@ import { openEventLog } from '../src/events/index.js';
 import { initialAffectState, type AffectState } from '../src/affect/index.js';
 import { COUPLING_BASELINES, signature } from '../src/coupling/index.js';
 import {
-  APPRAISAL_TAGS,
   isAppraisalTag,
   openMindStore,
   replyText,
@@ -178,9 +177,10 @@ const LabelSchema = z.object({
   items: z.array(
     z.object({
       n: z.number().int(),
-      move: z.enum(MOVES),
-      tone: z.enum(TONES),
-      felt: z.enum(APPRAISAL_TAGS),
+      // Words are validated after parsing (clean()): one off-list word must not sink a batch.
+      move: z.string().max(40),
+      tone: z.string().max(40),
+      felt: z.string().max(40),
       felt_i: z.number().int().min(1).max(10),
       landed: z.number().int().min(-2).max(2).nullable(),
       why: z.string().max(90).nullable(),
@@ -198,7 +198,29 @@ const LABEL_SYSTEM = [
   'Return JSON {"items":[...]} with one entry per item, same n.',
 ].join('\n');
 
-const labelBatch = async (model: ModelClient, batch: Array<{ n: number; p: Pair }>): Promise<z.infer<typeof LabelSchema>['items']> => {
+type RawLabel = z.infer<typeof LabelSchema>['items'][number];
+interface Label {
+  n: number;
+  move: string;
+  tone?: string | undefined;
+  felt?: string | undefined;
+  felt_i: number;
+  landed: number | null;
+  why: string | null;
+  unfit: boolean;
+}
+const clean = (r: RawLabel): Label => ({
+  n: r.n,
+  move: (MOVES as readonly string[]).includes(r.move) ? r.move : 'other',
+  tone: (TONES as readonly string[]).includes(r.tone) && r.tone !== 'neutral' ? r.tone : undefined,
+  felt: isAppraisalTag(r.felt) ? r.felt : undefined,
+  felt_i: r.felt_i,
+  landed: r.landed,
+  why: r.why,
+  unfit: r.unfit,
+});
+
+const labelBatch = async (model: ModelClient, batch: Array<{ n: number; p: Pair }>): Promise<Label[]> => {
   const user = batch
     .map(({ n, p }) =>
       [
@@ -222,7 +244,7 @@ const labelBatch = async (model: ModelClient, batch: Array<{ n: number; p: Pair 
     maxTokens: 4000,
     temperature: 0.1,
   });
-  return res.content.items;
+  return res.content.items.map(clean);
 };
 
 // ---------------------------------------------------------------------------
@@ -439,9 +461,9 @@ const main = async (): Promise<void> => {
   if (DRY) return;
 
   // label in batches of 10, four in flight
-  const labels = new Map<number, z.infer<typeof LabelSchema>['items'][number]>();
+  const labels = new Map<number, Label>();
   const batches: Array<Array<{ n: number; p: Pair }>> = [];
-  for (let i = 0; i < pairs.length; i += 10) batches.push(pairs.slice(i, i + 10).map((p, k) => ({ n: i + k, p })));
+  for (let i = 0; i < pairs.length; i += 6) batches.push(pairs.slice(i, i + 6).map((p, k) => ({ n: i + k, p })));
   let done = 0;
   const worker = async (): Promise<void> => {
     for (;;) {
@@ -479,7 +501,7 @@ const main = async (): Promise<void> => {
     const felt =
       snap !== undefined
         ? { sig: vecToArray(signature(snap.state, COUPLING_BASELINES)), word: lab?.felt, source: 'inherited' as const }
-        : lab !== undefined
+        : lab?.felt !== undefined
           ? { sig: tagSignature(lab.felt, lab.felt_i), word: lab.felt, source: 'estimated' as const }
           : { sig: new Array<number>(12).fill(0), source: 'estimated' as const };
     const landed = lab?.landed ?? null;

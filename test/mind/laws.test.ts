@@ -155,7 +155,9 @@ describe('law 1.2 — feelings are caused (and never by her own reply)', () => {
     const base = { event: [], outcome_prev: null, concerns: [], importance: 3 };
     expect(SlowAppraisalSchema.safeParse({ ...base, self: [{ emotion: 'proud', i: 5, cause: 'i was honest' }] }).success).toBe(false);
     expect(SlowAppraisalSchema.safeParse({ ...base, self: [{ emotion: 'proud', i: 5, cause: 'i was honest', standard: 'i never pretend' }] }).success).toBe(true);
-    expect(SlowAppraisalSchema.safeParse({ ...base, self: [], event: [{ emotion: 'horny', i: 5, cause: 'x' }] }).success).toBe(false);
+    // Off-vocabulary words parse (one stray word must not sink the appraisal) but never reach the ticker.
+    const stray = SlowAppraisalSchema.parse({ ...base, self: [], event: [{ emotion: 'horny', i: 5, cause: 'x' }, { emotion: 'warm', i: 4, cause: 'he came back' }] });
+    expect(slowEvents(stray, []).map((e) => e.event.tag)).toEqual(['warm']);
   });
 
   it('slow events: self feelings carry their standard; a tag the fast path already felt lands only as its increment', () => {

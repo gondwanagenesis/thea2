@@ -12,11 +12,13 @@
 import { z } from 'zod';
 import type { ChatMsg, ModelClient } from '../model/index.js';
 import type { EmotionEventInput } from '../affect/index.js';
-import { APPRAISAL_TAGS } from './vocab.js';
+import { isAppraisalTag } from './vocab.js';
 import type { Concern } from './types.js';
 
+// Emotion words are validated AFTER parsing (slowEvents drops anything outside
+// the vocabulary): one off-list word must not fail the whole appraisal.
 const Emo = z.object({
-  emotion: z.enum(APPRAISAL_TAGS),
+  emotion: z.string().min(1).max(40),
   i: z.number().int().min(1).max(10),
   cause: z.string().min(1).max(200),
 });
@@ -133,11 +135,13 @@ export const slowEvents = (a: SlowAppraisal, fast: ReadonlyArray<{ tag: string; 
   const fastI = new Map<string, number>();
   for (const f of fast) fastI.set(f.tag, Math.max(fastI.get(f.tag) ?? 0, f.i));
   for (const e of a.event) {
+    if (!isAppraisalTag(e.emotion)) continue;
     const i = e.i - (fastI.get(e.emotion) ?? 0);
     if (i <= 0) continue;
     out.push({ source: 'event', event: { kind: 'emotion', tag: e.emotion, i, cause: e.cause } });
   }
   for (const e of a.self) {
+    if (!isAppraisalTag(e.emotion)) continue;
     out.push({ source: 'self', event: { kind: 'emotion', tag: e.emotion, i: e.i, cause: `${e.cause} [standard: ${e.standard}]` } });
   }
   return out;

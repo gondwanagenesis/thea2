@@ -40,7 +40,10 @@ models:
       protocol: openai
       keyEnv: THEA2_NEURALWATT_KEY
       model: deepseek-v4-flash
-      effort: none
+      # effortLock (v8 fork run, 2026-09-25): the client's class default
+      # ('appraisal' → low) outranked `effort: none`, deepseek thought until the
+      # cap and every structured call came back empty. Locked off.
+      effortLock: none
       forcing: tool_choice
     judge:
       endpoint: https://api.neuralwatt.com/v1

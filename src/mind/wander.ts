@@ -23,7 +23,7 @@ import type { Clock, Rng } from '../kernel/index.js';
 import { newId } from '../kernel/index.js';
 import type { EventLog } from '../events/index.js';
 import type { Embedder } from '../embed/index.js';
-import { APPRAISAL_TAGS } from './vocab.js';
+import { isAppraisalTag, type AppraisalTag } from './vocab.js';
 import { ago, hourIn } from './compose.js';
 import { cosine } from './vectors.js';
 import type { MindStore } from './store.js';
@@ -119,7 +119,7 @@ export const ThoughtSchema = z.object({
   thought: z.string().min(1).max(600),
   close: z.boolean().optional(),
   reappraise: z
-    .array(z.object({ emotion: z.enum(APPRAISAL_TAGS), i: z.number().int().min(1).max(6), cause: z.string().min(1).max(160) }))
+    .array(z.object({ emotion: z.string().min(1).max(40), i: z.number().int().min(1).max(6), cause: z.string().min(1).max(160) }))
     .max(2)
     .optional(),
   intention: z.enum(['none', 'text_him']).optional(),
@@ -228,7 +228,8 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
     if (c !== undefined) mind.upsertConcern({ ...c, status: 'closed', touched: now });
   }
   if (out.reappraise !== undefined && out.reappraise.length > 0) {
-    const evs: EmotionEventInput[] = out.reappraise.map((r) => ({ kind: 'emotion', tag: r.emotion, i: r.i, cause: `thinking it over: ${r.cause}` }));
+    const valid = out.reappraise.filter((r): r is typeof r & { emotion: AppraisalTag } => isAppraisalTag(r.emotion));
+    const evs: EmotionEventInput[] = valid.map((r) => ({ kind: 'emotion', tag: r.emotion, i: r.i, cause: `thinking it over: ${r.cause}` }));
     try {
       await deps.affect.applyEvents(evs, { source: 'appraisal' });
     } catch (e) {
