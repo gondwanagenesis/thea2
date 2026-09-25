@@ -32,7 +32,7 @@ import {
   type MindPipeline,
   type MindStore,
 } from '../mind/index.js';
-import { describeWhere, loadWhere, makeBody, type Body, type Exec, type OpenAIBody } from '../body/index.js';
+import { describeWhere, loadWhere, makeBody, remindersJob, type Body, type Exec, type Fal, type OpenAIBody } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
 import { makeEmbedder } from './embedder.js';
 import { withStderrMirror } from './compose.js';
@@ -55,6 +55,7 @@ export interface ComposeV8Opts {
   /** v9 body seams — hermetic tests script ffmpeg/pdftotext and the OpenAI senses. */
   bodyExec?: Exec | undefined;
   bodyOpenAI?: OpenAIBody | undefined;
+  bodyFal?: Fal | undefined;
 }
 
 /** How fresh a shared location must be to stay a fact about his present. */
@@ -179,6 +180,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
           clock,
           events,
           ownerChatId,
+          timeZone: cfg.timezone,
+          mind,
+          embedder,
           mood: () => {
             const s = affect.current();
             return { arousal: s.dials.arousal, pleasure: s.dials.pleasure };
@@ -186,6 +190,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
           recordOutbound: (turnId, msgId, text) => ledger.recordOutbound(turnId, msgId, text),
           ...(opts.bodyExec !== undefined ? { exec: opts.bodyExec } : {}),
           ...(opts.bodyOpenAI !== undefined ? { openai: opts.bodyOpenAI } : {}),
+          ...(opts.bodyFal !== undefined ? { fal: opts.bodyFal } : {}),
           ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
         });
   const bodyTools = body?.register(tools) ?? [];
@@ -297,6 +302,11 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     ...(body !== undefined ? { body: bodySeam(body, clock) } : {}),
   });
   await events.emit('app.boot', { stage: 'pipeline', mind: 'v8', fallback: fallbackModel !== undefined, body: body !== undefined });
+  body?.bind({
+    // Things delivered after their turn ended (a selfie, a video) become lines she remembers sending.
+    remember: (text, turnId) => void window.push({ role: 'assistant', content: text, ts: clock.epochMs(), turnId }),
+    selfEntry: (goal) => void pipeline.selfEntry('heartbeat', goal),
+  });
 
   const CONVERSATION_QUIET_MS = 10 * 60_000;
   const conversationActive = (): boolean =>
@@ -343,6 +353,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         selfEntry: (goal) => pipeline.selfEntry('heartbeat', goal).sent,
       }),
       sleepJob({ mind, model, events, clock, timeZone: cfg.timezone }, utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone)),
+      ...(body !== undefined ? [remindersJob(body.reminders, clock, (goal) => void pipeline.selfEntry('heartbeat', goal))] : []),
     ];
   }
   const sched = startScheduler(jobs, { clock, rng, events, statePath: paths.schedState, interactiveMutex: conversationActive });

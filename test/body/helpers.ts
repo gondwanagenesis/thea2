@@ -10,7 +10,7 @@ import { FakeChannel } from '../../src/bridge/index.js';
 import { makeHashEmbedder } from '../../src/embed/index.js';
 import { loadConfig } from '../../src/app/index.js';
 import { composeV8 } from '../../src/app/compose-v8.js';
-import type { Exec, OpenAIBody } from '../../src/body/index.js';
+import type { Exec, Fal, OpenAIBody } from '../../src/body/index.js';
 import { CHAT, HERMETIC_ENV, seedMindDir, T0, tmpDir, type SeedOpts, type V8Harness } from '../mind/helpers.js';
 
 export const V9_ENV: Record<string, string> = { ...HERMETIC_ENV, THEA2_TEST_OPENAI: 'sk-test-body-0123456789' };
@@ -75,7 +75,25 @@ export interface V9Harness extends V8Harness {
   exec: ReturnType<typeof fakeExec>;
 }
 
-export const bootV9 = async (seed: SeedOpts = {}, over: { openai?: FakeOpenAI; fetchImpl?: typeof fetch } = {}): Promise<V9Harness> => {
+/** fal, scripted: images come back as tiny jpegs; `fail` makes every call throw. */
+export const fakeFal = (opts: { fail?: string } = {}): Fal & { calls: Array<{ model: string; input: Record<string, unknown> }> } => {
+  const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
+  return {
+    calls,
+    image: async (model, input) => {
+      calls.push({ model, input });
+      if (opts.fail !== undefined) throw new Error(opts.fail);
+      return { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2]), url: 'https://fal.invalid/x.jpg', seed: 7 };
+    },
+    video: async (model, input) => {
+      calls.push({ model, input });
+      if (opts.fail !== undefined) throw new Error(opts.fail);
+      return { bytes: new Uint8Array([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70]), url: 'https://fal.invalid/x.mp4' };
+    },
+  };
+};
+
+export const bootV9 = async (seed: SeedOpts = {}, over: { openai?: FakeOpenAI; fetchImpl?: typeof fetch; fal?: Fal } = {}): Promise<V9Harness> => {
   const dir = tmpDir('thea2-v9-');
   const clock = new TestClock(T0);
   await seedMindDir(join(dir, 'var', 'mind'), makeHashEmbedder(), seed);
@@ -93,6 +111,7 @@ export const bootV9 = async (seed: SeedOpts = {}, over: { openai?: FakeOpenAI; f
     jobs: [],
     bodyOpenAI: openai,
     bodyExec: exec,
+    ...(over.fal !== undefined ? { bodyFal: over.fal } : {}),
     ...(over.fetchImpl !== undefined ? { fetchImpl: over.fetchImpl } : {}),
   });
   return { sys, model, channel, clock, dir, openai, exec };

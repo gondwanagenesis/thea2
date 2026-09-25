@@ -6,12 +6,20 @@ import type { Clock } from '../kernel/index.js';
 import type { Channel, InboundMsg } from '../bridge/index.js';
 import type { ToolRegistry } from '../loop/index.js';
 import type { EventLog } from '../events/index.js';
+import type { Embedder } from '../embed/index.js';
+import type { MindStore } from '../mind/index.js';
 import { openHouse, type House } from './house.js';
 import { openAIBody, type OpenAIBody } from './openai.js';
 import { nodeExec } from './exec.js';
 import { makeSenses, type Senses } from './senses.js';
 import { makeMouth, type Mouth } from './voice.js';
 import { bodyTools, type TurnBodyCtx } from './tools.js';
+import { tools2 } from './tools2.js';
+import { makeFal, type Fal } from './fal.js';
+import { makeCamera } from './camera.js';
+import { makeJobs, type Jobs } from './jobs.js';
+import { makeWallet, type Wallet } from './wallet.js';
+import { makeReminders, type Reminders } from './reminders.js';
 import type { BodyCfg, BodySent, Exec, Perceived } from './types.js';
 
 export * from './types.js';
@@ -21,8 +29,16 @@ export { nodeExec } from './exec.js';
 export { makeSenses, howItSounds, PHOTO_PROMPT, FRAMES_PROMPT, LISTEN_PROMPT, FILE_OPENING_CHARS, type Senses } from './senses.js';
 export { makeMouth, speakable, deliveryFor, type Mouth } from './voice.js';
 export { bodyTools, REACTIONS, type TurnBodyCtx, type ToolDeps } from './tools.js';
+export { tools2, type Tools2Deps } from './tools2.js';
 export { locate, describeWhere, loadWhere, saveWhere } from './where.js';
 export { readFileText, stripHtml } from './reading.js';
+export { makeFal, FalError, type Fal } from './fal.js';
+export { makeCamera, SHOTS, SIZES, IMAGE_MODEL, VIDEO_MODEL, type Camera } from './camera.js';
+export { makeJobs, MAX_LIVE_JOBS, type Jobs, type JobRecord } from './jobs.js';
+export { makeWallet, PRICES, type Wallet, type Purse } from './wallet.js';
+export { makeReminders, parseWhen, remindersJob, type Reminders, type Reminder } from './reminders.js';
+export { braveSearch, fetchPage, assertPublicUrl, isPrivateAddress } from './web.js';
+export { searchWords, searchMeaning, renderHit } from './remember-tools.js';
 
 export interface BodyDeps {
   cfg: BodyCfg;
@@ -30,19 +46,33 @@ export interface BodyDeps {
   clock: Clock;
   events: EventLog;
   ownerChatId: number;
+  timeZone: string;
   mood(): { arousal: number; pleasure: number } | undefined;
   recordOutbound(turnId: string, msgId: number, text: string): Promise<void>;
+  mind?: MindStore | undefined;
+  embedder?: Embedder | undefined;
   exec?: Exec | undefined;
   openai?: OpenAIBody | undefined;
+  fal?: Fal | undefined;
   fetchImpl?: typeof fetch | undefined;
+}
+
+/** Bound after the pipeline exists (it needs the body first). */
+export interface BodyLate {
+  remember(text: string, turnId: string): void;
+  selfEntry(goal: string): void;
 }
 
 export interface Body {
   readonly house: House;
   readonly senses: Senses;
   readonly mouth: Mouth;
+  readonly jobs: Jobs;
+  readonly wallet: Wallet;
+  readonly reminders: Reminders;
   /** Registers her tools; returns their names. */
   register(registry: ToolRegistry): string[];
+  bind(late: BodyLate): void;
   // ——— the seam the mind pipeline calls (structurally its BodySeam) ———
   perceive(m: InboundMsg): Promise<Perceived>;
   begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined }): void;
@@ -58,23 +88,51 @@ export const makeBody = (d: BodyDeps): Body => {
   const senses = makeSenses({ openai, exec, house, channel: d.channel, clock: d.clock, fetchImpl: d.fetchImpl });
   const mouth = makeMouth({ openai, exec, house, channel: d.channel, clock: d.clock });
   const turns = new Map<string, TurnBodyCtx>();
+  let late: BodyLate | undefined;
+  const wallet = makeWallet(house, d.clock, d.cfg.walletMonthUsd);
+  const reminders = makeReminders(house);
+  const jobs = makeJobs({
+    clock: d.clock,
+    events: d.events,
+    onFail: (job, error) => late?.selfEntry(`(the ${job.kind} you were making didn't come out: ${error.slice(0, 160)}. he may still be waiting for it.)`),
+  });
+  const fal = d.fal ?? (d.cfg.falKey !== undefined ? makeFal(d.cfg.falKey, d.clock, d.fetchImpl) : undefined);
+  const camera = fal !== undefined ? makeCamera({ fal, house, clock: d.clock }) : undefined;
 
   return {
     house,
     senses,
     mouth,
+    jobs,
+    wallet,
+    reminders,
+    bind: (l) => {
+      late = l;
+    },
     register: (registry) => {
-      const tools = bodyTools({
-        channel: d.channel,
-        house,
-        openai,
-        mouth,
-        clock: d.clock,
-        ownerChatId: d.ownerChatId,
-        turn: (id) => turns.get(id),
-        mood: d.mood,
-        recordOutbound: d.recordOutbound,
-      });
+      const turn = (id: string): TurnBodyCtx | undefined => turns.get(id);
+      const tools = [
+        ...bodyTools({ channel: d.channel, house, openai, mouth, clock: d.clock, ownerChatId: d.ownerChatId, turn, mood: d.mood, recordOutbound: d.recordOutbound }),
+        ...tools2({
+          channel: d.channel,
+          house,
+          clock: d.clock,
+          exec,
+          ownerChatId: d.ownerChatId,
+          timeZone: d.timeZone,
+          turn,
+          recordOutbound: d.recordOutbound,
+          remember: (text, turnId) => late?.remember(text, turnId),
+          camera,
+          jobs,
+          wallet,
+          reminders,
+          braveKey: d.cfg.braveKey,
+          mind: d.mind,
+          embedder: d.embedder,
+          fetchImpl: d.fetchImpl,
+        }),
+      ];
       for (const t of tools) registry.register(t);
       return tools.map((t) => t.def.name);
     },
