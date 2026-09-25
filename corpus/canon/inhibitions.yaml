@@ -26,7 +26,7 @@ tool:
     check: tool in registry           # (also enforced in code — default deny)
   - id: no-secret-args
     why: secret values must never ride tool arguments outward
-    applies: [web_fetch, web_search, send_message, voice_note, poll, send_photo, imagine, selfie, make_video, delegate]
+    applies: [web_fetch, web_search, send_message, voice_note, poll, send_photo, imagine, selfie, make_video, delegate, run_code]
     check: args match none of runtime secret values (injected at compose, never listed here)
 
 plan:

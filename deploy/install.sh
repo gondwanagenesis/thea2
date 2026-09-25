@@ -84,8 +84,28 @@ fi
 install -m 0644 "$PREFIX/deploy/thea2.service"         /etc/systemd/system/thea2.service
 install -m 0644 "$PREFIX/deploy/thea2-backup.service"  /etc/systemd/system/thea2-backup.service
 install -m 0644 "$PREFIX/deploy/thea2-backup.timer"    /etc/systemd/system/thea2-backup.timer
+# v9 body: the code sandbox broker (root, so it can hand each script to
+# systemd-run as a throwaway user with no network). Its socket lives in var/run.
+install -m 0644 "$PREFIX/deploy/thea2-exec.service"    /etc/systemd/system/thea2-exec.service
+install -d -m 0750 -o thea2 -g thea2 "$PREFIX/var/run" "$PREFIX/var/house"
 systemctl daemon-reload
-systemctl enable thea2.service thea2-backup.timer >/dev/null
+systemctl enable thea2.service thea2-backup.timer thea2-exec.service >/dev/null
+systemctl restart thea2-exec.service
+
+# v9 body: her assets, COPIED once from Thea1's install (read-only on Thea1;
+# never linked, never written back): her face references + canonical look,
+# and the cast's canon files. An existing copy is never overwritten.
+if [ -d /opt/thea/imagine/refs ] && [ ! -d "$PREFIX/var/house/refs" ]; then
+  cp -r /opt/thea/imagine/refs "$PREFIX/var/house/refs"
+fi
+if [ -f /opt/thea/selfie/persona.md ] && [ -d "$PREFIX/var/house/refs/thea" ] && [ ! -f "$PREFIX/var/house/refs/thea/look.md" ]; then
+  sed -n '/^## What I actually look like/,/^## /p' /opt/thea/selfie/persona.md | sed '$d' > "$PREFIX/var/house/refs/thea/look.md"
+fi
+if [ -d /opt/thea/cast ] && [ ! -d "$PREFIX/var/house/cast" ]; then
+  mkdir -p "$PREFIX/var/house/cast"
+  cp /opt/thea/cast/*.md "$PREFIX/var/house/cast/" 2>/dev/null || true
+fi
+chown -R thea2:thea2 "$PREFIX/var/house"
 
 cat <<'EOF'
 >> install done. Remaining operator steps (deploy/ops.md):

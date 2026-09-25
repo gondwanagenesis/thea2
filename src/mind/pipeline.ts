@@ -64,7 +64,7 @@ export interface SelfEntryHandle {
  */
 export interface BodySeam {
   perceive(m: InboundMsg): Promise<{ text: string; voice: boolean }>;
-  begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined }): void;
+  begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined; text?: string | undefined }): void;
   /** What she sent besides text bubbles during the turn (already on the ledger). */
   end(turnId: string): Array<{ msgId: number; text: string }>;
   /** Speak the reply as a voice note; undefined = could not (the text path takes over). */
@@ -250,7 +250,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         emit('incident.body_sense_failed', { turnId: raw.turnId, error: asError(e).message }, raw.turnId);
       }
     }
-    deps.body?.begin(item.turnId, { chatId: item.m.chatId, ...(selfEntry ? {} : { inboundMsgId: item.m.msgId }) });
+    deps.body?.begin(item.turnId, { chatId: item.m.chatId, ...(selfEntry ? {} : { inboundMsgId: item.m.msgId, text: item.m.text }) });
     const { m, turnId } = item;
 
     await deps.affect.applyEvents([], { source: 'other' }); // bring the engine to now
@@ -371,7 +371,9 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
 
     const abort = new AbortController();
     live = { abort, armed: true };
-    const stale = queue.length > 0 && !selfEntry;
+    // Only a newer message FROM HIM makes these words stale; her own self-entries
+    // (a fork coming back, a reminder) queue behind the reply, never over it.
+    const stale = !selfEntry && queue.some((q) => q.kind === undefined);
     // v9: he spoke, so she answers out loud — the same words, as one voice note.
     // A voice that fails falls back to the text path; nothing is ever lost to it.
     const spoken =

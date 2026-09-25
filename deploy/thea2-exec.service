@@ -1,0 +1,14 @@
+[Unit]
+Description=Thea2 code sandbox broker (v9: each script runs as a throwaway user with no network)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /opt/thea2/deploy/exec-broker.mjs
+Environment=THEA2_EXEC_SOCK=/opt/thea2/var/run/exec.sock
+Environment=THEA2_EXEC_OWNER=thea2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

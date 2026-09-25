@@ -19,6 +19,8 @@ import { describeWhere, loadWhere } from './where.js';
 export interface TurnBodyCtx {
   chatId: number;
   inboundMsgId?: number | undefined;
+  /** His message this turn answers (as the senses made it) — a fork needs it. */
+  text?: string | undefined;
   sent: BodySent[];
 }
 

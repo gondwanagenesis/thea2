@@ -19,7 +19,7 @@ export interface JobRecord {
 }
 
 export interface Jobs {
-  start(kind: string, what: string, turnId: string, run: () => Promise<string>): { ok: true; id: string } | { ok: false; reason: string };
+  start(kind: string, what: string, turnId: string, run: (id: string) => Promise<string>): { ok: true; id: string } | { ok: false; reason: string };
   list(): JobRecord[];
   /** Resolves when every running job has settled (tests, shutdown). */
   idle(): Promise<void>;
@@ -44,7 +44,8 @@ export const makeJobs = (d: {
       jobs.push(rec);
       if (jobs.length > 50) jobs.splice(0, jobs.length - 50);
       void d.events.emit('body.job_started', { id, kind, what: rec.what }, turnId);
-      const p = run()
+      const p = Promise.resolve()
+        .then(() => run(id))
         .then((result) => {
           rec.status = 'done';
           rec.endedAt = d.clock.epochMs();

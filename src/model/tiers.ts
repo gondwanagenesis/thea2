@@ -77,6 +77,7 @@ export const REASONING_BY_CLASS: Record<TaskClass, ReasoningEffort> = {
   derive: 'high',
   judge: 'high',
   'probe-judge': 'high',
+  cast: 'low',
 };
 
 /**

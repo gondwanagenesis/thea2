@@ -20,6 +20,11 @@ import { makeCamera } from './camera.js';
 import { makeJobs, type Jobs } from './jobs.js';
 import { makeWallet, type Wallet } from './wallet.js';
 import { makeReminders, type Reminders } from './reminders.js';
+import { castTools } from './cast.js';
+import { codeTools } from './code.js';
+import * as path from 'node:path';
+import type { ModelClient } from '../model/index.js';
+import type { Rng } from '../kernel/index.js';
 import type { BodyCfg, BodySent, Exec, Perceived } from './types.js';
 
 export * from './types.js';
@@ -39,6 +44,8 @@ export { makeWallet, PRICES, type Wallet, type Purse } from './wallet.js';
 export { makeReminders, parseWhen, remindersJob, type Reminders, type Reminder } from './reminders.js';
 export { braveSearch, fetchPage, assertPublicUrl, isPrivateAddress } from './web.js';
 export { searchWords, searchMeaning, renderHit } from './remember-tools.js';
+export { castTools, runWorker, castSlugs, WORKER_CLASSES } from './cast.js';
+export { codeTools, runInSandbox, type CodeResult } from './code.js';
 
 export interface BodyDeps {
   cfg: BodyCfg;
@@ -55,6 +62,12 @@ export interface BodyDeps {
   openai?: OpenAIBody | undefined;
   fal?: Fal | undefined;
   fetchImpl?: typeof fetch | undefined;
+  /** Casting: the model client (read late — built after the body), an rng, and the recent conversation. */
+  model?: (() => ModelClient) | undefined;
+  rng?: Rng | undefined;
+  recent?: (() => Array<{ who: 'him' | 'her'; text: string }>) | undefined;
+  /** The code sandbox broker's socket (default: <var>/run/exec.sock). */
+  execSock?: string | undefined;
 }
 
 /** Bound after the pipeline exists (it needs the body first). */
@@ -75,7 +88,7 @@ export interface Body {
   bind(late: BodyLate): void;
   // ——— the seam the mind pipeline calls (structurally its BodySeam) ———
   perceive(m: InboundMsg): Promise<Perceived>;
-  begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined }): void;
+  begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined; text?: string | undefined }): void;
   end(turnId: string): BodySent[];
   speak(chatId: number, text: string, turnId: string): Promise<{ msgId: number } | undefined>;
   onSkipped(m: InboundMsg): void;
@@ -133,6 +146,28 @@ export const makeBody = (d: BodyDeps): Body => {
           fetchImpl: d.fetchImpl,
         }),
       ];
+      // run_code talks to the thea2-exec broker's socket beside her var (deploy/exec-broker.mjs).
+      tools.push(...codeTools(d.execSock ?? path.join(path.dirname(house.root), 'run', 'exec.sock')));
+      if (d.model !== undefined && d.rng !== undefined) {
+        const model = d.model;
+        tools.push(
+          ...castTools({
+            house,
+            clock: d.clock,
+            rng: d.rng,
+            jobs,
+            model,
+            registry: () => registry,
+            selfLines: () => (d.mind?.self() ?? []).map((l) => l.text),
+            recent: (turnId) => {
+              const lines = d.recent?.() ?? [];
+              const now = turns.get(turnId)?.text;
+              return now !== undefined && now !== '' ? [...lines, { who: 'him' as const, text: now }] : lines;
+            },
+            selfEntry: (goal) => late?.selfEntry(goal),
+          }),
+        );
+      }
       for (const t of tools) registry.register(t);
       return tools.map((t) => t.def.name);
     },
@@ -142,7 +177,7 @@ export const makeBody = (d: BodyDeps): Body => {
       return p;
     },
     begin: (turnId, ctx) => {
-      turns.set(turnId, { chatId: ctx.chatId, ...(ctx.inboundMsgId !== undefined ? { inboundMsgId: ctx.inboundMsgId } : {}), sent: [] });
+      turns.set(turnId, { chatId: ctx.chatId, ...(ctx.inboundMsgId !== undefined ? { inboundMsgId: ctx.inboundMsgId } : {}), ...(ctx.text !== undefined ? { text: ctx.text } : {}), sent: [] });
     },
     end: (turnId) => {
       const t = turns.get(turnId);

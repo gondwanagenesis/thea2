@@ -65,7 +65,9 @@ export type TaskClass =
   | 'derive'
   | 'judge'
   | 'probe-judge'
-  | 'summarize';
+  | 'summarize'
+  /** v9: background work she sent out (fork / task / cast member). */
+  | 'cast';
 
 export const TASK_CLASSES: readonly TaskClass[] = [
   'turn',
@@ -77,6 +79,7 @@ export const TASK_CLASSES: readonly TaskClass[] = [
   'judge',
   'probe-judge',
   'summarize',
+  'cast',
 ];
 
 /** One OpenAI function call, parsed off the wire (`args` is the decoded JSON value). */

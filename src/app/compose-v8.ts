@@ -183,6 +183,15 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
           timeZone: cfg.timezone,
           mind,
           embedder,
+          // casting reads the model late: it is built after the body (the gate needs the tools first)
+          model: () => model,
+          rng: rng.fork('body'),
+          recent: () =>
+            window
+              .messages()
+              .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+              .slice(-16)
+              .map((m) => ({ who: m.role === 'user' ? ('him' as const) : ('her' as const), text: String(m.content) })),
           mood: () => {
             const s = affect.current();
             return { arousal: s.dials.arousal, pleasure: s.dials.pleasure };

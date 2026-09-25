@@ -57,6 +57,7 @@ export const DEFAULT_CLASS_TIERS: Record<TaskClass, Tier> = {
   judge: 'reasoning',
   'probe-judge': 'reasoning',
   summarize: 'main',
+  cast: 'main',
 };
 
 // ---------------------------------------------------------------------------
