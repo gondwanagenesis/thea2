@@ -83,7 +83,9 @@ export const fetchPage = async (
   if (contentType.includes('application/pdf')) return { url: r.url || u.toString(), title: u.pathname.split('/').pop() ?? 'document.pdf', text: '', contentType, bytes };
   const html = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? '';
-  const body = /<(article|main)\b[\s\S]*?<\/\1>/i.exec(html)?.[0] ?? html;
+  const main = /<(article|main)\b[\s\S]*?<\/\1>/i.exec(html)?.[0] ?? html;
+  // Page chrome is not the page: menus, headers, language lists, forms.
+  const body = main.replace(/<(nav|header|footer|aside|form|button|select|noscript|svg)\b[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+role=["'](?:navigation|banner|contentinfo|search)["'][\s\S]*?<\/(?:div|ul|section)>/gi, ' ');
   const text = contentType.includes('html') || /<html|<body|<p[\s>]/i.test(html) ? stripHtml(body) : html;
   return { url: r.url || u.toString(), title: stripHtml(title), text, contentType };
 };

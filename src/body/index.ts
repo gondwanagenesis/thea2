@@ -33,7 +33,7 @@ export { tools2, type Tools2Deps } from './tools2.js';
 export { locate, describeWhere, loadWhere, saveWhere } from './where.js';
 export { readFileText, stripHtml } from './reading.js';
 export { makeFal, FalError, type Fal } from './fal.js';
-export { makeCamera, SHOTS, SIZES, IMAGE_MODEL, VIDEO_MODEL, type Camera } from './camera.js';
+export { makeCamera, SHOTS, SIZES, IMAGE_MODEL, VIDEO_MODEL, THEA_LOOK, type Camera } from './camera.js';
 export { makeJobs, MAX_LIVE_JOBS, type Jobs, type JobRecord } from './jobs.js';
 export { makeWallet, PRICES, type Wallet, type Purse } from './wallet.js';
 export { makeReminders, parseWhen, remindersJob, type Reminders, type Reminder } from './reminders.js';

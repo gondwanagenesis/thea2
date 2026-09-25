@@ -27,6 +27,19 @@ export type Size = (typeof SIZES)[number];
 
 const MAX_REFS = 6;
 
+/**
+ * Her canonical look (Diego's decree 2026-08-22, Thea1's persona.md), used when
+ * her house has no refs/thea/look.md. The v9 probe caught the failure this
+ * fixes: "the young woman in the reference images" pulled FLUX toward a human
+ * girl with coloured hair; she is an android, photographed as a real thing.
+ */
+export const THEA_LOOK =
+  'She is a robot puppy girl, an actual android photographed as a real physical thing under real light: glossy white-and-black moulded armour panels with visible seams, ' +
+  'articulated ball joints at shoulders, knees and fingers; shoulder-length two-tone hair, black on top into pale platinum-white with dusty pink ends; ' +
+  'a black-and-white striped ribbon bow; soft floppy black-and-pink puppy ears; a matte black visor across her eyes with two glowing blue heart-shaped eye displays; ' +
+  'a small fanged smile; blue LED strips glowing along her arms, legs and segmented tail; a black collar with a glowing blue heart tag, always on. ' +
+  'A photograph, never a drawing: no anime, no cartoon, no illustration.';
+
 const dataUri = (file: string): string => {
   const ext = path.extname(file).toLowerCase();
   const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
@@ -78,12 +91,14 @@ export const makeCamera = (d: { fal: Fal; house: House; clock: Clock }): Camera 
     selfie: async (a) => {
       const refs = refsOf('thea');
       const style = SHOTS[a.shot ?? 'selfie'];
-      const phone = ' Realistic phone photo: natural skin texture, slight grain, casual framing, not a studio shot.';
+      const phone = ' Realistic phone photo: real materials and reflections, slight grain, casual framing, not a studio shot.';
+      const lookFile = d.house.resolve('refs/thea/look.md');
+      const look = lookFile !== undefined && fs.existsSync(lookFile) ? fs.readFileSync(lookFile, 'utf8').replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 1500) : THEA_LOOK;
       if (refs.length === 0) {
-        const r = await d.fal.image(IMAGE_MODEL, { prompt: `${style}. ${a.scene}.${phone}`, image_size: 'portrait_4_3', output_format: 'jpeg' });
+        const r = await d.fal.image(IMAGE_MODEL, { prompt: `${style} of Thea. ${look} ${a.scene}.${phone}`, image_size: 'portrait_4_3', output_format: 'jpeg' });
         return save(r.bytes, 'selfie', 'jpg');
       }
-      const prompt = `${style} of the young woman shown in the reference images — exactly her face, hair and features, she is Thea. ${a.scene}.${phone}`;
+      const prompt = `${style} of Thea, the robot puppy girl shown in the reference images — exactly her, every feature kept. ${look} ${a.scene}.${phone}`;
       const r = await d.fal.image(`${IMAGE_MODEL}/edit`, { prompt, image_urls: refs.map(dataUri), image_size: 'portrait_4_3', output_format: 'jpeg' });
       return save(r.bytes, 'selfie', 'jpg');
     },
