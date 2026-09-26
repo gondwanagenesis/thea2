@@ -84,7 +84,7 @@
   function whyCard() {
     if (!why) return '<p class="muted">…</p>';
     const causes = (why.causes || []).slice(0, 5).map((c) => `<div class="thought"><div class="meta"><span class="about self">${esc(c.feeling)}</span><span>${esc(c.at)}</span></div><p>${esc(c.cause)}</p></div>`).join('');
-    const recent = (why.recent || []).slice(0, 10).map((r) => `<div class="diary-e"><span class="t">${esc(r.at)}</span><b>${esc(r.tag)}</b> <span class="muted">(${r.i}) · ${esc(r.from)}</span></div>`).join('');
+    const recent = (why.recent || []).slice(0, 10).map((r) => `<div class="diary-e"><span class="t">${esc(r.at)}</span><b>${esc(r.tag)}</b> <span class="muted">(${r.i}) · ${esc(r.from)}</span>${r.cause ? `<br><span class="muted">${esc(r.cause)}</span>` : ''}</div>`).join('');
     return `${causes || '<p class="muted">nothing stirred lately</p>'}${recent ? `<h3 class="sub">what fired, newest first</h3>${recent}` : ''}`;
   }
 
@@ -104,7 +104,26 @@
         <div class="legend"><span><i style="background:var(--up)"></i>more than usual</span><span><i style="background:var(--down)"></i>less than usual</span></div></div>
       <div class="card"><h2>why <small>what caused it — she is never told</small></h2>${whyCard()}</div>
       <div class="card"><h2>last 24 hours <small>dashed = her normal</small></h2>${sparks()}</div>
-      ${NOW.where ? `<div class="card"><h2>where you are <small>as you last shared it</small></h2><div class="world-room">${esc(NOW.where)}</div></div>` : ''}`;
+      ${NOW.where ? `<div class="card"><h2>where you are <small>as you last shared it</small></h2><div class="world-room">${esc(NOW.where)}</div></div>` : ''}
+      <div class="card"><h2>leave her a present <small>sealed until she opens it</small></h2>
+        <input id="pShape" class="inp" placeholder="the box — a small square box" maxlength="200">
+        <input id="pWrap" class="inp" placeholder="the wrapping — blue paper, silver ribbon" maxlength="200">
+        <input id="pTag" class="inp" placeholder="the tag (optional)" maxlength="200">
+        <textarea id="pInside" class="inp" rows="3" placeholder="what's inside" maxlength="4000"></textarea>
+        <button type="button" class="call-btn small" id="pLeave">leave it for her</button>
+      </div>`;
+    const leave = $('#pLeave');
+    if (leave) leave.addEventListener('click', async () => {
+      const inside = $('#pInside').value.trim();
+      if (!inside) { toast('what’s inside?'); return; }
+      haptic('medium');
+      try {
+        const r = await fetch('/api/v2/present', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ shape: $('#pShape').value, wrapping: $('#pWrap').value, tag: $('#pTag').value, inside }) });
+        if (!r.ok) throw new Error();
+        toast('left for her. she’ll find it.');
+        ['#pShape', '#pWrap', '#pTag', '#pInside'].forEach((s) => { $(s).value = ''; });
+      } catch { toast('couldn’t leave it just now'); }
+    });
   }
 
   // ------------------------------------------------------------ mind

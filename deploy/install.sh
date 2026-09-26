@@ -90,13 +90,19 @@ install -m 0644 "$PREFIX/deploy/thea2-exec.service"    /etc/systemd/system/thea2
 # v9 face: the Mini App's own quick tunnel (never Thea1's), and the script that
 # re-points @dodonotnobot's menu button at it after every start.
 install -m 0644 "$PREFIX/deploy/thea2-dashboard-tunnel.service" /etc/systemd/system/thea2-dashboard-tunnel.service
+# v9 browser: Thea1's browser code, her own instance (port 8442, own data dir, own key).
+install -m 0644 "$PREFIX/deploy/thea2-browser.service" /etc/systemd/system/thea2-browser.service
+npm ci --prefix "$PREFIX/deploy/browser" --no-audit --no-fund >/dev/null
+install -d -m 0750 "$PREFIX/var/browser"
+grep -q '^THEA2_PRESENT_KEY=' /etc/thea2/keys.env 2>/dev/null || { printf 'THEA2_PRESENT_KEY=%s
+' "$(openssl rand -hex 32)" >> /etc/thea2/keys.env; chmod 600 /etc/thea2/keys.env; }
 chmod 0755 "$PREFIX/deploy/tunnel-url.sh"
 grep -q '^THEA2_DASHBOARD_KEY=' /etc/thea2/keys.env 2>/dev/null || { printf 'THEA2_DASHBOARD_KEY=%s
 ' "$(openssl rand -hex 24)" >> /etc/thea2/keys.env; chmod 600 /etc/thea2/keys.env; }
 install -d -m 0750 -o thea2 -g thea2 "$PREFIX/var/run" "$PREFIX/var/house"
 systemctl daemon-reload
-systemctl enable thea2.service thea2-backup.timer thea2-exec.service thea2-dashboard-tunnel.service >/dev/null
-systemctl restart thea2-exec.service
+systemctl enable thea2.service thea2-backup.timer thea2-exec.service thea2-dashboard-tunnel.service thea2-browser.service >/dev/null
+systemctl restart thea2-exec.service thea2-browser.service
 
 # v9 body: her assets, COPIED once from Thea1's install (read-only on Thea1;
 # never linked, never written back): her face references + canonical look,
@@ -107,9 +113,13 @@ fi
 if [ -f /opt/thea/selfie/persona.md ] && [ -d "$PREFIX/var/house/refs/thea" ] && [ ! -f "$PREFIX/var/house/refs/thea/look.md" ]; then
   sed -n '/^## What I actually look like/,/^## /p' /opt/thea/selfie/persona.md | sed '$d' > "$PREFIX/var/house/refs/thea/look.md"
 fi
+if [ -f /root/house/world/map.yaml ] && [ ! -f "$PREFIX/var/house/world/map.yaml" ]; then
+  mkdir -p "$PREFIX/var/house/world" && cp /root/house/world/map.yaml "$PREFIX/var/house/world/map.yaml"
+fi
 if [ -d /opt/thea/cast ] && [ ! -d "$PREFIX/var/house/cast" ]; then
   mkdir -p "$PREFIX/var/house/cast"
   cp /opt/thea/cast/*.md "$PREFIX/var/house/cast/" 2>/dev/null || true
+  rm -f "$PREFIX/var/house/cast/door_thea.md"   # the door line is sealed and out of scope for Thea2
 fi
 chown -R thea2:thea2 "$PREFIX/var/house"
 

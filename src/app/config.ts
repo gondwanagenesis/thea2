@@ -94,6 +94,7 @@ export interface BodyConfig {
   elevenKey?: string | undefined;
   elevenVoice?: string | undefined;
   walletMonthUsd: number;
+  presentKey?: string | undefined;
 }
 
 /** v9 face: the Mini App + voice mode server (127.0.0.1; a tunnel is the only way in). */
@@ -349,6 +350,7 @@ const configSchema = z.strictObject({
       braveKeyEnv: envName.optional(),
       elevenKeyEnv: envName.optional(),
       elevenVoiceEnv: envName.optional(),
+      presentKeyEnv: envName.optional(),
       walletMonthUsd: z.number().min(0).max(1000).default(10),
     })
     .optional(),
@@ -539,5 +541,6 @@ const resolveBody = (b: NonNullable<YamlConfig['body']>, env: Record<string, str
     elevenKey: optEnv(env, b.elevenKeyEnv),
     elevenVoice: optEnv(env, b.elevenVoiceEnv),
     walletMonthUsd: b.walletMonthUsd,
+    presentKey: optEnv(env, b.presentKeyEnv),
   };
 };

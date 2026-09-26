@@ -61,8 +61,15 @@ export interface WireReactionUpdated {
   new_reaction?: Array<{ type?: string; emoji?: string }>;
 }
 
+export interface WirePollAnswer {
+  poll_id?: string;
+  user?: WireUser;
+  option_ids?: number[];
+}
+
 export interface WireUpdate {
   update_id?: number;
+  poll_answer?: WirePollAnswer;
   message?: WireMessage;
   edited_message?: WireMessage;
   channel_post?: WireMessage;
@@ -94,7 +101,7 @@ export const defaultSpeakerResolver: SpeakerResolver = ({ from }) => ({
 // Parsing
 // ---------------------------------------------------------------------------
 
-export type SkipReason = 'edited_message' | 'non_text' | 'unsupported' | 'malformed' | 'live_location';
+export type SkipReason = 'edited_message' | 'non_text' | 'unsupported' | 'malformed' | 'live_location' | 'poll_answer';
 
 export type ParsedUpdate =
   | { ok: true; msg: InboundMsg }
@@ -145,6 +152,14 @@ export const parseUpdate = (raw: unknown, speaker: SpeakerResolver = defaultSpea
   // edit (a re-cropped photo, a caption-less change) stays a skip.
   if (u.edited_message !== undefined) return parseEdit(updateId, u.edited_message, speaker);
   if (u.channel_post !== undefined) return skipMsg(updateId, u.channel_post, 'unsupported');
+  const vote = u.poll_answer;
+  if (vote !== undefined) {
+    const uid = vote.user?.id;
+    if (typeof vote.poll_id !== 'string' || typeof uid !== 'number' || !Array.isArray(vote.option_ids)) return skipMsg(updateId, undefined, 'malformed');
+    const skip = skipMsg(updateId, { chat: { id: uid } }, 'poll_answer');
+    if (!skip.ok) return skip;
+    return { ok: true, msg: { ...skip.msg, speaker: speaker({ from: vote.user, chat: { id: uid } }), media: { kind: 'poll_answer', pollId: vote.poll_id, optionIds: vote.option_ids.filter((x) => typeof x === 'number') } } };
+  }
   const reaction = u.message_reaction;
   if (reaction !== undefined) return parseReaction(updateId, reaction, speaker);
   const message = u.message;

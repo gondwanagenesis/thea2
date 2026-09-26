@@ -32,7 +32,7 @@ import {
   type MindPipeline,
   type MindStore,
 } from '../mind/index.js';
-import { describeWhere, loadWhere, makeBody, remindersJob, type Body, type Exec, type Fal, type OpenAIBody } from '../body/index.js';
+import { describeWhere, loadWhere, makeBody, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
 import { makeLive, startFaceServer, type FaceServer } from '../face/index.js';
 import { makeEmbedder } from './embedder.js';
@@ -72,8 +72,8 @@ export const bodySeam = (body: Body, clock: Clock): BodySeam => ({
   nowFacts: () => {
     const w = loadWhere(body.house);
     const now = clock.epochMs();
-    if (w === undefined || now - w.at > WHERE_FRESH_MS) return [];
-    return [`where he is: ${describeWhere(w, now)}.`];
+    const where = w === undefined || now - w.at > WHERE_FRESH_MS ? [] : [`where he is: ${describeWhere(w, now)}.`];
+    return [...where, ...body.worldFacts(now)];
   },
 });
 
@@ -184,6 +184,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
           timeZone: cfg.timezone,
           mind,
           embedder,
+          affect,
+          // her own browser service (thea2-browser, 127.0.0.1:8442) — prod only
+          ...(preset === 'prod' ? { browserUrl: 'http://127.0.0.1:8442' } : {}),
           // casting reads the model late: it is built after the body (the gate needs the tools first)
           model: () => model,
           rng: rng.fork('body'),
@@ -349,6 +352,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         staticDir: path.resolve(root, cfg.face.staticDir),
         events,
         live,
+        presentKey: cfg.body.presentKey,
         sources: {
           affect,
           mind,
@@ -412,6 +416,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
       }),
       sleepJob({ mind, model, events, clock, timeZone: cfg.timezone }, utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone)),
       ...(body !== undefined ? [remindersJob(body.reminders, clock, (goal) => void pipeline.selfEntry('heartbeat', goal))] : []),
+      ...(body !== undefined
+        ? [nightlyJob({ mind, model: () => model, clock, events, house: body.house, timeZone: cfg.timezone, embedder }, (utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone) + 30) % 1440)]
+        : []),
     ];
   }
   const sched = startScheduler(jobs, { clock, rng, events, statePath: paths.schedState, interactiveMutex: conversationActive });

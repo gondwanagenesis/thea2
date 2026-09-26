@@ -1,0 +1,18 @@
+[Unit]
+Description=Thea2 browser (v9: Playwright snapshot -> ref -> act, public web only; Thea1's thea-browser code, her own instance)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/thea2/deploy/browser
+EnvironmentFile=/etc/thea2/keys.env
+Environment=NODE_PATH=/opt/thea2/deploy/browser/node_modules
+Environment=THEA2_BROWSER_PORT=8442
+Environment=THEA2_BROWSER_DIR=/opt/thea2/var/browser
+ExecStart=/usr/bin/node /opt/thea2/deploy/browser/server.mjs
+Restart=on-failure
+RestartSec=5
+MemoryMax=900M
+
+[Install]
+WantedBy=multi-user.target

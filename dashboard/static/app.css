@@ -229,3 +229,6 @@ select { font: inherit; color: var(--text); background: #0C1020; border: 1px sol
 /* v9 (Thea2): the second Thea's mark, and sub-headings inside cards */
 .name .two { font-size: 0.45em; vertical-align: super; margin-left: 2px; color: var(--led-hot); font-style: normal; }
 .card h3.sub { margin: 14px 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--faint); }
+.inp { width: 100%; box-sizing: border-box; margin: 0 0 8px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: #0B0F1D; color: var(--text); font: inherit; font-size: 14px; }
+textarea.inp { resize: vertical; }
+.call-btn.small { width: 100%; padding: 12px; font-size: 14px; margin-top: 4px; }

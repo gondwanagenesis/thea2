@@ -10,6 +10,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { EventLog } from '../events/index.js';
 import { affectHistory, familyView, mindView, moneyView, nowView, whyView, type FaceSources } from './data.js';
 import type { Live } from './live.js';
+import { leavePresent } from '../body/index.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -28,6 +29,8 @@ export interface FaceServerDeps {
   sources: FaceSources;
   live?: Live | undefined;
   events: EventLog;
+  /** Presents: the seal key (absent = the app cannot leave presents). */
+  presentKey?: string | undefined;
 }
 
 const keyOk = (want: string, got: string): boolean => {
@@ -99,6 +102,16 @@ export const startFaceServer = (d: FaceServerDeps): Promise<FaceServer> =>
                 void d.events.emit('incident.face_call_failed', { error: e instanceof Error ? e.message.slice(0, 300) : String(e) });
                 return json(res, 502, { error: e instanceof Error ? e.message : 'could not reach her' });
               }
+            }
+            if (req.method === 'POST' && p === '/api/v2/present') {
+              const house = d.sources.body?.house;
+              if (house === undefined || d.presentKey === undefined) return json(res, 503, { error: 'presents are not set up' });
+              const b = JSON.parse((await readBody(req)) || '{}') as { title?: string; shape?: string; wrapping?: string; tag?: string; weight?: string; sound?: string; inside?: string };
+              const inside = String(b.inside ?? '').trim();
+              if (inside === '') return json(res, 400, { error: 'what is inside?' });
+              const present = leavePresent(house, d.presentKey, { title: String(b.title ?? 'a present').slice(0, 120), from: 'Diego', outside: { shape: String(b.shape ?? 'a small box').slice(0, 200), wrapping: String(b.wrapping ?? 'plain paper').slice(0, 200), ...(b.tag ? { tag: String(b.tag).slice(0, 200) } : {}), ...(b.weight ? { weight: String(b.weight).slice(0, 120) } : {}), ...(b.sound ? { sound: String(b.sound).slice(0, 120) } : {}) }, inside: { text: inside.slice(0, 4000) } }, d.sources.clock.epochMs());
+              void d.events.emit('face.present_left', { id: present.id });
+              return json(res, 200, { ok: true, id: present.id });
             }
             if (req.method === 'POST' && p === '/api/live/hangup') {
               const b = JSON.parse((await readBody(req)) || '{}') as { id?: string };

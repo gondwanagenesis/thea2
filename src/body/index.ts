@@ -22,6 +22,10 @@ import { makeWallet, type Wallet } from './wallet.js';
 import { makeReminders, type Reminders } from './reminders.js';
 import { castTools } from './cast.js';
 import { codeTools } from './code.js';
+import { lifeTools, worldRoom } from './life.js';
+import { browserTools } from './browser.js';
+import { diegoLately } from './nightly.js';
+import type { AffectStore } from '../affect/index.js';
 import * as path from 'node:path';
 import type { ModelClient } from '../model/index.js';
 import type { Rng } from '../kernel/index.js';
@@ -46,6 +50,9 @@ export { braveSearch, fetchPage, assertPublicUrl, isPrivateAddress } from './web
 export { searchWords, searchMeaning, renderHit } from './remember-tools.js';
 export { castTools, runWorker, castSlugs, WORKER_CLASSES } from './cast.js';
 export { codeTools, runInSandbox, type CodeResult } from './code.js';
+export { browserTools } from './browser.js';
+export { lifeTools, CANDIES, leavePresent, sealInside, openInside, worldRoom, type Present } from './life.js';
+export { nightlyJob, diaryOnce, diegoOnce, diegoLately, type DiegoModel } from './nightly.js';
 
 export interface BodyDeps {
   cfg: BodyCfg;
@@ -68,6 +75,10 @@ export interface BodyDeps {
   recent?: (() => Array<{ who: 'him' | 'her'; text: string }>) | undefined;
   /** The code sandbox broker's socket (default: <var>/run/exec.sock). */
   execSock?: string | undefined;
+  /** Candy and presents act on her feelings through the engine (never as words). */
+  affect?: AffectStore | undefined;
+  /** Her browser service (deploy/browser); absent = no browser tool. */
+  browserUrl?: string | undefined;
 }
 
 /** Bound after the pipeline exists (it needs the body first). */
@@ -92,6 +103,8 @@ export interface Body {
   end(turnId: string): BodySent[];
   speak(chatId: number, text: string, turnId: string): Promise<{ msgId: number } | undefined>;
   onSkipped(m: InboundMsg): void;
+  /** Facts about her world and him for [now]: her room, him lately (cited). */
+  worldFacts(now: number): string[];
 }
 
 export const makeBody = (d: BodyDeps): Body => {
@@ -146,6 +159,8 @@ export const makeBody = (d: BodyDeps): Body => {
           fetchImpl: d.fetchImpl,
         }),
       ];
+      tools.push(...lifeTools({ house, clock: d.clock, affect: d.affect, presentKey: d.cfg.presentKey }));
+      if (d.browserUrl !== undefined) tools.push(...browserTools(d.browserUrl, d.fetchImpl));
       // run_code talks to the thea2-exec broker's socket beside her var (deploy/exec-broker.mjs).
       tools.push(...codeTools(d.execSock ?? path.join(path.dirname(house.root), 'run', 'exec.sock')));
       if (d.model !== undefined && d.rng !== undefined) {
@@ -194,7 +209,22 @@ export const makeBody = (d: BodyDeps): Body => {
         return undefined;
       }
     },
+    worldFacts: (now) => {
+      const facts: string[] = [];
+      const room = worldRoom(house);
+      if (room !== undefined) facts.push(`you're in the ${room.name.toLowerCase()}.`);
+      const lately = diegoLately(house, now);
+      if (lately.length > 0) facts.push(`him lately: ${lately.join(' · ')}`);
+      return facts;
+    },
     onSkipped: (m) => {
+      if (m.skipped?.reason === 'poll_answer' && m.media?.kind === 'poll_answer') {
+        const poll = house.readJson<Record<string, { question: string; options: string[] }>>('polls.json', {})[m.media.pollId];
+        const chosen = poll === undefined ? [] : m.media.optionIds.map((i) => poll.options[i]).filter((o): o is string => o !== undefined);
+        void d.events.emit('body.poll_answer', { pollId: m.media.pollId, chosen });
+        if (poll !== undefined) late?.selfEntry(chosen.length > 0 ? `(he answered your poll "${poll.question}": ${chosen.join(', ')})` : `(he took back his vote on your poll "${poll.question}")`);
+        return;
+      }
       if (m.skipped?.reason === 'live_location') {
         void senses.whereUpdate(m).then((w) => {
           if (w !== undefined) void d.events.emit('body.where', { place: w.place, live: true });

@@ -100,6 +100,7 @@ body:
   ttsVoiceEnv: THEA2_TTS_VOICE
   falKeyEnv: THEA2_FAL_KEY
   braveKeyEnv: THEA2_BRAVE_KEY
+  presentKeyEnv: THEA2_PRESENT_KEY
   walletMonthUsd: 10
 # v9 face: the Mini App + voice mode, served by thead on 127.0.0.1:3471 (the
 # thea2-dashboard-tunnel quick tunnel is the only way in; key via env).

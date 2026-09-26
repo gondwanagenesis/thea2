@@ -108,7 +108,7 @@ export const FakeChannel = (opts: FakeChannelOpts = {}): Channel & FakeChannelEx
     sendPoll: async (to, question, options) => {
       const msgId = nextMsgId++;
       acts.push({ kind: 'poll', chatId: to, question, options: [...options], msgId, at: clock.epochMs() });
-      return { msgId };
+      return { msgId, pollId: `poll-${msgId}` };
     },
     action: async (to, action) => {
       acts.push({ kind: 'action', chatId: to, action, at: clock.epochMs() });

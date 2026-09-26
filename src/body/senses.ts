@@ -178,6 +178,9 @@ export const makeSenses = (d: SensesDeps): Senses => {
             saved: d.house.rel(saved),
           };
         }
+        case 'poll_answer':
+          // a vote is lived through onSkipped (a self-entry), never perceived as his words
+          return { lines: [] };
         case 'location': {
           const w = await whereFrom(media);
           mark('where', true);

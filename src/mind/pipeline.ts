@@ -489,7 +489,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
             emit('incident.mind_feel_failed', { turnId, stage: 'slow', error: asError(e).message }, turnId);
           }
         }
-        emit('mind.felt', { turnId, stage: 'slow', events: evs.map((e) => ({ source: e.source, tag: e.event.tag, i: e.event.i })) }, turnId);
+        emit('mind.felt', { turnId, stage: 'slow', events: evs.map((e) => ({ source: e.source, tag: e.event.tag, i: e.event.i, ...(typeof (e.event as { cause?: unknown }).cause === 'string' ? { cause: (e.event as { cause: string }).cause } : {}) })) }, turnId);
 
         // How her previous reply landed → value, followed option, reconsolidation.
         if (!selfEntry && prev !== undefined && slow.value.outcome_prev !== null) {

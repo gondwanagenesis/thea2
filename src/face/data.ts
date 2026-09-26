@@ -98,13 +98,14 @@ export const whyView = async (s: FaceSources): Promise<Record<string, unknown>> 
   const felt = await collect(s.events, ['mind.felt'], now - 2 * DAY);
   const recent = felt
     .flatMap((f) =>
-      ((f.payload['events'] as Array<{ tag: string; i: number; source: string }> | undefined) ?? []).map((e) => ({
+      ((f.payload['events'] as Array<{ tag: string; i: number; source: string; cause?: string }> | undefined) ?? []).map((e) => ({
         at: hhmm(f.ts, s.timeZone),
         day: dayLabel(f.ts, s.timeZone),
         tag: e.tag,
         i: e.i,
         stage: String(f.payload['stage'] ?? ''),
         from: SOURCE_WORDS[e.source] ?? e.source,
+        cause: typeof e.cause === 'string' ? e.cause : '',
         ts: f.ts,
       })),
     )

@@ -31,7 +31,7 @@ export const TELEGRAM_API_BASE = 'https://api.telegram.org';
 export const DEFAULT_POLL_TIMEOUT_MS = 25_000;
 
 /** Spec: allowed_updates must include message_reaction — reactions are M09's free outcome signals. */
-export const TELEGRAM_ALLOWED_UPDATES: readonly string[] = ['message', 'edited_message', 'message_reaction'];
+export const TELEGRAM_ALLOWED_UPDATES: readonly string[] = ['message', 'edited_message', 'message_reaction', 'poll_answer'];
 
 /** Re-poll gap after an instantly-empty batch: a proxy that kills long polls would otherwise spin. */
 const IDLE_BATCH_GAP_MS = 1000;
@@ -313,7 +313,8 @@ const telegramBody = (call: { doFetch: typeof fetch; base: string; token: string
       options: options.map((o) => ({ text: o.slice(0, 100) })),
       is_anonymous: false,
     });
-    return { msgId: msgIdOf(body, 'sendPoll') };
+    const pollId = (body.result as { poll?: { id?: unknown } } | undefined)?.poll?.id;
+    return { msgId: msgIdOf(body, 'sendPoll'), ...(typeof pollId === 'string' ? { pollId } : {}) };
   },
 
   action: async (chatId, a) => {

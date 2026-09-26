@@ -92,3 +92,13 @@ describe('parseUpdate over recorded fixtures', () => {
     });
   });
 });
+
+describe('v9 poll answers', () => {
+  it('a vote is a skip-stamped update carrying which options he chose (lived via the body, never owed a reply)', () => {
+    const parsed = parseUpdate({ update_id: 900, poll_answer: { poll_id: 'P1', user: { id: 8123456, is_bot: false }, option_ids: [1] } });
+    if (!parsed.ok) throw new Error('should parse');
+    expect(parsed.msg.skipped).toEqual({ reason: 'poll_answer' });
+    expect(parsed.msg.chatId).toBe(8123456);
+    expect(parsed.msg.media).toEqual({ kind: 'poll_answer', pollId: 'P1', optionIds: [1] });
+  });
+});

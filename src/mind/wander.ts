@@ -244,7 +244,7 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
     } catch (e) {
       void deps.events.emit('incident.mind_feel_failed', { stage: 'reappraise', error: e instanceof Error ? e.message : String(e) });
     }
-    void deps.events.emit('mind.felt', { stage: 'reappraise', events: out.reappraise.map((r) => ({ source: 'thought', tag: r.emotion, i: r.i })) });
+    void deps.events.emit('mind.felt', { stage: 'reappraise', events: out.reappraise.map((r) => ({ source: 'thought', tag: r.emotion, i: r.i, cause: r.cause })) });
   }
 
   let texted = false;

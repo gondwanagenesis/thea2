@@ -211,6 +211,11 @@ export const bodyTools = (d: ToolDeps): Entry[] => {
       z.object({ question: z.string().min(1).max(300), options: z.array(z.string().min(1).max(100)).min(2).max(10) }),
       async (a, ctx) => {
         const r = await body().sendPoll(chatOf(ctx), a.question, a.options);
+        if (r.pollId !== undefined) {
+          const polls = d.house.readJson<Record<string, { question: string; options: string[]; at: number }>>('polls.json', {});
+          polls[r.pollId] = { question: a.question, options: a.options, at: d.clock.epochMs() };
+          d.house.writeJson('polls.json', polls);
+        }
         await noteSent(ctx, r.msgId, `[poll] ${a.question} — ${a.options.join(' / ')}`);
         return 'poll sent';
       },

@@ -45,7 +45,9 @@ export type InboundMedia =
   | { kind: 'voice' | 'audio'; fileId: string; durationSec: number; mime?: string | undefined; title?: string | undefined }
   | { kind: 'video' | 'video_note' | 'animation'; fileId: string; durationSec: number; mime?: string | undefined }
   | { kind: 'sticker'; fileId: string; emoji?: string | undefined; setName?: string | undefined; animated: boolean }
-  | { kind: 'location'; lat: number; lon: number; live: boolean; title?: string | undefined; address?: string | undefined };
+  | { kind: 'location'; lat: number; lon: number; live: boolean; title?: string | undefined; address?: string | undefined }
+  /** His vote on a poll she sent (arrives as a skip-stamped update: she lives it, nothing is owed). */
+  | { kind: 'poll_answer'; pollId: string; optionIds: number[] };
 
 /** v9: something she sends that is not a text bubble. */
 export interface OutboundMedia {
@@ -69,7 +71,7 @@ export interface ChannelBody {
   sendMedia(chatId: number, m: OutboundMedia, opts?: { replyTo?: number | undefined }): Promise<{ msgId: number }>;
   sendReply(chatId: number, text: string, replyTo: number): Promise<{ msgId: number }>;
   react(chatId: number, msgId: number, emoji: string): Promise<void>;
-  sendPoll(chatId: number, question: string, options: readonly string[]): Promise<{ msgId: number }>;
+  sendPoll(chatId: number, question: string, options: readonly string[]): Promise<{ msgId: number; pollId?: string | undefined }>;
   action(chatId: number, a: ChatAction): Promise<void>;
 }
 

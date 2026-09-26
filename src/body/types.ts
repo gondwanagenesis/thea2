@@ -21,6 +21,8 @@ export interface BodyCfg {
   elevenKey?: string | undefined;
   elevenVoice?: string | undefined;
   walletMonthUsd: number;
+  /** 32 bytes hex: seals the presents Diego leaves (absent = no presents). */
+  presentKey?: string | undefined;
 }
 
 /** Child-process seam (ffmpeg, pdftotext, python3). Tests script it. */
