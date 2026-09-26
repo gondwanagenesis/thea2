@@ -130,9 +130,10 @@ const handsProps = (timeoutSec) => [
   'InaccessiblePaths=-/run/tailscale',
   'InaccessiblePaths=-/var/run/tailscale',
   'InaccessiblePaths=-/run/docker.sock',
-  // the internet yes; this box, its neighbours and the tailnet no (allow wins: DNS through the stub)
+  // the internet yes; this box, its neighbours and the tailnet no (allow wins: DNS through the resolved
+  // stub). Explicit CIDRs only: this systemd rejects a value that mixes named sets (localhost/…) with prefixes.
   'IPAddressAllow=127.0.0.53/32',
-  `IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7 ${ownAddresses().join(' ')}`.trim(),
+  `IPAddressDeny=127.0.0.0/8 ::1/128 169.254.0.0/16 fe80::/10 224.0.0.0/4 ff00::/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7 ${ownAddresses().join(' ')}`.trim(),
   'MemoryMax=2G',
   'TasksMax=256',
   'CPUQuota=200%',

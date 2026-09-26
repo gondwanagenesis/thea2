@@ -174,7 +174,7 @@ const fenceProps = (jobDir, repo, { network, maxSec, binds = [] }) =>
     'InaccessiblePaths=-/var/run/tailscale',
     'InaccessiblePaths=-/run/docker.sock',
     ...(network
-      ? ['IPAddressAllow=127.0.0.53/32', `IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7 ${ownAddresses().join(' ')}`.trim()]
+      ? ['IPAddressAllow=127.0.0.53/32', `IPAddressDeny=127.0.0.0/8 ::1/128 169.254.0.0/16 fe80::/10 224.0.0.0/4 ff00::/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7 ${ownAddresses().join(' ')}`.trim()]
       : ['PrivateNetwork=yes']),
     'MemoryMax=4G',
     'TasksMax=512',
