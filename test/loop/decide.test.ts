@@ -32,12 +32,12 @@ const entry = (): LoopEntry => ({ kind: 'user-turn', inbound: inbound() });
 const decideCall = (args: unknown, id = 'd0'): { id: string; name: string; args: unknown } => ({ id, name: DECIDE_TOOL_NAME, args });
 
 describe('the wire carries the contract', () => {
-  it('`decide` is the first tool def on every main assess call and [OUTPUT] rides the head system message', async () => {
+  it('`decide` is the LAST tool def on every main assess call (v9: first, it read as a gate and she never acted) and [OUTPUT] rides the head system message', async () => {
     const h = makeHarness();
     enqueueDecision(h.model, { bubbles: ['hi'] });
     await h.run(entry());
     const call = h.model.calls[0]!;
-    expect(call.tools?.[0]?.name).toBe(DECIDE_TOOL_NAME);
+    expect(call.tools?.at(-1)?.name).toBe(DECIDE_TOOL_NAME);
     // FA.3: a user turn offers no spawn primitives — the base registry only
     expect(call.tools?.map((t) => t.name)).toEqual(expect.arrayContaining(['echo', 'wedged']));
     expect(call.tools?.map((t) => t.name)).not.toContain('fork');

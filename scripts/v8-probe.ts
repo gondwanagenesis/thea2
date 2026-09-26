@@ -41,6 +41,8 @@ const main = async (): Promise<void> => {
   fs.cpSync(SRC_VAR, path.join(base, 'var'), { recursive: true });
   // The probe must not inherit a live lock or the real Telegram offset semantics.
   fs.rmSync(path.join(base, 'var', 'thead.lock'), { force: true });
+  // --fresh-window: start the probe with an empty conversation window (isolates window effects)
+  if (argv.includes('--fresh-window')) fs.rmSync(path.join(base, 'var', 'memory'), { recursive: true, force: true });
 
   const probeLog = openEventLog(path.join(base, 'probe-events'), { clock });
   const rng = makeRng('v8-probe');
@@ -61,9 +63,15 @@ const main = async (): Promise<void> => {
       }),
     });
     return {
-      chat: <T>(req: ChatRequest<T>, ctx?: ChatContext) => {
+      chat: async <T>(req: ChatRequest<T>, ctx?: ChatContext) => {
         requests.push(req as ChatRequest);
-        return inner.chat<T>(req, ctx);
+        const dump = arg('dump');
+        if (dump !== undefined && req.taskClass === 'turn' && !fs.existsSync(dump)) fs.writeFileSync(dump, JSON.stringify({ messages: req.messages, tools: req.tools }, null, 1));
+        const res = await inner.chat<T>(req, ctx);
+        if (req.taskClass === 'turn' || req.taskClass === 'heartbeat-thought') {
+          out(`  [model ${req.taskClass}] offered ${(req.tools ?? []).length} tools (${(req.tools ?? []).map((t) => t.name).slice(0, 30).join(',')}) toolChoice=${JSON.stringify(req.toolChoice ?? null)} → called ${(res.toolCalls ?? []).map((c) => c.name).join(',') || 'nothing'}${typeof res.content === 'string' && res.content.trim() !== '' ? ` + content "${res.content.slice(0, 80)}"` : ''}`);
+        }
+        return res;
       },
     };
   };

@@ -27,7 +27,7 @@ const unit = { type: 'number', minimum: 0, maximum: 1 };
 export const decideToolDef: ToolDef = {
   name: DECIDE_TOOL_NAME,
   description:
-    'Lock your decision for this turn. Call it once, last. bubbles = the messages to send, in order (empty unless plan is reply).',
+    'End the turn with what you say. Call it once, LAST: every other tool you use this turn runs before it, and a tool you have not called by the time you decide does not happen. bubbles = the messages to send, in order (empty unless plan is reply).',
   parameters: {
     type: 'object',
     properties: {

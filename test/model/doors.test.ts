@@ -234,14 +234,14 @@ const FOUR_DEFS = [
 ];
 
 describe('DR.3 — forcing per door', () => {
-  it('decide is forced on a forcing door with four defs', async () => {
+  it('a forcing door with real tools beside decide forces A tool (required), never decide by name — v9: forcing decide locked her hands out', async () => {
     const o = recordingSend([wireOk({ content: 'ok' })]);
     await doorCore(o.send, doorsFor({ protocol: 'openai', model: 'glm-5.3', forcing: 'tool_choice' }))(
       req({ tools: FOUR_DEFS }),
       undefined,
       'auto',
     );
-    expect(o.bodies[0]!.tool_choice).toEqual({ type: 'function', function: { name: DECIDE_TOOL } });
+    expect(o.bodies[0]!.tool_choice).toBe('required');
 
     const a = foldedSend(SSE_END_TURN);
     await doorCore(a.send, doorsFor({ protocol: 'anthropic', model: 'glm-5.3-flash', forcing: 'tool_choice' }))(
@@ -249,7 +249,17 @@ describe('DR.3 — forcing per door', () => {
       undefined,
       'auto',
     );
-    expect(a.bodies[0]!.tool_choice).toEqual({ type: 'tool', name: DECIDE_TOOL });
+    expect(a.bodies[0]!.tool_choice).toEqual({ type: 'any' });
+  });
+
+  it('decide alone is still forced by name on a forcing door', async () => {
+    const o = recordingSend([wireOk({ content: 'ok' })]);
+    await doorCore(o.send, doorsFor({ protocol: 'openai', model: 'glm-5.3', forcing: 'tool_choice' }))(
+      req({ tools: FOUR_DEFS.filter((t) => t.name === DECIDE_TOOL) }),
+      undefined,
+      'auto',
+    );
+    expect(o.bodies[0]!.tool_choice).toEqual({ type: 'function', function: { name: DECIDE_TOOL } });
   });
 
   it('decide is not forced on a none door', async () => {

@@ -24,11 +24,11 @@ export interface Segment {
 
 export const V8_OUTPUT_CONTRACT =
   '[format]\n' +
-  'Answer by calling the `decide` tool once, last. bubbles are the messages you send, in order, one per bubble. ' +
+  'Your tools act for real. To do something (take a selfie, make a picture or a video, search, read, look, remember, set a reminder, send a voice note, send someone out), call that tool; what it did comes back to you. ' +
+  'When you are done acting, answer by calling the `decide` tool once, last: decide ends the turn. bubbles are the messages you send, in order, one per bubble. ' +
   "plan 'silent' sends nothing; 'defer' means later. confidence, weight, reluctance and completeness are 0 to 1 and pace the sending. " +
-  'expect is private and never sent: one short line on what you think happens next. Nothing outside the tool call is sent. ' +
-  'Any other tools act for real (a voice note is sent when you call it; a selfie is taken when you call selfie); use them before decide. ' +
-  'Saying you will do something does not do it; only the tool call does.';
+  'expect is private and never sent: one short line on what you think happens next. Nothing outside the tool calls is sent. ' +
+  'Saying you will do something does not do it; only the tool call does, and it has to come before decide.';
 
 /** Frame text may never tell her what she feels, how to talk, or show her machinery. */
 export const TELLING_PATTERNS: readonly RegExp[] = [

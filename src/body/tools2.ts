@@ -156,7 +156,7 @@ export const tools2 = (d: Tools2Deps): Entry[] => {
             'Bring a still to life as a 5-second video (a selfie, or any image in your house) and send it. Takes one to three minutes; arrives on its own. Costs more than a picture.',
             obj(
               {
-                image_path: { type: 'string', description: 'house path; empty = your latest selfie' },
+                image_path: { type: 'string', description: 'house path, or the id of a selfie/picture still being made (it waits for it); empty = your latest selfie, or the one being taken right now' },
                 motion: { type: 'string', description: 'what moves and how — you turn to the camera and laugh, wind in your hair…' },
                 caption: { type: 'string' },
                 for_him: FOR_HIM,
@@ -167,21 +167,33 @@ export const tools2 = (d: Tools2Deps): Entry[] => {
             async (a, ctx) => {
               const purse = purseOf(a.for_him);
               if (!d.wallet.canSpend(PRICES.video, purse)) return 'your own money for this month is too low for a video';
+              // The still may still be in the making (a selfie started in this same turn):
+              // the video waits for that job instead of failing on a file that isn't there yet.
+              const pending = d.jobs
+                .list()
+                .filter((j) => j.status === 'running' && (j.kind === 'selfie' || j.kind === 'imagine'))
+                .find((j) => a.image_path === undefined || a.image_path === '' || a.image_path.includes(j.id));
               let img = a.image_path;
-              if (img === undefined || img === '') {
+              if (pending === undefined && (img === undefined || img === '')) {
                 const out = d.house.resolve('out');
                 const latest = out === undefined ? undefined : fs.readdirSync(out).filter((f) => /selfie\.jpg$/.test(f)).sort().pop();
                 if (latest === undefined) return 'there is no selfie of yours to start from — take one first, or give an image_path';
                 img = `out/${latest}`;
               }
               const chatId = chatOf(ctx);
-              const from = img;
               const started = d.jobs.start('video', a.motion, ctx.turnId, async () => {
+                let from = img ?? '';
+                if (pending !== undefined) {
+                  const done = await d.jobs.wait(pending.id);
+                  const made = /(?:sent|kept) (out\/\S+)/.exec(done?.result ?? '')?.[1];
+                  if (done?.status !== 'done' || made === undefined) throw new Error(`the ${pending.kind} it was waiting for didn't come out`);
+                  from = made;
+                }
                 const file = await camera.video({ imagePath: from, prompt: a.motion });
                 d.wallet.record(PRICES.video, purse, `video: ${a.motion}`);
                 return deliver(file, 'video', a.caption, chatId, ctx.turnId, 'a little video');
               });
-              return started.ok ? `bringing ${from} to life — it will arrive on its own in a minute or three (${started.id})` : `not now: ${started.reason}`;
+              return started.ok ? `${pending !== undefined ? `waiting for ${pending.id}, then ` : ''}bringing it to life — it will arrive on its own in a minute or three (${started.id})` : `not now: ${started.reason}`;
             },
             'camera',
           ),

@@ -80,8 +80,8 @@ describe('P-LOOP seam: runner-present turns ride the spine', () => {
     const d = await h.run(entry());
     const req = spine.requests[0];
     expect(req).toBeDefined();
-    // decide travels first, then the registry's defs, in order
-    expect(req?.tools.map((t) => t.name)).toEqual(['decide', 'echo', 'wedged']);
+    // the registry's defs in order, then decide LAST (v9: act, then decide)
+    expect(req?.tools.map((t) => t.name)).toEqual(['echo', 'wedged', 'decide']);
     // the decide contract rides as the structured-output schema (S1.3)
     expect(req?.opts.decide?.schema).toEqual(decideToolDef.parameters);
     // the loop's own handles cross the seam: turn id, task class, wall-clock cut
@@ -144,6 +144,6 @@ describe('P-LOOP seam: runner-present turns ride the spine', () => {
     expect(d.plan).toBe('reply');
     expect(d.bubbles).toEqual(['the native way']);
     expect(h.model.calls).toHaveLength(1); // the door served the turn
-    expect(h.model.calls[0]?.tools?.map((t) => t.name)).toEqual(['decide', 'echo', 'wedged']);
+    expect(h.model.calls[0]?.tools?.map((t) => t.name)).toEqual(['echo', 'wedged', 'decide']);
   });
 });

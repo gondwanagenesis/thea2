@@ -158,3 +158,45 @@ describe('v9 regression — an information tool alongside decide gets a second l
     await handle.stop();
   });
 });
+
+describe('v9 regression — selfie then video in one turn', () => {
+  it('make_video started while the selfie is still being made waits for it (found live: it failed on a file that did not exist yet)', { timeout: 60_000 }, async () => {
+    const fal = fakeFal();
+    const h = await bootV9({}, { fal });
+    h.model.enqueue({
+      toolCalls: [
+        { id: 's1', name: 'selfie', args: { scene: 'in my room', send: false, for_him: true } },
+        { id: 'v1', name: 'make_video', args: { motion: 'she waves', caption: 'for you', for_him: true } },
+        { id: 'd1', name: 'decide', args: { plan: 'reply', bubbles: ['rendering it now'], confidence: 0.8, weight: 0.6, reluctance: 0.1, completeness: 1 } },
+      ],
+    });
+    h.model.enqueue(appraisal);
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inbound({ text: 'send me a selfie video' }));
+    await runToQuiescent(h);
+    await h.sys.body!.jobs.idle();
+    const video = h.channel.bodyActs().filter((a) => a.kind === 'media' && a.media.kind === 'video');
+    expect(video).toHaveLength(1);
+    expect(h.sys.body!.jobs.list().every((j) => j.status === 'done')).toBe(true);
+    expect(fal.calls.map((c) => c.model)).toEqual(['fal-ai/flux-2-pro', 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video']);
+    await handle.stop();
+  });
+
+  it('a failure comes back to her once, not in a loop', { timeout: 60_000 }, async () => {
+    const fal = fakeFal({ fail: 'fal: HTTP 422 content could not be processed' });
+    const h = await bootV9({}, { fal });
+    const speaker = () => ({ toolCalls: [{ id: 'i', name: 'imagine', args: { prompt: 'a lighthouse' } }, { id: 'd', name: 'decide', args: { plan: 'reply', bubbles: ['trying again'], confidence: 0.8, weight: 0.6, reluctance: 0.1, completeness: 1 } }] });
+    h.model.onTask('turn', speaker);
+    h.model.onTask('heartbeat-thought', speaker);
+    h.model.onTask('appraisal', () => appraisal);
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inbound({ text: 'make me something' }));
+    for (let i = 0; i < 6; i++) {
+      await runToQuiescent(h);
+      await h.sys.body!.jobs.idle();
+    }
+    // the first failure is lived once; her retry fails too, and that one is only logged
+    expect(fal.calls.length).toBe(2);
+    await handle.stop();
+  });
+});

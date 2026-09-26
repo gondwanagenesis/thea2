@@ -380,7 +380,10 @@ export const runLoop: RunLoop = async (entry, deps) => {
     // safe because handlers read state.* at call time, never at bind time.
     state.tools = spawnsActive ? overlayRegistry(deps.tools, spawnEntries(state)) : deps.tools;
     // `decide` travels first: the contract is the most prominent thing on the wire.
-    state.defs = [decideToolDef, ...state.tools.defs(entry.kind)];
+    // decide travels LAST (v9, found live): offered first, with real tools beside it, the
+    // model read it as a gate — "i have to lock this reply before using the camera tools" —
+    // and never acted. Last in the list and in the contract: act, then decide.
+    state.defs = [...state.tools.defs(entry.kind), decideToolDef];
 
     try {
       if (entry.committee !== undefined) return await runCommitteeEntry(entry, deps, state);

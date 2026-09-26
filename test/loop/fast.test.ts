@@ -201,7 +201,7 @@ describe('FA.3 — spawns off user turns', () => {
     await h.run({ kind: 'ponder', goal: 'something to chew on' });
     const names = toolNamesOnWire(h.model.calls[0]!);
     expect(names).toEqual(expect.arrayContaining(['fork', 'task', 'committee']));
-    expect(names[0]).toBe('decide'); // the contract still travels first
+    expect(names.at(-1)).toBe('decide'); // the contract travels last: act, then decide
   });
 
   it('spawns: auto keeps them off user turns even when the base registry is full', async () => {

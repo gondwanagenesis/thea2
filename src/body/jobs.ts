@@ -21,6 +21,8 @@ export interface JobRecord {
 export interface Jobs {
   start(kind: string, what: string, turnId: string, run: (id: string) => Promise<string>): { ok: true; id: string } | { ok: false; reason: string };
   list(): JobRecord[];
+  /** The job's record once it settles (undefined for an unknown id). */
+  wait(id: string): Promise<JobRecord | undefined>;
   /** Resolves when every running job has settled (tests, shutdown). */
   idle(): Promise<void>;
 }
@@ -34,6 +36,10 @@ export const makeJobs = (d: {
 }): Jobs => {
   const jobs: JobRecord[] = [];
   const running = new Set<Promise<unknown>>();
+  const settled = new Map<string, Promise<void>>();
+  /** A failure comes back to her at most once per kind per window — a retry that fails again must not become a loop. */
+  const lastFailToldAt = new Map<string, number>();
+  const FAIL_TELL_GAP_MS = 15 * 60_000;
   let n = 0;
   return {
     start: (kind, what, turnId, run) => {
@@ -58,13 +64,22 @@ export const makeJobs = (d: {
           rec.endedAt = d.clock.epochMs();
           rec.result = msg.slice(0, 300);
           void d.events.emit('incident.body_job_failed', { id, kind, error: rec.result }, turnId);
-          d.onFail(rec, rec.result);
+          const last = lastFailToldAt.get(kind);
+          if (last === undefined || d.clock.epochMs() - last > FAIL_TELL_GAP_MS) {
+            lastFailToldAt.set(kind, d.clock.epochMs());
+            d.onFail(rec, rec.result);
+          }
         })
         .finally(() => running.delete(p));
       running.add(p);
+      settled.set(id, p.then(() => undefined));
       return { ok: true, id };
     },
     list: () => [...jobs],
+    wait: async (id) => {
+      await settled.get(id);
+      return jobs.find((j) => j.id === id);
+    },
     idle: async () => {
       while (running.size > 0) await Promise.allSettled([...running]);
     },

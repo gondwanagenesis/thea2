@@ -120,10 +120,17 @@ export const assertNotTruncated = (parsed: ParsedResponse, req: ChatRequest<any>
   }
 };
 
-/** DR.3 — a tool_choice-forcing door forces `decide` whenever it is among the offered defs (not only as the sole def). A caller's explicit toolChoice outranks the door. */
+/** DR.3 — a tool_choice-forcing door forces `decide` when it is the only def, and forces some tool ('required') when real tools ride beside it (v9). A caller's explicit toolChoice outranks the door. */
 const applyDoorForcing = (req: ChatRequest<any>, door: Door | undefined): ChatRequest<any> => {
   if (door?.forcing !== 'tool_choice' || req.toolChoice !== undefined) return req;
   if (req.tools === undefined || !req.tools.some((t) => t.name === DECIDE_TOOL)) return req;
+  // v9 (found live 2026-09-26): forcing `decide` while real tools sit beside it
+  // locked every one of them out — she could only ever speak, never act, and
+  // explained it away ("i have to lock this reply before using the camera").
+  // With other tools offered the door now forces A tool call ('required'): no
+  // prose escapes the contract, and her hands are hers again. Alone, decide is
+  // still forced by name.
+  if (req.tools.some((t) => t.name !== DECIDE_TOOL)) return { ...req, toolChoice: 'required' };
   return { ...req, toolChoice: { name: DECIDE_TOOL } };
 };
 
