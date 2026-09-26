@@ -26,6 +26,7 @@ import { lifeTools, worldRoom } from './life.js';
 import { browserTools } from './browser.js';
 import { diegoLately } from './nightly.js';
 import type { AffectStore } from '../affect/index.js';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ModelClient } from '../model/index.js';
 import type { Rng } from '../kernel/index.js';
@@ -105,7 +106,14 @@ export interface Body {
   onSkipped(m: InboundMsg): void;
   /** Facts about her world and him for [now]: her room, him lately (cited). */
   worldFacts(now: number): string[];
+  /** How a settled job landed, in words for her memory (undefined while running / unknown). */
+  jobOutcome(jobId: string): string | undefined;
+  /** Her own skill note closest in meaning to his message (cosine ≥ 0.35), if any. */
+  skillFor(text: string): Promise<{ name: string; note: string } | undefined>;
 }
+
+const outcomeWords = (job: { status: string; result?: string | undefined }): string =>
+  job.status === 'done' ? (/^sent /.test(job.result ?? '') ? 'it arrived' : 'made it') : `it didn't come out (${(job.result ?? '').slice(0, 60)})`;
 
 export const makeBody = (d: BodyDeps): Body => {
   const house = openHouse(d.cfg.dir);
@@ -114,6 +122,17 @@ export const makeBody = (d: BodyDeps): Body => {
   const senses = makeSenses({ openai, exec, house, channel: d.channel, clock: d.clock, fetchImpl: d.fetchImpl });
   const mouth = makeMouth({ openai, exec, house, channel: d.channel, clock: d.clock });
   const turns = new Map<string, TurnBodyCtx>();
+  /** Skill notes embedded once per file version (mtime). */
+  const skillVecs = new Map<string, { mtime: number; vec: Float32Array; note: string }>();
+  const cos = (a: Float32Array, b: Float32Array): number => {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length && i < b.length; i++) {
+      dot += a[i]! * b[i]!;
+      na += a[i]! * a[i]!;
+      nb += b[i]! * b[i]!;
+    }
+    return na === 0 || nb === 0 ? 0 : dot / Math.sqrt(na * nb);
+  };
   let late: BodyLate | undefined;
   const wallet = makeWallet(house, d.clock, d.cfg.walletMonthUsd);
   const reminders = makeReminders(house);
@@ -121,6 +140,17 @@ export const makeBody = (d: BodyDeps): Body => {
     clock: d.clock,
     events: d.events,
     onFail: (job, error) => late?.selfEntry(`(the ${job.kind} you were making didn't come out: ${error.slice(0, 160)}. he may still be waiting for it.)`),
+    // how the work landed goes back into the memory of the moment she started it
+    // (if that moment is already written; otherwise the pipeline asks jobOutcome when it writes it)
+    onSettle: (job) => {
+      const mind = d.mind;
+      if (mind === undefined) return;
+      const m = mind.moments().find((x) => x.acts?.some((a) => a.job === job.id) === true);
+      if (m === undefined || m.acts === undefined) return;
+      const landed = outcomeWords(job);
+      mind.update(m.id, { acts: m.acts.map((a) => (a.job === job.id ? { ...a, result: landed } : a)) });
+      void mind.flush();
+    },
   });
   const fal = d.fal ?? (d.cfg.falKey !== undefined ? makeFal(d.cfg.falKey, d.clock, d.fetchImpl) : undefined);
   const camera = fal !== undefined ? makeCamera({ fal, house, clock: d.clock }) : undefined;
@@ -209,10 +239,45 @@ export const makeBody = (d: BodyDeps): Body => {
         return undefined;
       }
     },
+    skillFor: async (text) => {
+      const embedder = d.embedder;
+      const dir = house.resolve('skills');
+      if (embedder === undefined || dir === undefined || text.trim() === '') return undefined;
+      if (!fs.existsSync(dir)) return undefined;
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+      if (files.length === 0) return undefined;
+      const stale = files.filter((f) => skillVecs.get(f)?.mtime !== fs.statSync(`${dir}/${f}`).mtimeMs);
+      if (stale.length > 0) {
+        const notes = stale.map((f) => fs.readFileSync(`${dir}/${f}`, 'utf8'));
+        const vecs = await embedder.embed(notes.map((n, i) => `${stale[i]!.replace(/\.md$/, '').replace(/-/g, ' ')}: ${n.slice(0, 800)}`));
+        stale.forEach((f, i) => {
+          const v = vecs[i];
+          if (v !== undefined) skillVecs.set(f, { mtime: fs.statSync(`${dir}/${f}`).mtimeMs, vec: v, note: notes[i]! });
+        });
+      }
+      const [q] = await embedder.embed([text.slice(0, 600)]);
+      if (q === undefined) return undefined;
+      let best: { f: string; s: number } | undefined;
+      for (const f of files) {
+        const e = skillVecs.get(f);
+        if (e === undefined) continue;
+        const s = cos(q, e.vec);
+        if (best === undefined || s > best.s) best = { f, s };
+      }
+      if (best === undefined || best.s < 0.35) return undefined;
+      return { name: best.f.replace(/\.md$/, ''), note: skillVecs.get(best.f)!.note.slice(0, 900) };
+    },
+    jobOutcome: (jobId) => {
+      const j = jobs.list().find((x) => x.id === jobId);
+      return j === undefined || j.status === 'running' ? undefined : outcomeWords(j);
+    },
     worldFacts: (now) => {
       const facts: string[] = [];
       const room = worldRoom(house);
-      if (room !== undefined) facts.push(`you're in the ${room.name.toLowerCase()}.`);
+      if (room !== undefined) {
+        const name = room.name.toLowerCase();
+        facts.push(`you're in ${/^(my|the|your|her)\b/.test(name) ? name.replace(/^my\b/, 'your') : `the ${name}`}.`);
+      }
       const lately = diegoLately(house, now);
       if (lately.length > 0) facts.push(`him lately: ${lately.join(' · ')}`);
       return facts;

@@ -107,6 +107,8 @@ export interface ComposeInput {
   selfEntry?: boolean | undefined;
   /** v9: facts about his present the body knows (where he is, his local time and sky) — material lines for [now]. */
   nowFacts?: readonly string[] | undefined;
+  /** v9: her own note on how she does the thing this moment is about (learned from practice) — her words. */
+  howTo?: { name: string; note: string } | undefined;
 }
 
 const renderMoment = (m: Moment, tz: string): Segment[] => {
@@ -121,6 +123,10 @@ const renderMoment = (m: Moment, tz: string): Segment[] => {
   const shown = m.hers.length > 3 ? m.hers.slice(0, 2) : m.hers;
   for (const b of shown) segs.push({ kind: 'quote', text: `you: ${clip(b, 280)}` });
   if (m.hers.length > 3) segs.push({ kind: 'frame', text: `(+${m.hers.length - 2} more)` });
+  // v9: what she DID then, beside what she said — so her own past shows acting, not narrating.
+  if (m.acts !== undefined && m.acts.length > 0) {
+    segs.push({ kind: 'frame', text: `(and did: ${m.acts.map((a) => `${a.tool}${a.what !== '' ? ` "${clip(a.what, 60)}"` : ''}${a.result !== undefined ? ` → ${clip(a.result, 60)}` : ''}`).join('; ')})` });
+  }
   if (m.outcome !== undefined && m.outcome.why.trim() !== '') segs.push({ kind: 'frame', text: `(${clip(m.outcome.why, 90)})` });
   return segs;
 };
@@ -171,6 +177,12 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
       head.push({ kind: 'quote', text: clip(text, 280) });
     }
     blank();
+  }
+
+  if (i.howTo !== undefined) {
+    blank();
+    head.push({ kind: 'frame', text: `[how you've done this before — your own note, "${i.howTo.name}"]` });
+    head.push({ kind: 'quote', text: i.howTo.note.replace(/<!--[\s\S]*?-->/g, '').trim() });
   }
 
   const trailer: Segment[] = [];

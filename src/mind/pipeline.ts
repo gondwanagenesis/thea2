@@ -27,7 +27,7 @@ import { feelFast, type FastEvent } from './feel.js';
 import { metabolism, type Metabolism } from './modulate.js';
 import { composePacket, hourIn, V8_OUTPUT_CONTRACT } from './compose.js';
 import { appraiseSlow, slowEvents } from './appraise.js';
-import { applyOutcome, bestOption, encodeLived, FOLLOW_THRESHOLD, markShown } from './remember.js';
+import { actsOf, applyOutcome, bestOption, encodeLived, FOLLOW_THRESHOLD, markShown } from './remember.js';
 import { vecToArray } from './vocab.js';
 import type { MindStore } from './store.js';
 import type { Concern, Line } from './types.js';
@@ -72,6 +72,10 @@ export interface BodySeam {
   onSkipped(m: InboundMsg): void;
   /** Facts about his present for [now] (where he is, his local time and sky). */
   nowFacts?(): string[];
+  /** How a detached job this turn started has landed, if it already has (the other order is the body's). */
+  jobOutcome?(jobId: string): string | undefined;
+  /** Her own note on how she does what this message is about, if one fits (skills from practice). */
+  skillFor?(text: string): Promise<{ name: string; note: string } | undefined>;
 }
 
 export interface MindPipelineDeps {
@@ -272,6 +276,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     const who = deps.personLabel?.(m.speaker.person) ?? 'he';
     const recentThoughts = deps.mind.stream().filter((t) => t.source === 'lived' && now - t.ts < 24 * 3600_000);
     const openConcerns: Concern[] = [...deps.mind.openConcerns()].sort((x, y) => y.importance - x.importance || y.touched - x.touched);
+    const howTo = !selfEntry && deps.body?.skillFor !== undefined ? await deps.body.skillFor(m.text).catch(() => undefined) : undefined;
     const packet = composePacket({
       timeZone: deps.timezone,
       now,
@@ -284,6 +289,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       who,
       selfEntry,
       nowFacts: deps.body?.nowFacts?.() ?? [],
+      howTo,
     });
     const hits = packet.lint();
     if (hits.length > 0) emit('incident.mind_told', { turnId, hits }, turnId);
@@ -571,6 +577,10 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
           tone: sensed?.tone?.label,
           expect: decision.expect,
           importance,
+          acts: actsOf(decision.toolTrace).map((a) => {
+            const landed = a.job !== undefined ? deps.body?.jobOutcome?.(a.job) : undefined;
+            return landed !== undefined ? { ...a, result: landed } : a;
+          }),
         });
         moment.msgIds = sent.map((s) => s.msgId);
         moment.followedFrom = followed?.id ?? null;

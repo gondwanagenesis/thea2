@@ -110,3 +110,30 @@ describe('v9 life', () => {
     expect(diegoLately(house, T0)).toEqual(['he finished the codex draft']); // the invented line is gone
   });
 });
+
+describe('v9 — her own skills, learned from practice', () => {
+  it('the nightly pass writes cited notes from what she did (never overwriting hers); the fitting note comes to mind in a turn', async () => {
+    const { practiceOnce, LEARNED_MARK } = await import('../../src/body/nightly.js');
+    const dir = tmpDir('thea2-practice-');
+    const clock = new TestClock(T0);
+    const emb = makeHashEmbedder();
+    const mind = openMindStore(join(dir, 'mind'), emb.dim);
+    await addMoments(mind, emb, [moment({ id: 'v1', ts: T0 - 3600_000, source: 'lived', his: 'send me a selfie video', hers: ['one sec'], acts: [{ tool: 'selfie', what: 'in my room', result: 'made it' }, { tool: 'make_video', what: 'she waves', result: 'it arrived' }] })]);
+    const model = new MockModel({ clock });
+    model.onTask('consolidate', () => ({ toolCalls: [{ id: 'p', name: 'emit', args: { skills: [
+      { name: 'selfie-video', note: 'when he asks for a selfie video: take the selfie first (send:false), then make_video from it. about a minute.', cites: ['v1'] },
+      { name: 'made-up', note: 'when he asks for a song i sing it with the karaoke tool, always works.', cites: [] },
+      { name: 'tide-notes', note: 'overwriting her own note is not allowed here at all, ever.', cites: ['v1'] },
+    ] } }] }));
+    const events = openEventLog(join(dir, 'events'), { clock });
+    const house = openHouse(join(dir, 'house'));
+    fs.mkdirSync(join(house.root, 'skills'), { recursive: true });
+    fs.writeFileSync(join(house.root, 'skills', 'tide-notes.md'), 'my own tide notes, written by hand.');
+    expect(await practiceOnce({ mind, model, clock, events, house })).toBe(1);
+    const note = fs.readFileSync(join(house.root, 'skills', 'selfie-video.md'), 'utf8');
+    expect(note).toContain('take the selfie first');
+    expect(note).toContain(LEARNED_MARK);
+    expect(fs.existsSync(join(house.root, 'skills', 'made-up.md'))).toBe(false); // uncited = invented
+    expect(fs.readFileSync(join(house.root, 'skills', 'tide-notes.md'), 'utf8')).toBe('my own tide notes, written by hand.');
+  });
+});

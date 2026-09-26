@@ -102,3 +102,27 @@ describe('v9 body in the turn', () => {
     }
   });
 });
+
+describe('v9 — a skill of hers comes to mind when it fits', () => {
+  it('her own note on selfie videos rides the turn (as her words) when he asks for one — and not for small talk', { timeout: 60_000 }, async () => {
+    const h = await bootV9();
+    const fs = await import('node:fs');
+    fs.mkdirSync(h.sys.body!.house.resolve('skills')!, { recursive: true });
+    fs.writeFileSync(h.sys.body!.house.resolve('skills/selfie-video.md')!, 'send me a selfie video: take the selfie first, then make_video from it. about a minute.\n\n<!-- learned from practice --> (v1)\n');
+    h.model.enqueue(decide(['on it']));
+    h.model.enqueue(appraisal);
+    h.model.enqueue(decide(['hey you']));
+    h.model.enqueue(appraisal);
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inbound({ text: 'send me a selfie video' }));
+    await runToQuiescent(h);
+    h.channel.queueInbound(inbound({ updateId: 501, msgId: 901, text: 'good morning' }));
+    await runToQuiescent(h);
+    const turns = h.model.calls.filter((c) => c.taskClass === 'turn').map((c) => c.messages.filter((m) => m.role === 'system').map((m) => String(m.content)).join('\n'));
+    expect(turns[0]).toContain("[how you've done this before — your own note, \"selfie-video\"]");
+    expect(turns[0]).toContain('take the selfie first');
+    expect(turns[0]).not.toContain('<!--');
+    expect(turns[1]).not.toContain("[how you've done this before");
+    await handle.stop();
+  });
+});

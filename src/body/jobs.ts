@@ -33,6 +33,8 @@ export const makeJobs = (d: {
   clock: Clock;
   events: EventLog;
   onFail(job: JobRecord, error: string): void;
+  /** Every settled job (done or failed) — the body writes the outcome into the moment that started it. */
+  onSettle?: ((job: JobRecord) => void) | undefined;
 }): Jobs => {
   const jobs: JobRecord[] = [];
   const running = new Set<Promise<unknown>>();
@@ -70,7 +72,10 @@ export const makeJobs = (d: {
             d.onFail(rec, rec.result);
           }
         })
-        .finally(() => running.delete(p));
+        .finally(() => {
+          running.delete(p);
+          if (rec.status !== 'running') d.onSettle?.(rec);
+        });
       running.add(p);
       settled.set(id, p.then(() => undefined));
       return { ok: true, id };

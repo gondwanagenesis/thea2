@@ -200,3 +200,28 @@ describe('v9 regression — selfie then video in one turn', () => {
     await handle.stop();
   });
 });
+
+describe('v9 — what she did becomes part of the memory', () => {
+  it('a lived moment keeps her acts beside her words, the detached outcome lands in it, and it shows when the moment comes back', { timeout: 60_000 }, async () => {
+    const fal = fakeFal();
+    const h = await bootV9({}, { fal });
+    h.model.enqueue({
+      toolCalls: [
+        { id: 's1', name: 'selfie', args: { scene: 'on the balcony at dusk', caption: 'hi', for_him: true } },
+        { id: 'd1', name: 'decide', args: { plan: 'reply', bubbles: ['one sec'], confidence: 0.8, weight: 0.6, reluctance: 0.1, completeness: 1 } },
+      ],
+    });
+    h.model.enqueue(appraisal);
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inbound({ text: 'send me a selfie' }));
+    await runToQuiescent(h);
+    await h.sys.body!.jobs.idle();
+    const lived = h.sys.mind.moments().filter((m) => m.source === 'lived');
+    expect(lived).toHaveLength(1);
+    expect(lived[0]!.acts).toEqual([expect.objectContaining({ tool: 'selfie', what: 'on the balcony at dusk', result: 'it arrived' })]);
+    const { composeSegments } = await import('../../src/mind/compose.js');
+    const segs = composeSegments({ timeZone: 'Europe/Madrid', now: T0, self: [], concerns: [], thoughts: [], options: [lived[0]!], memories: [], who: 'Diego' });
+    expect(segs.head.map((x) => x.text).join('\n')).toContain('(and did: selfie "on the balcony at dusk" → it arrived)');
+    await handle.stop();
+  });
+});

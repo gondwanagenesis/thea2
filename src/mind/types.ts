@@ -33,6 +33,22 @@ export interface Line {
   text: string;
 }
 
+/**
+ * v9: something she DID in a moment (a tool she used), beside what she said.
+ * Her imported history kept only words ("on it", "sent") — the acts behind
+ * them were lost, so her precedents taught her to narrate instead of act.
+ * Lived moments keep both, and a detached job's outcome lands here later.
+ */
+export interface Act {
+  tool: string;
+  /** What with — the scene, the query, the brief (short). */
+  what: string;
+  /** How it went: the tool's answer, then (for detached work) how it landed. */
+  result?: string | undefined;
+  /** The detached job this act started, if any (its outcome updates `result`). */
+  job?: string | undefined;
+}
+
 export interface Moment {
   id: string;
   /** Epoch ms of her reply (or of the diary line / thought). */
@@ -71,6 +87,8 @@ export interface Moment {
   followedFrom?: string | null | undefined;
   /** Options shown when this reply was made. */
   shownOptions?: string[] | undefined;
+  /** v9: what she did (tools) in this moment, beside what she said. */
+  acts?: Act[] | undefined;
 }
 
 export type ConcernKind = 'loop' | 'expectation' | 'care' | 'curiosity';

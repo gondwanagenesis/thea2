@@ -8,6 +8,7 @@
 //           citation is dropped before the file is written (agents invent
 //           experiences their records don't contain — never about him).
 
+import * as fs from 'node:fs';
 import { z } from 'zod';
 import type { Clock } from '../kernel/index.js';
 import type { EventLog } from '../events/index.js';
@@ -99,5 +100,64 @@ export const nightlyJob = (
   run: async (): Promise<void> => {
     await diaryOnce({ mind: d.mind, model: d.model(), clock: d.clock, events: d.events, timeZone: d.timeZone, embedder: d.embedder }).catch((e: unknown) => void d.events.emit('incident.body_diary_failed', { error: String(e).slice(0, 200) }));
     await diegoOnce({ mind: d.mind, model: d.model(), clock: d.clock, events: d.events, house: d.house }).catch((e: unknown) => void d.events.emit('incident.body_diego_failed', { error: String(e).slice(0, 200) }));
+    await practiceOnce({ mind: d.mind, model: d.model(), clock: d.clock, events: d.events, house: d.house }).catch((e: unknown) => void d.events.emit('incident.body_practice_failed', { error: String(e).slice(0, 200) }));
   },
 });
+
+// ——— skills from practice ————————————————————————————————————————————————
+//
+// Her own version of skills (Diego, 2026-09-26: "her own version of skills?"):
+// each night she looks at what she actually DID this week — which tools, for
+// what, and how it landed — and keeps a few short notes to her future self
+// ("when he asks for a selfie video: selfie first, then animate it; ~a minute").
+// Every note cites the moments it came from (uncited = invented = dropped).
+// Notes she wrote herself by hand are never overwritten.
+
+const PracticeSchema = z.object({
+  skills: z.array(z.object({ name: z.string().regex(/^[a-z0-9][a-z0-9-]{1,40}$/), note: z.string().min(20).max(1200), cites: z.array(z.string()).max(12) })).max(4),
+});
+
+export const LEARNED_MARK = '<!-- learned from practice -->';
+
+export const practiceOnce = async (d: { mind: MindStore; model: ModelClient; clock: Clock; events: EventLog; house: House }): Promise<number> => {
+  const now = d.clock.epochMs();
+  const done = d.mind.moments().filter((m) => m.source === 'lived' && (m.acts?.length ?? 0) > 0 && now - m.ts < 7 * DAY);
+  if (done.length === 0) return 0;
+  const ids = new Set(done.map((m) => m.id));
+  const dir = d.house.resolve('skills')!;
+  fs.mkdirSync(dir, { recursive: true });
+  const existing = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => `- ${f.replace(/\.md$/, '')}: ${fs.readFileSync(`${dir}/${f}`, 'utf8').split('\n')[0]?.slice(0, 100) ?? ''}`);
+  const res = await d.model.chat({
+    taskClass: 'consolidate',
+    tier: 'main',
+    schema: PracticeSchema,
+    schemaName: 'Practice',
+    maxTokens: 1200,
+    temperature: 0.3,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'Below is what you actually did with your tools this week (and how it landed). Keep up to 4 short notes to your future self about HOW you do the things you do often — first person, practical, what worked and what did not. ' +
+          'Name each note in kebab-case (reuse an existing name to update it). Every note cites the [ids] it comes from. Only what the record shows.',
+      },
+      {
+        role: 'user',
+        content: `[what you did]\n${done
+          .map((m) => `[${m.id}] ${m.his !== '' ? `him: ${m.his.slice(0, 160)} / ` : ''}you: ${m.hers.join(' / ').slice(0, 160)} / did: ${(m.acts ?? []).map((a) => `${a.tool} "${a.what.slice(0, 60)}"${a.result !== undefined ? ` → ${a.result.slice(0, 60)}` : ''}`).join('; ')}`)
+          .join('\n')}\n\n[your notes already]\n${existing.join('\n') || '(none)'}`,
+      },
+    ],
+  });
+  let written = 0;
+  for (const s of res.content.skills) {
+    const cites = s.cites.map((c) => c.replace(/^\[|\]$/g, '')).filter((c) => ids.has(c));
+    if (cites.length === 0) continue; // invented
+    const file = `${dir}/${s.name}.md`;
+    if (fs.existsSync(file) && !fs.readFileSync(file, 'utf8').includes(LEARNED_MARK)) continue; // hers, by hand
+    fs.writeFileSync(file, `${s.note.trim()}\n\n${LEARNED_MARK} (${cites.join(', ')})\n`);
+    written += 1;
+  }
+  void d.events.emit('body.practice', { skills: written, from: done.length });
+  return written;
+};

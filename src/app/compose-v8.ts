@@ -69,6 +69,8 @@ export const bodySeam = (body: Body, clock: Clock): BodySeam => ({
   end: (turnId) => body.end(turnId),
   speak: (chatId, text, turnId) => body.speak(chatId, text, turnId),
   onSkipped: (m) => body.onSkipped(m),
+  jobOutcome: (id) => body.jobOutcome(id),
+  skillFor: (text) => body.skillFor(text),
   nowFacts: () => {
     const w = loadWhere(body.house);
     const now = clock.epochMs();

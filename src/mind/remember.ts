@@ -13,7 +13,7 @@
 import { cosine } from './vectors.js';
 import { nearestTag } from './vocab.js';
 import type { MindStore } from './store.js';
-import type { Line, Moment, Outcome } from './types.js';
+import type { Act, Line, Moment, Outcome } from './types.js';
 
 /** Cosine above which her reply counts as following a shown option (text-embedding-3-small; recalibrate from mind.remembered closestSim). */
 export const FOLLOW_THRESHOLD = 0.65;
@@ -35,7 +35,24 @@ export interface EncodeInput {
   tone?: string | undefined;
   expect?: string | undefined;
   importance?: number | undefined;
+  /** v9: the tools she used in this moment. */
+  acts?: Act[] | undefined;
 }
+
+const ACT_FIELDS = ['scene', 'motion', 'prompt', 'query', 'words', 'about', 'brief', 'text', 'emoji', 'url', 'path', 'question', 'candy', 'room', 'action'] as const;
+
+/** The acts of a turn, from the loop's tool trace (decide is not an act; denied calls did nothing). */
+export const actsOf = (trace: ReadonlyArray<{ tool: string; args: unknown; result?: unknown; verdict?: { allow?: boolean } }>): Act[] =>
+  trace
+    .filter((t) => t.tool !== 'decide' && t.verdict?.allow !== false)
+    .map((t) => {
+      const a = (typeof t.args === 'object' && t.args !== null ? t.args : {}) as Record<string, unknown>;
+      const key = ACT_FIELDS.find((k) => typeof a[k] === 'string' && (a[k] as string).trim() !== '');
+      const what = key !== undefined ? String(a[key]).replace(/\s+/g, ' ').slice(0, 120) : '';
+      const result = typeof t.result === 'string' ? t.result.replace(/\s+/g, ' ').slice(0, 120) : undefined;
+      const job = typeof t.result === 'string' ? /\(([a-z]+(?:-[a-z]+)*-\d{10,}-\d+)\)/.exec(t.result)?.[1] : undefined;
+      return { tool: t.tool, what, ...(result !== undefined ? { result } : {}), ...(job !== undefined ? { job } : {}) };
+    });
 
 export const encodeLived = (i: EncodeInput): Moment => ({
   id: i.id,
@@ -53,6 +70,7 @@ export const encodeLived = (i: EncodeInput): Moment => ({
   value: 0,
   shown: 0,
   followed: 0,
+  ...(i.acts !== undefined && i.acts.length > 0 ? { acts: i.acts } : {}),
 });
 
 /** The shown option closest to her reply (any similarity) — logged so the follow threshold can be calibrated live. */
