@@ -18,11 +18,20 @@ import type { Clock, Rng } from '../kernel/index.js';
 import type { House } from './house.js';
 import type { Jobs } from './jobs.js';
 
-/** Tool classes a worker may use: nothing that sends to Diego, nothing that spends from her camera. */
-export const WORKER_CLASSES: ReadonlySet<string> = new Set(['web', 'memory', 'senses', 'code']);
+/**
+ * Tool classes a worker may use: nothing that sends to Diego, nothing that
+ * spends from her camera. v10: 'hands' (shell and files in her workspace), so
+ * a fork or a cast can do a real multi-step coding job in the background.
+ */
+export const WORKER_CLASSES: ReadonlySet<string> = new Set(['web', 'memory', 'senses', 'code', 'hands']);
 const MAX_STEPS = 14;
 const MAX_MS = 6 * 60_000;
+/** v10: a deep job (a real build, a hard bug) — more rounds, more time, the main door. */
+const DEEP_STEPS = 40;
+const DEEP_MS = 20 * 60_000;
 const RESULT_TO_HER = 2500;
+const CODING_NOTE =
+  'For anything with code: work in the workspace — write the files, run them with shell, read what failed, fix with edit, and run it again until it works. Say which files you made.';
 
 export interface CastDeps {
   house: House;
@@ -44,15 +53,15 @@ const FORK_FRAME = (self: string[], recent: Array<{ who: 'him' | 'her'; text: st
     self.length > 0 ? `[me]\n${self.join('\n')}` : '',
     recent.length > 0 ? `[the conversation so far]\n${recent.map((l) => `${l.who === 'him' ? 'him' : 'you'}: ${l.text.slice(0, 400)}`).join('\n')}` : '',
     'Use the tools as much as the job needs. Finish with what you found or did, plainly, with the links or file paths that matter.',
+    CODING_NOTE,
   ]
     .filter((s) => s !== '')
     .join('\n\n');
 
-const TASK_FRAME =
-  'You are a worker doing one job from a brief, in the background. Use the tools as much as the job needs. Finish with the result only: plainly, with the links or file paths that matter. Nothing you write is sent to anyone but the one who asked.';
+const TASK_FRAME = `You are a worker doing one job from a brief, in the background. Use the tools as much as the job needs. Finish with the result only: plainly, with the links or file paths that matter. Nothing you write is sent to anyone but the one who asked. ${CODING_NOTE}`;
 
 const CAST_FRAME = (canon: string): string =>
-  `${canon.trim()}\n\n---\nThea sent you out with the brief below. You work on your own, with the tools. Nothing you write is sent to Diego; your answer goes back to Thea. Finish with what you found or did, plainly.`;
+  `${canon.trim()}\n\n---\nThea sent you out with the brief below. You work on your own, with the tools. Nothing you write is sent to Diego; your answer goes back to Thea. Finish with what you found or did, plainly. ${CODING_NOTE}`;
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'work';
 
@@ -70,7 +79,18 @@ type Entry = ToolRegistryEntry<never>;
 
 /** One worker run: tool rounds until it answers in content, the step cap, or the clock. */
 export const runWorker = async (
-  d: { model: ModelClient; registry: ToolRegistry; clock: Clock; rng: Rng; tier: 'main' | 'cheap'; id: string; classes?: ReadonlySet<string> | undefined; maxMs?: number | undefined },
+  d: {
+    model: ModelClient;
+    registry: ToolRegistry;
+    clock: Clock;
+    rng: Rng;
+    tier: 'main' | 'cheap';
+    id: string;
+    classes?: ReadonlySet<string> | undefined;
+    maxMs?: number | undefined;
+    /** Tool rounds (default 14; a deep job gets 40). */
+    steps?: number | undefined;
+  },
   system: string,
   brief: string,
 ): Promise<{ text: string; steps: number; tools: string[] }> => {
@@ -96,7 +116,8 @@ export const runWorker = async (
     spawn: { situation: brief.slice(0, 200), record: () => undefined },
   };
   let last = '';
-  for (let step = 0; step < MAX_STEPS; step++) {
+  const maxSteps = d.steps ?? MAX_STEPS;
+  for (let step = 0; step < maxSteps; step++) {
     if (d.clock.epochMs() > deadline) return { text: `${last}\n[stopped: out of time]`.trim(), steps: step, tools: used };
     const res = await d.model.chat({ taskClass: 'cast', tier: d.tier, messages: msgs, ...(defs.length > 0 ? { tools: defs } : {}), maxTokens: 8000, temperature: 0.6 });
     const content = typeof res.content === 'string' ? res.content : '';
@@ -117,7 +138,7 @@ export const runWorker = async (
       msgs.push({ role: 'tool', toolCallId: call.id, content: out.slice(0, 12_000) });
     }
   }
-  return { text: `${last}\n[stopped: used every step]`.trim(), steps: MAX_STEPS, tools: used };
+  return { text: `${last}\n[stopped: used every step]`.trim(), steps: maxSteps, tools: used };
 };
 
 export const castTools = (d: CastDeps): Entry[] => {
@@ -139,19 +160,27 @@ export const castTools = (d: CastDeps): Entry[] => {
   return [
     entry(
       'delegate',
-      "Send work out so this line stays open. fork = a copy of you who knows the conversation (judgement, anything with context). task = a worker from a brief you write (lookups, grunt work). cast = a member of the cast (see status for who), working from her own canon and your brief. They work in the background with the web, your memory and code, and what they find comes back to you — then you tell him. status = what is out; report = read one back.",
+      "Send work out so this line stays open. fork = a copy of you who knows the conversation (judgement, anything with context). task = a worker from a brief you write (lookups, grunt work). cast = a member of the cast (see status for who), working from her own canon and your brief. They work in the background with the web, your memory, code and your hands (shell and files in your workspace, so they can build and run real code), and what they find comes back to you — then you tell him. deep = true for a long or hard job (a real build, a tricky bug): more rounds, more time, the stronger model. status = what is out; report = read one back.",
       {
         type: 'object',
         properties: {
           action: { type: 'string', enum: ['fork', 'task', 'cast', 'status', 'report'] },
           brief: { type: 'string', description: 'what to do; for task and cast, written so someone with no context can follow it' },
           label: { type: 'string', description: 'two or three words, to find it again' },
-          as: { type: 'string', description: 'cast only: who (kernel, nightingale, ledger, ripperdoc…)' },
+          as: { type: 'string', description: 'cast only: who (kernel, nightingale, ledger, ripperdoc, coder…)' },
+          deep: { type: 'boolean', description: 'a long or hard job (default false)' },
           id: { type: 'string', description: 'report only' },
         },
         required: ['action'],
       },
-      z.object({ action: z.enum(['fork', 'task', 'cast', 'status', 'report']), brief: z.string().max(6000).optional(), label: z.string().max(60).optional(), as: z.string().max(40).optional(), id: z.string().max(80).optional() }),
+      z.object({
+        action: z.enum(['fork', 'task', 'cast', 'status', 'report']),
+        brief: z.string().max(6000).optional(),
+        label: z.string().max(60).optional(),
+        as: z.string().max(40).optional(),
+        deep: z.boolean().optional(),
+        id: z.string().max(80).optional(),
+      }),
       async (a, ctx) => {
         if (a.action === 'status') {
           const js = d.jobs.list().filter((j) => j.kind.startsWith('cast-')).slice(-8);
@@ -169,9 +198,10 @@ export const castTools = (d: CastDeps): Entry[] => {
         }
         if (a.brief === undefined || a.brief.trim() === '') return 'give the brief: what should be done?';
         let system: string;
-        // everything she sends out works on the cheap GPT door; what comes back she says in her own voice
-        const tier: 'main' | 'cheap' = 'cheap';
-        // tasks ride the cheap door; forks and the cast think on the main one
+        // everything she sends out works on the cheap door (back of house); what comes back she says in her
+        // own voice. A deep job (a real build, a hard bug) gets the main door, more rounds and more time.
+        const deep = a.deep === true;
+        const tier: 'main' | 'cheap' = deep ? 'main' : 'cheap';
         let who: string = a.action;
         if (a.action === 'fork') system = FORK_FRAME(d.selfLines(), d.recent(ctx.turnId));
         else if (a.action === 'task') {
@@ -186,7 +216,11 @@ export const castTools = (d: CastDeps): Entry[] => {
         const label = a.label ?? a.brief.split(/\s+/).slice(0, 4).join(' ');
         const brief = a.brief;
         const started = d.jobs.start(`cast-${who}`, label, ctx.turnId, async (jobId) => {
-          const r = await runWorker({ model: d.model(), registry: d.registry(), clock: d.clock, rng: d.rng, tier, id: jobId }, system, brief);
+          const r = await runWorker(
+            { model: d.model(), registry: d.registry(), clock: d.clock, rng: d.rng, tier, id: jobId, ...(deep ? { steps: DEEP_STEPS, maxMs: DEEP_MS } : {}) },
+            system,
+            brief,
+          );
           const dir = d.house.resolve('casts');
           if (dir !== undefined) {
             fs.mkdirSync(dir, { recursive: true });

@@ -7,7 +7,7 @@ import * as fs from 'node:fs';
 import { startThead } from '../../src/app/index.js';
 import type { ChatRequest } from '../../src/model/index.js';
 import { inbound, moment, runToQuiescent, T0 } from '../mind/helpers.js';
-import { bootV9 } from './helpers.js';
+import { bootV9, scriptedShell } from './helpers.js';
 
 const DAY = 86_400_000;
 const decide = (bubbles: string[]) => ({
@@ -57,6 +57,45 @@ describe('v9 casting', () => {
     const job = h.sys.body!.jobs.list().find((j) => j.kind === 'cast-fork');
     expect(job?.status).toBe('done');
     expect(fs.existsSync(h.sys.body!.house.resolve(`casts/${job!.id}.md`)!)).toBe(true);
+    await handle.stop();
+  });
+
+  it('v10: a coder cast builds with her hands in the background (write → shell) on the main door when deep — and still never gets the tools that reach him, nor the workshop', { timeout: 60_000 }, async () => {
+    const shell = scriptedShell((c) => (c === 'python3 fib.py' ? { exit: 0, stdout: '55\n', stderr: '', timedOut: false } : { exit: 127, stdout: '', stderr: 'not scripted', timedOut: false }));
+    const h = await bootV9({}, { shell, workshopCall: { start: async () => ({ ok: true }) } });
+    const speaker = (req: ChatRequest) => {
+      if (userSays(req, 'came back')) return decide(['done: fib(10) is 55, it is in fib.py']);
+      if (hasTool(req)) return decide(['on it']);
+      return { toolCalls: [{ id: 'g1', name: 'delegate', args: { action: 'task', brief: 'write fib.py that prints fib(10), run it, report the number', label: 'fib', deep: true } }] };
+    };
+    h.model.onTask('turn', speaker);
+    h.model.onTask('heartbeat-thought', speaker);
+    h.model.onTask('cast', (req) => {
+      const done = req.messages.filter((m) => m.role === 'tool').length;
+      if (done === 0) return { toolCalls: [{ id: 'w1', name: 'write', args: { path: 'fib.py', content: 'a, b = 0, 1\nfor _ in range(10):\n    a, b = b, a + b\nprint(a)\n' } }] };
+      if (done === 1) return { toolCalls: [{ id: 's1', name: 'shell', args: { command: 'python3 fib.py' } }] };
+      return { content: 'fib.py prints 55.' };
+    });
+    h.model.onTask('appraisal', () => ({ toolCalls: [{ id: 'a1', name: 'emit', args: { event: [], self: [], outcome_prev: null, concerns: [], importance: 4 } }] }));
+
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inbound({ text: 'can you get someone to work out fib(10) in python' }));
+    await runToQuiescent(h);
+    await h.sys.body!.jobs.idle();
+    await runToQuiescent(h);
+
+    expect(h.channel.outbound().map((s) => s.text)).toEqual(['on it', 'done: fib(10) is 55, it is in fib.py']);
+    const castCalls = h.model.calls.filter((c) => c.taskClass === 'cast');
+    expect(castCalls).toHaveLength(3);
+    expect(castCalls.every((c) => c.tier === 'main')).toBe(true); // deep → the main door
+    const workerTools = (castCalls[0]!.tools ?? []).map((t) => t.name);
+    for (const n of ['shell', 'read', 'write', 'edit', 'ls', 'grep', 'glob', 'run_code', 'session_search']) expect(workerTools).toContain(n);
+    for (const n of ['voice_note', 'react', 'selfie', 'imagine', 'make_video', 'send_photo', 'poll', 'delegate', 'decide', 'workshop']) expect(workerTools).not.toContain(n);
+    expect(fs.readFileSync(h.sys.body!.workspace.resolve('fib.py')!, 'utf8')).toContain('print(a)');
+    expect(shell.commands).toEqual(['python3 fib.py']);
+    expect(castCalls[2]!.messages.some((m) => m.role === 'tool' && String(m.content) === '55\n\n[exit 0]')).toBe(true);
+    // her own turn has the workshop; the worker never did
+    expect((h.model.calls.find((c) => c.taskClass === 'turn')!.tools ?? []).map((t) => t.name)).toContain('workshop');
     await handle.stop();
   });
 

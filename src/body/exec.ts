@@ -18,6 +18,7 @@ export const nodeExec: Exec = {
         timeout: timeoutMs,
         killSignal: 'SIGKILL',
         ...(opts?.cwd !== undefined ? { cwd: opts.cwd } : {}),
+        ...(opts?.env !== undefined ? { env: opts.env } : {}),
       });
       const out: Buffer[] = [];
       let outLen = 0;

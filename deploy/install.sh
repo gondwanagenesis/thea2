@@ -100,9 +100,19 @@ chmod 0755 "$PREFIX/deploy/tunnel-url.sh"
 grep -q '^THEA2_DASHBOARD_KEY=' /etc/thea2/keys.env 2>/dev/null || { printf 'THEA2_DASHBOARD_KEY=%s
 ' "$(openssl rand -hex 24)" >> /etc/thea2/keys.env; chmod 600 /etc/thea2/keys.env; }
 install -d -m 0750 -o thea2 -g thea2 "$PREFIX/var/run" "$PREFIX/var/house"
+# v10 hands (F1): her shell runs through thea2-exec as its OWN user, never as
+# thea2 (a thea2 shell could read her keys out of /proc/<thead>/environ). Same
+# group, setgid workspace, umask 002: what either of them makes, both can edit.
+id -u thea2-hands >/dev/null 2>&1 || useradd --system --no-create-home --home-dir "$PREFIX/var/workspace" --gid thea2 --shell /usr/sbin/nologin thea2-hands
+install -d -m 2775 -o thea2 -g thea2 "$PREFIX/var/workspace"
+# v10 workshop: she changes her own code (root broker; jobs in /opt/thea2-workshop,
+# status files in var/workshop; the coding agent's login config in /etc/thea2-workshop).
+install -m 0644 "$PREFIX/deploy/thea2-workshop.service" /etc/systemd/system/thea2-workshop.service
+install -d -m 0700 /opt/thea2-workshop /etc/thea2-workshop
+install -d -m 0750 -o thea2 -g thea2 "$PREFIX/var/workshop"
 systemctl daemon-reload
-systemctl enable thea2.service thea2-backup.timer thea2-exec.service thea2-dashboard-tunnel.service thea2-browser.service >/dev/null
-systemctl restart thea2-exec.service thea2-browser.service
+systemctl enable thea2.service thea2-backup.timer thea2-exec.service thea2-dashboard-tunnel.service thea2-browser.service thea2-workshop.service >/dev/null
+systemctl restart thea2-exec.service thea2-browser.service thea2-workshop.service
 
 # v9 body: her assets, COPIED once from Thea1's install (read-only on Thea1;
 # never linked, never written back): her face references + canonical look,
@@ -122,6 +132,19 @@ if [ -d /opt/thea/cast ] && [ ! -d "$PREFIX/var/house/cast" ]; then
   rm -f "$PREFIX/var/house/cast/door_thea.md"   # the door line is sealed and out of scope for Thea2
 fi
 chown -R thea2:thea2 "$PREFIX/var/house"
+# v10: her starter skill notes (how to use her hands, casts and the workshop) —
+# copied once each; a note she has rewritten from practice is never overwritten.
+if [ -d "$PREFIX/deploy/skills" ]; then
+  mkdir -p "$PREFIX/var/house/skills"
+  for f in "$PREFIX"/deploy/skills/*.md; do
+    [ -f "$PREFIX/var/house/skills/$(basename "$f")" ] || cp "$f" "$PREFIX/var/house/skills/"
+  done
+  chown -R thea2:thea2 "$PREFIX/var/house/skills"
+fi
+if [ -f "$PREFIX/deploy/cast/coder.md" ] && [ ! -f "$PREFIX/var/house/cast/coder.md" ]; then
+  mkdir -p "$PREFIX/var/house/cast" && cp "$PREFIX/deploy/cast/coder.md" "$PREFIX/var/house/cast/coder.md"
+  chown thea2:thea2 "$PREFIX/var/house/cast/coder.md"
+fi
 
 cat <<'EOF'
 >> install done. Remaining operator steps (deploy/ops.md):

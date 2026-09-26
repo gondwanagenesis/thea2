@@ -32,7 +32,7 @@ import {
   type MindPipeline,
   type MindStore,
 } from '../mind/index.js';
-import { describeWhere, loadWhere, makeBody, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody } from '../body/index.js';
+import { brokerShell, describeWhere, loadWhere, makeBody, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
 import { makeLive, startFaceServer, type FaceServer } from '../face/index.js';
 import { makeEmbedder } from './embedder.js';
@@ -57,6 +57,12 @@ export interface ComposeV8Opts {
   bodyExec?: Exec | undefined;
   bodyOpenAI?: OpenAIBody | undefined;
   bodyFal?: Fal | undefined;
+  /** v10 hands, non-prod: the bash her local shell runs (Windows dev boxes point it at Git's bash). */
+  bodyShellCmd?: string | undefined;
+  /** v10 hands: a scripted shell (tests); wins over the broker and the local shell. */
+  bodyShell?: ShellRunner | undefined;
+  /** v10 workshop: the broker call (tests fake it); absent = the broker's socket, if it is there. */
+  workshopCall?: WorkshopCall | undefined;
 }
 
 /** How fresh a shared location must be to stay a fact about his present. */
@@ -175,11 +181,30 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
   // v9 body: senses + hands (plan thea2-v9-parity.md). Registered BEFORE the
   // gate compiles — the gate default-denies any tool it was not told about.
   const ownerChatId = cfg.bridge.allowedChatIds[0] ?? 0;
+  const doors = cfg.models.doors;
+  // Known secret values: the gate rejects them in tool args and plans; her hands redact them from every result.
+  const secrets = [
+    cfg.bridge.botToken,
+    cfg.models.apiKey,
+    doors.mind.apiKey,
+    doors.judge.apiKey,
+    ...(doors.voiceFallback !== undefined ? [doors.voiceFallback.apiKey] : []),
+    ...(cfg.body !== undefined
+      ? [cfg.body.openaiKey, cfg.body.falKey, cfg.body.braveKey, cfg.body.elevenKey, cfg.body.presentKey].filter((k): k is string => k !== undefined && k !== '')
+      : []),
+  ];
   const body: Body | undefined =
     cfg.body === undefined
       ? undefined
       : makeBody({
-          cfg: { ...cfg.body, dir: v(cfg.body.dir) },
+          cfg: { ...cfg.body, dir: v(cfg.body.dir), workspaceDir: v(cfg.body.workspaceDir) },
+          secrets,
+          // v10 hands (F1): in prod her shell runs through the exec broker as its own user
+          // (thea2-hands), which cannot see her keys, her var, Thea1 or /root
+          ...(preset === 'prod' ? { shell: brokerShell(path.join(path.dirname(v(cfg.body.dir)), 'run', 'exec.sock')) } : {}),
+          ...(opts.bodyShellCmd !== undefined ? { shellCmd: opts.bodyShellCmd } : {}),
+          ...(opts.bodyShell !== undefined ? { shell: opts.bodyShell } : {}),
+          ...(opts.workshopCall !== undefined ? { workshopCall: opts.workshopCall } : {}),
           channel,
           clock,
           events,
@@ -215,19 +240,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
   // on real felt signatures); v7's coupling.yaml stays untouched for v7.
   const couplingPath = fs.existsSync(path.resolve(root, 'coupling-v8.yaml')) ? path.resolve(root, 'coupling-v8.yaml') : path.resolve(root, 'coupling.yaml');
   const coupling = compileCoupling(readRoot(couplingPath));
-  const doors = cfg.models.doors;
   const gate = compileGate(readRoot(path.resolve(root, 'corpus', 'canon', 'inhibitions.yaml')), {
     ownerChatId: String(cfg.bridge.allowedChatIds[0]),
-    secrets: [
-      cfg.bridge.botToken,
-      cfg.models.apiKey,
-      doors.mind.apiKey,
-      doors.judge.apiKey,
-      ...(doors.voiceFallback !== undefined ? [doors.voiceFallback.apiKey] : []),
-      ...(cfg.body !== undefined
-        ? [cfg.body.openaiKey, cfg.body.falKey, cfg.body.braveKey, cfg.body.elevenKey].filter((k): k is string => k !== undefined && k !== '')
-        : []),
-    ],
+    secrets,
     knownTools: tools.names(),
   });
   await events.emit('app.boot', { stage: 'gates' });
@@ -426,6 +441,22 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
       }),
       sleepJob({ mind, model, events, clock, timeZone: cfg.timezone }, utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone)),
       ...(body !== undefined ? [remindersJob(body.reminders, clock, (goal) => void pipeline.selfEntry('heartbeat', goal))] : []),
+      // v10 workshop: the broker marks a deploy live ~45 s AFTER restarting her, so boot alone would miss it
+      ...(body !== undefined
+        ? [
+            {
+              name: 'workshop-news',
+              cadence: { kind: 'every' as const, ms: 60_000 },
+              lane: 'maintenance' as const,
+              catchUp: 'skip' as const,
+              timeoutMs: 10_000,
+              run: async () => {
+                const told = body.wake();
+                if (told.length > 0) await events.emit('body.workshop_told', { ids: told });
+              },
+            },
+          ]
+        : []),
       ...(body !== undefined
         ? [nightlyJob({ mind, model: () => model, clock, events, house: body.house, timeZone: cfg.timezone, embedder }, (utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone) + 30) % 1440)]
         : []),
@@ -487,6 +518,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
       pipeline.sweep(0);
     }
   }
+  // v10 workshop: a change that went live (or was rolled back) restarted her — she hears how it went, once
+  const toldWorkshop = body?.wake() ?? [];
+  if (toldWorkshop.length > 0) await events.emit('body.workshop_told', { ids: toldWorkshop });
   await events.emit('app.boot', { stage: 'bridge', channel: preset === 'prod' ? 'telegram' : 'fake', mind: 'v8' });
   return system;
 };

@@ -25,7 +25,7 @@ export const LIVE_VOICES = ['marin', 'cedar', 'shimmer', 'coral', 'sage', 'balla
 const IDLE_CLOSE_MS = 10 * 60_000;
 const MAX_CALL_MS = 120 * 60_000;
 /** On a call he is right there: her delegate may use her camera and send things too. */
-const CALL_CLASSES: ReadonlySet<string> = new Set(['web', 'memory', 'senses', 'code', 'camera', 'expression', 'life', 'spawn']);
+const CALL_CLASSES: ReadonlySet<string> = new Set(['web', 'memory', 'senses', 'code', 'hands', 'self', 'camera', 'expression', 'life', 'spawn']);
 
 export interface LiveDeps {
   key: string;

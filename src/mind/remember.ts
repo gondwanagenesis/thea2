@@ -39,7 +39,7 @@ export interface EncodeInput {
   acts?: Act[] | undefined;
 }
 
-const ACT_FIELDS = ['scene', 'motion', 'prompt', 'query', 'words', 'about', 'brief', 'text', 'emoji', 'url', 'path', 'question', 'candy', 'room', 'action'] as const;
+const ACT_FIELDS = ['scene', 'motion', 'prompt', 'query', 'words', 'about', 'brief', 'text', 'emoji', 'url', 'command', 'pattern', 'task', 'path', 'question', 'candy', 'room', 'action'] as const;
 
 /** The acts of a turn, from the loop's tool trace (decide is not an act; denied calls did nothing). */
 export const actsOf = (trace: ReadonlyArray<{ tool: string; args: unknown; result?: unknown; verdict?: { allow?: boolean } }>): Act[] =>

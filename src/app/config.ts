@@ -82,6 +82,8 @@ export interface Thea2Config {
  */
 export interface BodyConfig {
   dir: string;
+  /** v10: the workspace her hands work in (shell, read, write, edit, ls, grep, glob). */
+  workspaceDir: string;
   openaiKey: string;
   openaiEndpoint: string;
   visionModel: string;
@@ -337,6 +339,7 @@ const configSchema = z.strictObject({
   body: z
     .strictObject({
       dir: z.string().min(1).default('var/house'),
+      workspaceDir: z.string().min(1).default('var/workspace'),
       openaiKeyEnv: envName,
       openaiEndpoint: z.string().url().default('https://api.openai.com/v1'),
       visionModel: z.string().min(1).default('gpt-5.6-sol'),
@@ -529,6 +532,7 @@ const resolveBody = (b: NonNullable<YamlConfig['body']>, env: Record<string, str
   }
   return {
     dir: b.dir,
+    workspaceDir: b.workspaceDir,
     openaiKey,
     openaiEndpoint: b.openaiEndpoint,
     visionModel: b.visionModel,

@@ -1,0 +1,22 @@
+[Unit]
+Description=Thea2 workshop (v10: she changes her own code — a coding agent on a copy, her full test gate, deploy when Diego is quiet, rollback if she does not come back up)
+Documentation=file:///opt/thea2/docs/plans/v10-opencode-hands.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /opt/thea2/deploy/workshop-broker.mjs
+Environment=THEA2_WORKSHOP_SOCK=/opt/thea2/var/run/workshop.sock
+# the coding agent: opencode (default) or claude; its model and login are the
+# operator's (names listed in THEA2_WORKSHOP_AGENT_ENV pass through to it)
+Environment=THEA2_WORKSHOP_AGENT=opencode
+EnvironmentFile=-/etc/thea2-workshop/agent.env
+# A job outlives a restart of THIS unit's main process only as far as its
+# systemd-run children; the thea2 restart a deploy does never touches it.
+KillMode=process
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

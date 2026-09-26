@@ -22,6 +22,8 @@ import { makeWallet, type Wallet } from './wallet.js';
 import { makeReminders, type Reminders } from './reminders.js';
 import { castTools } from './cast.js';
 import { codeTools } from './code.js';
+import { handsTools, localShell, openFence, type Fence, type ShellRunner } from './hands.js';
+import { announceWorkshop, brokerWorkshop, workshopTools, type WorkshopCall } from './workshop.js';
 import { lifeTools, worldRoom } from './life.js';
 import { browserTools } from './browser.js';
 import { diegoLately } from './nightly.js';
@@ -52,6 +54,18 @@ export { braveSearch, fetchPage, assertPublicUrl, isPrivateAddress } from './web
 export { searchWords, searchMeaning, renderHit } from './remember-tools.js';
 export { castTools, runWorker, castSlugs, WORKER_CLASSES } from './cast.js';
 export { codeTools, runInSandbox, type CodeResult } from './code.js';
+export { handsTools, openFence, safeEnv, redactor, localShell, brokerShell, shellWords, globToRegExp, HANDS_TOOLS, type Fence, type ShellRunner, type ShellResult, type HandsDeps } from './hands.js';
+export {
+  workshopTools,
+  workshopWords,
+  announceWorkshop,
+  brokerWorkshop,
+  readWorkshopStatus,
+  WORKSHOP_TERMINAL,
+  type WorkshopCall,
+  type WorkshopStatus,
+  type WorkshopState,
+} from './workshop.js';
 export { browserTools } from './browser.js';
 export { lifeTools, CANDIES, leavePresent, sealInside, openInside, worldRoom, type Present } from './life.js';
 export { nightlyJob, diaryOnce, diegoOnce, diegoLately, type DiegoModel } from './nightly.js';
@@ -81,6 +95,17 @@ export interface BodyDeps {
   affect?: AffectStore | undefined;
   /** Her browser service (deploy/browser); absent = no browser tool. */
   browserUrl?: string | undefined;
+  /** v10 hands: how her shell runs. Prod = the exec broker, as its own user (F1); absent = a local bash (dev, tests). */
+  shell?: ShellRunner | undefined;
+  /** v10 hands, local shell only: the bash binary (a Windows dev box points it at Git's bash). */
+  shellCmd?: string | undefined;
+  /** v10: runtime secret values, redacted from everything her hands return. */
+  secrets?: readonly string[] | undefined;
+  /**
+   * v10 workshop: the broker call. Absent = the thea2-workshop broker's socket
+   * (<var>/run/workshop.sock) — and no workshop tool at all when it is not there.
+   */
+  workshopCall?: WorkshopCall | undefined;
 }
 
 /** Bound after the pipeline exists (it needs the body first). */
@@ -96,9 +121,13 @@ export interface Body {
   readonly jobs: Jobs;
   readonly wallet: Wallet;
   readonly reminders: Reminders;
+  /** v10: the workspace her hands work in. */
+  readonly workspace: Fence;
   /** Registers her tools; returns their names. */
   register(registry: ToolRegistry): string[];
   bind(late: BodyLate): void;
+  /** At boot, after bind: what happened while she was down (a workshop change that restarted her). Returns the job ids told. */
+  wake(): string[];
   // ——— the seam the mind pipeline calls (structurally its BodySeam) ———
   perceive(m: InboundMsg): Promise<Perceived>;
   begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined; text?: string | undefined }): void;
@@ -115,12 +144,21 @@ export interface Body {
   skillFor(text: string): Promise<{ name: string; note: string } | undefined>;
 }
 
-const outcomeWords = (job: { status: string; result?: string | undefined }): string =>
-  job.status === 'done' ? (/^sent /.test(job.result ?? '') ? 'it arrived' : 'made it') : `it didn't come out (${(job.result ?? '').slice(0, 60)})`;
+const outcomeWords = (job: { kind: string; status: string; result?: string | undefined }): string =>
+  job.kind === 'shell' || job.kind === 'workshop'
+    ? `finished (${(job.result ?? '').slice(0, 60)})`
+    : job.status === 'done'
+      ? /^sent /.test(job.result ?? '')
+        ? 'it arrived'
+        : 'made it'
+      : `it didn't come out (${(job.result ?? '').slice(0, 60)})`;
 
 export const makeBody = (d: BodyDeps): Body => {
   const house = openHouse(d.cfg.dir);
   const exec = d.exec ?? nodeExec;
+  const varDir = path.dirname(house.root);
+  const workspace = openFence(d.cfg.workspaceDir ?? path.join(varDir, 'workspace'));
+  const workshopDir = path.join(varDir, 'workshop');
   const openai = d.openai ?? openAIBody(d.cfg, d.fetchImpl);
   const senses = makeSenses({ openai, exec, house, channel: d.channel, clock: d.clock, fetchImpl: d.fetchImpl });
   const mouth = makeMouth({ openai, exec, house, channel: d.channel, clock: d.clock });
@@ -142,7 +180,10 @@ export const makeBody = (d: BodyDeps): Body => {
   const jobs = makeJobs({
     clock: d.clock,
     events: d.events,
-    onFail: (job, error) => late?.selfEntry(`(the ${job.kind} you were making didn't come out: ${error.slice(0, 160)}. he may still be waiting for it.)`),
+    // the workshop tells her itself how a change went (workshopWords), so its failures are not told twice
+    onFail: (job, error) => {
+      if (job.kind !== 'workshop') late?.selfEntry(`(the ${job.kind} you were making didn't come out: ${error.slice(0, 160)}. he may still be waiting for it.)`);
+    },
     // how the work landed goes back into the memory of the moment she started it
     // (if that moment is already written; otherwise the pipeline asks jobOutcome when it writes it)
     onSettle: (job) => {
@@ -165,9 +206,11 @@ export const makeBody = (d: BodyDeps): Body => {
     jobs,
     wallet,
     reminders,
+    workspace,
     bind: (l) => {
       late = l;
     },
+    wake: () => announceWorkshop({ dir: workshopDir, clock: d.clock, selfEntry: (goal) => late?.selfEntry(goal) }),
     register: (registry) => {
       const turn = (id: string): TurnBodyCtx | undefined => turns.get(id);
       const tools = [
@@ -196,6 +239,17 @@ export const makeBody = (d: BodyDeps): Body => {
       if (d.browserUrl !== undefined) tools.push(...browserTools(d.browserUrl, d.fetchImpl));
       // run_code talks to the thea2-exec broker's socket beside her var (deploy/exec-broker.mjs).
       tools.push(...codeTools(d.execSock ?? path.join(path.dirname(house.root), 'run', 'exec.sock')));
+      // v10 hands: shell, read, write, edit, ls, grep, glob over her workspace
+      const shell = d.shell ?? localShell({ home: workspace.root, scratch: path.join(house.root, 'tmp'), clock: d.clock, shell: d.shellCmd });
+      tools.push(
+        ...handsTools({ fence: workspace, shell, exec, secrets: d.secrets ?? [], detach: { jobs, clock: d.clock, selfEntry: (goal) => late?.selfEntry(goal) } }),
+      );
+      // v10 workshop: only when its broker is there (no silent stub — AGENTS rule 5)
+      const workshopSock = path.join(varDir, 'run', 'workshop.sock');
+      const workshopCall = d.workshopCall ?? (fs.existsSync(workshopSock) ? brokerWorkshop(workshopSock) : undefined);
+      if (workshopCall !== undefined) {
+        tools.push(...workshopTools({ dir: workshopDir, call: workshopCall, jobs, clock: d.clock, selfEntry: (goal) => late?.selfEntry(goal) }));
+      }
       if (d.model !== undefined && d.rng !== undefined) {
         const model = d.model;
         tools.push(

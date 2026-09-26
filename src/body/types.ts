@@ -9,6 +9,8 @@
 /** The resolved body config (app maps its BodyConfig onto this; body never imports app). */
 export interface BodyCfg {
   dir: string;
+  /** v10: the workspace her hands work in (default: <var>/workspace, beside the house). */
+  workspaceDir?: string | undefined;
   openaiKey: string;
   openaiEndpoint: string;
   visionModel: string;
@@ -30,7 +32,8 @@ export interface Exec {
   run(
     cmd: string,
     args: readonly string[],
-    opts?: { stdin?: Uint8Array | undefined; timeoutMs?: number | undefined; cwd?: string | undefined },
+    /** env: the child's WHOLE environment when given (never merged with the process's). */
+    opts?: { stdin?: Uint8Array | undefined; timeoutMs?: number | undefined; cwd?: string | undefined; env?: Record<string, string> | undefined },
   ): Promise<{ code: number; stdout: Uint8Array; stderr: string }>;
 }
 

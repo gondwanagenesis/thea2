@@ -10,10 +10,12 @@ import { FakeChannel } from '../../src/bridge/index.js';
 import { makeHashEmbedder } from '../../src/embed/index.js';
 import { loadConfig } from '../../src/app/index.js';
 import { composeV8 } from '../../src/app/compose-v8.js';
-import type { Exec, Fal, OpenAIBody } from '../../src/body/index.js';
+import type { Exec, Fal, OpenAIBody, ShellResult, ShellRunner, WorkshopCall } from '../../src/body/index.js';
 import { CHAT, HERMETIC_ENV, seedMindDir, T0, tmpDir, type SeedOpts, type V8Harness } from '../mind/helpers.js';
 
 export const V9_ENV: Record<string, string> = { ...HERMETIC_ENV, THEA2_TEST_OPENAI: 'sk-test-body-0123456789' };
+/** v10 hands: the bash her local shell runs (on a Windows dev box `bash` is WSL's; Git's bash stands in). */
+export const TEST_BASH = process.platform === 'win32' ? 'C:\\Program Files\\Git\\bin\\bash.exe' : 'bash';
 const FIXTURE = resolve('test/fixtures/thea2.v9.hermetic.yaml');
 
 export interface FakeOpenAI extends OpenAIBody {
@@ -93,7 +95,7 @@ export const fakeFal = (opts: { fail?: string } = {}): Fal & { calls: Array<{ mo
   };
 };
 
-export const bootV9 = async (seed: SeedOpts = {}, over: { openai?: FakeOpenAI; fetchImpl?: typeof fetch; fal?: Fal } = {}): Promise<V9Harness> => {
+export const bootV9 = async (seed: SeedOpts = {}, over: { openai?: FakeOpenAI; fetchImpl?: typeof fetch; fal?: Fal; workshopCall?: WorkshopCall; shell?: ShellRunner } = {}): Promise<V9Harness> => {
   const dir = tmpDir('thea2-v9-');
   const clock = new TestClock(T0);
   await seedMindDir(join(dir, 'var', 'mind'), makeHashEmbedder(), seed);
@@ -111,10 +113,35 @@ export const bootV9 = async (seed: SeedOpts = {}, over: { openai?: FakeOpenAI; f
     jobs: [],
     bodyOpenAI: openai,
     bodyExec: exec,
+    bodyShellCmd: TEST_BASH,
+    ...(over.workshopCall !== undefined ? { workshopCall: over.workshopCall } : {}),
+    ...(over.shell !== undefined ? { bodyShell: over.shell } : {}),
     ...(over.fal !== undefined ? { bodyFal: over.fal } : {}),
     ...(over.fetchImpl !== undefined ? { fetchImpl: over.fetchImpl } : {}),
   });
   return { sys, model, channel, clock, dir, openai, exec };
+};
+
+/**
+ * A scripted shell: answers from `answer(command)`. With `hold`, every command
+ * waits until release() — a command still running when her turn's few seconds
+ * are up.
+ */
+export const scriptedShell = (answer: (command: string) => ShellResult, opts: { hold?: boolean } = {}): ShellRunner & { commands: string[]; release(): void } => {
+  const commands: string[] = [];
+  const held: Array<() => void> = [];
+  return {
+    kind: 'local',
+    commands,
+    release: () => {
+      for (const r of held.splice(0)) r();
+    },
+    run: (command) => {
+      commands.push(command);
+      if (opts.hold !== true) return Promise.resolve(answer(command));
+      return new Promise((resolve) => held.push(() => resolve(answer(command))));
+    },
+  };
 };
 
 /** Open-Meteo + BigDataCloud, scripted. */

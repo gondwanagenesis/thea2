@@ -45,6 +45,11 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 ReadWritePaths=/opt/thea2/var
+# v10 F1: Thea1's tree, the holobionte tree and her own key file are not there
+# for her at all (keys reach the process through EnvironmentFile, read by PID1
+# before this namespace exists). Her shell runs as thea2-hands via thea2-exec,
+# fenced tighter still.
+InaccessiblePaths=-/opt/thea -/opt/holobionte -/etc/thea2
 RestrictSUIDSGID=yes
 LockPersonality=yes
 ProtectKernelTunables=yes
