@@ -215,7 +215,8 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   try {
     const res = await deps.model.chat({
       taskClass: 'heartbeat-thought',
-      tier: 'main',
+      // back of house: her private thoughts run on the cheap GPT door; a thought that becomes a text goes through her voice
+      tier: 'cheap',
       messages,
       schema: ThoughtSchema,
       schemaName: 'Thought',

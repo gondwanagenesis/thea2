@@ -83,7 +83,7 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
       { role: 'user', content: user },
     ];
     try {
-      const res = await deps.model.chat({ taskClass: 'consolidate', tier: 'main', messages, schema: SelfRewriteSchema, schemaName: 'SelfRewrite', maxTokens: 1500, temperature: 0.5 });
+      const res = await deps.model.chat({ taskClass: 'consolidate', tier: 'cheap', messages, schema: SelfRewriteSchema, schemaName: 'SelfRewrite', maxTokens: 1500, temperature: 0.5 });
       const lines: SelfLine[] = res.content.lines
         .map((l) => ({ text: l.text, cites: l.cites.filter((c) => validIds.has(c)) }))
         .filter((l) => l.cites.length > 0);

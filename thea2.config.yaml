@@ -26,7 +26,8 @@ models:
       effortLock: none
       outputCapParam: max_completion_tokens
       forcing: tool_choice
-      pricing: { inputPerM: 4, outputPerM: 20 }
+      # front of house: her voice. gpt-5.6-sol list price (2026-07-30): $5 in / $30 out.
+      pricing: { inputPerM: 5, outputPerM: 30 }
     voiceFallback:
       endpoint: https://api.neuralwatt.com/v1
       protocol: openai
@@ -35,11 +36,17 @@ models:
       effort: low
       forcing: tool_choice
       topP: 0.95
+    # back of house (Diego 2026-09-26: "gpt for the back of house stuff, a cheap
+    # model"): appraisal, her thoughts, nightly passes, casts, photo descriptions.
+    # gpt-5.6-luna, $0.20 in / $1.20 out (~25x cheaper than sol). Like sol it takes
+    # tools only at reasoning_effort none on /chat/completions (400 otherwise).
     mind:
-      endpoint: https://api.neuralwatt.com/v1
+      endpoint: https://api.openai.com/v1
       protocol: openai
-      keyEnv: THEA2_NEURALWATT_KEY
-      model: deepseek-v4-flash
+      keyEnv: THEA2_OPENAI_KEY
+      model: gpt-5.6-luna
+      outputCapParam: max_completion_tokens
+      pricing: { inputPerM: 0.2, outputPerM: 1.2 }
       # effortLock (v8 fork run, 2026-09-25): the client's class default
       # ('appraisal' → low) outranked `effort: none`, deepseek thought until the
       # cap and every structured call came back empty. Locked off.
@@ -93,7 +100,7 @@ mind:
 body:
   dir: var/house
   openaiKeyEnv: THEA2_OPENAI_KEY
-  visionModel: gpt-5.6-sol
+  visionModel: gpt-5.6-luna
   transcribeModel: gpt-4o-transcribe
   listenModel: gpt-audio-1.5
   ttsModel: gpt-4o-mini-tts

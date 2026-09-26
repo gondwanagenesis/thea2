@@ -169,13 +169,13 @@ export const castTools = (d: CastDeps): Entry[] => {
         }
         if (a.brief === undefined || a.brief.trim() === '') return 'give the brief: what should be done?';
         let system: string;
-        let tier: 'main' | 'cheap' = 'main';
+        // everything she sends out works on the cheap GPT door; what comes back she says in her own voice
+        const tier: 'main' | 'cheap' = 'cheap';
         // tasks ride the cheap door; forks and the cast think on the main one
         let who: string = a.action;
         if (a.action === 'fork') system = FORK_FRAME(d.selfLines(), d.recent(ctx.turnId));
         else if (a.action === 'task') {
           system = TASK_FRAME;
-          tier = 'cheap';
         } else {
           const s = slug(a.as ?? '');
           const canonPath = d.house.resolve(`cast/${s}.md`);

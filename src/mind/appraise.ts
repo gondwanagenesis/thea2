@@ -121,7 +121,8 @@ export const appraiseSlow = async (i: SlowAppraiseInput, deps: SlowAppraiseDeps)
         // "that last one sounded kind of robotic" as her reply landing WELL (+1).
         // Her learning is only as real as this judgment; it runs after the
         // reply, so the stronger model costs no latency (~$0.008/turn).
-        tier: 'main',
+        // back of house: gpt-5.6-luna (it grades a correction as a miss — the trap the old cheap door failed)
+        tier: 'cheap',
         messages,
         schema: SlowAppraisalSchema,
         schemaName: 'SlowAppraisal',

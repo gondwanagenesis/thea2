@@ -31,7 +31,7 @@ export const diaryOnce = async (d: { mind: MindStore; model: ModelClient; clock:
   if (day.length === 0 && thoughts.length === 0) return 'nothing';
   const res = await d.model.chat({
     taskClass: 'consolidate',
-    tier: 'main',
+    tier: 'cheap',
     schema: DiarySchema,
     schemaName: 'Diary',
     maxTokens: 900,
@@ -63,7 +63,7 @@ export const diegoOnce = async (d: { mind: MindStore; model: ModelClient; clock:
   const ids = new Set(week.map((m) => m.id));
   const res = await d.model.chat({
     taskClass: 'consolidate',
-    tier: 'main',
+    tier: 'cheap',
     schema: DiegoSchema,
     schemaName: 'DiegoLately',
     maxTokens: 900,
@@ -129,7 +129,7 @@ export const practiceOnce = async (d: { mind: MindStore; model: ModelClient; clo
   const existing = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => `- ${f.replace(/\.md$/, '')}: ${fs.readFileSync(`${dir}/${f}`, 'utf8').split('\n')[0]?.slice(0, 100) ?? ''}`);
   const res = await d.model.chat({
     taskClass: 'consolidate',
-    tier: 'main',
+    tier: 'cheap',
     schema: PracticeSchema,
     schemaName: 'Practice',
     maxTokens: 1200,
