@@ -203,8 +203,12 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
   // doesn't turn on every single line, and she can't get stuck ping-ponging with
   // another bot. Diego is never throttled. Timestamps of her recent group turns.
   const groupTurns = new Map<number, number[]>();
-  const GROUP_MAX_PER_MIN = 8; // circuit breaker: at most this many group turns/min (cost + bot-loop guard)
+  // Consecutive turns triggered by ANOTHER bot in a group, per chat — reset when a
+  // human (or Diego) speaks. Bounds a two-agent conversation so it can't loop forever.
+  const groupBotStreak = new Map<number, number>();
+  const GROUP_MAX_PER_MIN = 8; // circuit breaker: at most this many group turns/min (cost + flood guard)
   const GROUP_AMBIENT_GAP_MS = 30_000; // between UNPROMPTED chime-ins she lets the room breathe
+  const BOT_STREAK_MAX = 4; // she trades at most this many lines with another bot, then waits for a human
   /** Whether she engages this group message (she still decides silent-or-reply inside the turn). */
   const engagesGroup = (m: InboundMsg): boolean => {
     const now = deps.clock.epochMs();
@@ -213,12 +217,18 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       emit('mind.group_throttled', { chatId: m.chatId, updateId: m.updateId });
       return false;
     }
+    // bot-loop guard: after a run of exchanges with another bot, she goes quiet until a human speaks
+    if (m.fromBot === true && (groupBotStreak.get(m.chatId) ?? 0) >= BOT_STREAK_MAX) {
+      emit('mind.group_bot_quiet', { chatId: m.chatId, updateId: m.updateId });
+      return false;
+    }
     if (!addressedInGroup(m) && recent.length > 0 && now - recent[recent.length - 1]! < GROUP_AMBIENT_GAP_MS) {
       emit('mind.group_ambient', { updateId: m.updateId, chatId: m.chatId, person: m.speaker.person });
       return false;
     }
     recent.push(now);
     groupTurns.set(m.chatId, recent);
+    if (m.fromBot === true) groupBotStreak.set(m.chatId, (groupBotStreak.get(m.chatId) ?? 0) + 1);
     return true;
   };
   const inFlight = new Set<number>();
@@ -873,6 +883,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         return undefined;
       }
       const owner = isOwnerMsg(m);
+      // a human (or Diego) speaking in the group frees her to talk to the bots again
+      if (isGroupChat(m.chatId) && m.fromBot !== true) groupBotStreak.set(m.chatId, 0);
       // v11: Diego is never ignored — his messages always engage her, DM or group.
       // In a group she follows everyone and may chime in on anything (she chooses
       // silent-or-reply inside the turn), but a light cap keeps her from flooding

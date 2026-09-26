@@ -20,6 +20,8 @@ export interface InboundMsg {
   speaker: SpeakerRef;
   /** v11: the sender's display name from the wire (first_name / username), so she can name a group member. Absent when the wire carried none. */
   senderName?: string | undefined;
+  /** v11: the sender is another bot (wire from.is_bot). Used to bound bot-to-bot exchanges so two agents don't loop forever. */
+  fromBot?: boolean | undefined;
   /** Present on reaction updates — a free outcome signal for credit (M09), never a request awaiting a reply. */
   reaction?: { emoji: string; toMsgId: number } | undefined;
   /**

@@ -63,6 +63,25 @@ describe('v11 — a person in the world', () => {
     await handle.stop();
   });
 
+  it('two bots do not loop forever: after a run of exchanges with another bot she goes quiet until a human speaks', { timeout: 60_000 }, async () => {
+    const h = await bootV8({}, { allowedChatIds: [CHAT, GROUP] });
+    h.model.onTask('turn', () => decide(['ha']));
+    h.model.onTask('heartbeat-thought', () => decide(['hm']));
+    h.model.onTask('appraisal', () => emit);
+    const fromBot = (updateId: number) =>
+      inbound({ updateId, msgId: updateId, chatId: GROUP, text: 'thea what do you think', speaker: { person: 'tg:7777', channel: 'telegram' }, senderName: 'SisterBot', fromBot: true });
+    // another bot @s her repeatedly — she answers a bounded number, then holds
+    const engaged = [50, 51, 52, 53, 54, 55, 56].map((id) => h.sys.pipeline.inbound(fromBot(id)));
+    const answered = engaged.filter((t) => typeof t === 'string').length;
+    expect(answered).toBeGreaterThanOrEqual(1);
+    expect(answered).toBeLessThanOrEqual(4); // BOT_STREAK_MAX — not an infinite ping-pong
+    // a human speaking frees her to engage the bot again
+    h.sys.pipeline.inbound(inbound({ updateId: 60, msgId: 60, chatId: GROUP, text: 'hey all', speaker: { person: 'tg:8888', channel: 'telegram' }, senderName: 'Real Person' }));
+    expect(h.sys.pipeline.inbound(fromBot(61))).toBeTypeOf('string');
+    await runToQuiescent(h);
+    await h.sys.pipeline.drain();
+  });
+
   it('a reply to a bot message in the group counts as addressed', { timeout: 60_000 }, async () => {
     const h = await bootV8({}, { allowedChatIds: [CHAT, GROUP] });
     h.model.onTask('turn', () => decide(['yep, that was me']));

@@ -198,6 +198,7 @@ const parseMessage = (updateId: number, m: WireMessage, speaker: SpeakerResolver
       text,
       speaker: speaker({ from: m.from, chat: m.chat }),
       ...(nameFromWire(m.from) !== undefined ? { senderName: nameFromWire(m.from) } : {}),
+      ...(m.from?.is_bot === true ? { fromBot: true } : {}),
       ...(media !== undefined ? { media } : {}),
       ...(replyTo !== undefined ? { replyTo } : {}),
     },
