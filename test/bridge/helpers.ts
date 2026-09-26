@@ -60,6 +60,7 @@ export const EXPECTED_INBOUND: Record<string, InboundMsg> = {
     ts: 1788000000 * 1000,
     text: 'estás despierta? ya son las tres',
     speaker: { person: 'diego', channel: 'telegram' },
+    senderName: 'Diego',
   },
   reaction: {
     updateId: 403,
@@ -77,6 +78,7 @@ export const EXPECTED_INBOUND: Record<string, InboundMsg> = {
     ts: 1788000180 * 1000,
     text: 'ella tampoco duerme',
     speaker: { person: 'tg:999000111', channel: 'telegram' },
+    senderName: 'Marisol',
   },
   // A photo WITH a caption is a real message: the caption is what was said,
   // and (v9) the photo rides along for the body's eyes.
@@ -87,6 +89,7 @@ export const EXPECTED_INBOUND: Record<string, InboundMsg> = {
     ts: 1788000120 * 1000,
     text: 'mira esto',
     speaker: { person: 'diego', channel: 'telegram' },
+    senderName: 'Diego',
     media: { kind: 'photo', fileId: 'AgACAgIAAxkBAAI-fakefileid' },
   },
   // v9: a photo with no words is still a message to her — the senses look at it.
@@ -97,6 +100,7 @@ export const EXPECTED_INBOUND: Record<string, InboundMsg> = {
     ts: 1788000240 * 1000,
     text: '',
     speaker: { person: 'diego', channel: 'telegram' },
+    senderName: 'Diego',
     media: { kind: 'photo', fileId: 'AgACAgIAAxkBAAI-fakefileid2' },
   },
   // v9: a sticker is a message too (its emoji is what it says).
@@ -107,6 +111,7 @@ export const EXPECTED_INBOUND: Record<string, InboundMsg> = {
     ts: 1788000270 * 1000,
     text: '',
     speaker: { person: 'diego', channel: 'telegram' },
+    senderName: 'Diego',
     media: { kind: 'sticker', fileId: 'CAACAgIAAxkBAAI-fakesticker', emoji: '\u{1F422}', animated: false },
   },
   // v9: an edited text is a turn that knows it is an edit (Thea1 parity).
@@ -117,6 +122,7 @@ export const EXPECTED_INBOUND: Record<string, InboundMsg> = {
     ts: 1788000000 * 1000,
     text: 'estás despierta? ya son las tres (editado)',
     speaker: { person: 'diego', channel: 'telegram' },
+    senderName: 'Diego',
     edited: true,
   },
 };

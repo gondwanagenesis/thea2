@@ -331,6 +331,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     allowedChatIds: cfg.bridge.allowedChatIds,
     reconcileWindowMs: cfg.reconcile.lostReplyWindowMin * 60_000,
     personLabel,
+    // v11: Diego is the person whose id matches his DM chat (in a Telegram DM, chatId == his user id).
+    ownerPerson: `tg:${cfg.bridge.allowedChatIds[0] ?? 0}`,
+    ...(cfg.bridge.selfAliases !== undefined ? { selfAliases: cfg.bridge.selfAliases } : {}),
     timezone: cfg.timezone,
     budgetLeft,
     ...(body !== undefined ? { body: bodySeam(body, clock) } : {}),

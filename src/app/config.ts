@@ -39,7 +39,7 @@ export interface Thea2Config {
     /** The door registry (DR.1) — always present (synthesized from the legacy shape when needed). */
     doors: DoorsConfig;
   };
-  bridge: { botToken: string; allowedChatIds: number[] }; // botToken from env only
+  bridge: { botToken: string; allowedChatIds: number[]; selfAliases?: string[] | undefined }; // botToken from env only; allowedChatIds[0] is Diego's DM (owner)
   /** IANA zone Diego lives in (quiet hours, daily caps, the [EARLIER] clock). Default 'UTC'. */
   timezone: string;
   affect: {
@@ -279,7 +279,10 @@ const configSchema = z.strictObject({
   models: modelsYamlSchema,
   bridge: z.strictObject({
     // botToken deliberately absent — env only; its presence here is a secret-in-yaml hit
+    // allowedChatIds[0] is Diego's DM (the owner). v11: add a group's (negative) id to let her live there.
     allowedChatIds: z.array(z.number().int()).min(1),
+    // v11: names that mean she's being addressed in a group (default ['thea']).
+    selfAliases: z.array(z.string().min(1)).optional(),
   }),
   timezone: timezoneSchema,
   affect: z.strictObject({
@@ -498,7 +501,7 @@ export const loadConfig = (
       tiers,
       doors,
     },
-    bridge: { botToken: botToken as string, allowedChatIds: y.bridge.allowedChatIds },
+    bridge: { botToken: botToken as string, allowedChatIds: y.bridge.allowedChatIds, ...(y.bridge.selfAliases !== undefined ? { selfAliases: y.bridge.selfAliases } : {}) },
     timezone: y.timezone,
     affect: {
       statePath: y.affect.statePath,

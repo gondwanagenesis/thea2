@@ -24,6 +24,7 @@ import {
   type ToolCall,
 } from '../model/index.js';
 import type { DecidedBy, DecisionObject, LoopDeps, LoopEntry, LoopPacket, LoopQuery, ModelDecision, RunLoop } from './types.js';
+import { OTHER_SAFE_CLASSES } from './types.js';
 import { createToolRegistry, overlayRegistry } from './registry.js';
 import { buildMessages } from './messages.js';
 import { validateCommittee, runCommittee } from './committee.js';
@@ -383,7 +384,16 @@ export const runLoop: RunLoop = async (entry, deps) => {
     // decide travels LAST (v9, found live): offered first, with real tools beside it, the
     // model read it as a gate — "i have to lock this reply before using the camera tools" —
     // and never acted. Last in the list and in the contract: act, then decide.
-    state.defs = [...state.tools.defs(entry.kind), decideToolDef];
+    // v11: a non-owner turn (a group member or another bot) is offered only the
+    // safe classes — she can't even see her shell/self-repair/cast/wallet tools.
+    // The dispatch-time wall in executeCall is the hard guarantee; this keeps the
+    // model from reaching for what it can't have.
+    const offered = state.tools.defs(entry.kind);
+    const forThisTurn =
+      entry.authority === 'other'
+        ? offered.filter((d) => OTHER_SAFE_CLASSES.has(state.tools.get(d.name)?.inhibitionMeta.class ?? ''))
+        : offered;
+    state.defs = [...forThisTurn, decideToolDef];
 
     try {
       if (entry.committee !== undefined) return await runCommitteeEntry(entry, deps, state);

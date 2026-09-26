@@ -42,6 +42,7 @@ import type {
   ToolStep,
   Vec12,
 } from './types.js';
+import { OTHER_SAFE_CLASSES } from './types.js';
 import type { LoopConfig } from './config.js';
 import { buildMessages, fitObservation } from './messages.js';
 import { defOf } from './registry.js';
@@ -407,8 +408,19 @@ export const mediate = async (
 ): Promise<Mediation> => {
   const sink: SpawnSink = { situation: state.situation, record: (s) => state.spawns.push(s) };
 
+  /** v11: true when this turn is a non-owner's and the call is not chat/lookup (nor decide). */
+  const authorityBlocks = (s: TurnState, call: ToolCall): boolean => {
+    if (s.entry.authority !== 'other' || call.name === DECIDE_TOOL_NAME) return false;
+    return !OTHER_SAFE_CLASSES.has(s.tools.get(call.name)?.inhibitionMeta.class ?? '');
+  };
+
   const judged = calls.map((call) => {
-    const verdict = state.gate.checkTool(call, state.kind);
+    // v11 authority wall (hard, dispatch-time): a non-owner turn may only cause the
+    // safe classes. Even if such a tool were somehow offered or hallucinated, it
+    // never runs. decide (her reply) is always allowed.
+    const verdict: Verdict = authorityBlocks(state, call)
+      ? { allow: false, code: 'entry-not-allowed', ruleId: 'authority', hint: '[authority] only chat and looking things up are available when the person you are answering is not Diego' }
+      : state.gate.checkTool(call, state.kind);
     state.inhibitions.push(verdict);
     return { call, verdict };
   });

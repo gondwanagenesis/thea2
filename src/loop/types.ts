@@ -69,7 +69,18 @@ export interface LoopEntry {
   committee?: CommitteeSpec | undefined;
   /** Caller-supplied turn id (M20's pipeline mints it at enqueue for ledger linking). The loop mints its own when absent. */
   turnId?: string | undefined;
+  /**
+   * v11: whose authority this turn carries — 'owner' (Diego) gets every tool;
+   * 'other' (anyone else in a group, person or bot) gets only OTHER_SAFE_CLASSES
+   * (chat + lookups), never her shell, self-repair, casting or wallet. Absent =
+   * 'owner' (the DM path and every pre-v11 caller are unchanged). Decided by the
+   * pipeline from the VERIFIED speaker, never from message text.
+   */
+  authority?: 'owner' | 'other' | undefined;
 }
+
+/** v11: the tool classes a NON-owner (a group member or another bot) may cause. Chat + lookups only. */
+export const OTHER_SAFE_CLASSES: ReadonlySet<string> = new Set(['web']);
 
 /** One tool call attempted inside the deliberation loop (schemas/decision.ts). */
 export interface ToolStep {

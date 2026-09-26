@@ -51,6 +51,8 @@ interface Queued {
   /** Self-initiated (a thought became a wish to text him). */
   kind?: 'heartbeat' | undefined;
   goal?: string | undefined;
+  /** v11: whose authority the turn carries (see LoopEntry.authority). Absent ⇒ owner. */
+  authority?: 'owner' | 'other' | undefined;
 }
 
 export interface SelfEntryHandle {
@@ -103,6 +105,15 @@ export interface MindPipelineDeps {
   allowedChatIds: readonly number[];
   reconcileWindowMs: number;
   personLabel?: ((person: string) => string | undefined) | undefined;
+  /**
+   * v11: Diego's person id (`tg:<id>`). His turns carry full authority and are
+   * owed an answer; everyone else (a group member, another bot) gets chat +
+   * lookups only and is answered best-effort, never owed. Absent ⇒ every allowed
+   * chat is treated as his (pre-v11 dyad behaviour).
+   */
+  ownerPerson?: string | undefined;
+  /** v11: names/aliases that mean she is being addressed in a group (default ['thea']). */
+  selfAliases?: readonly string[] | undefined;
   timezone: string;
   /** Fraction of today's idle budget left (0..1) — energy reads it. */
   budgetLeft: () => number;
@@ -173,6 +184,21 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
    * A message is owed from arrival until a turn that covers it sends something.
    */
   const owed = new Map<number, { m: InboundMsg; attempts: number }>();
+  // v11: who is who. Owner (Diego) = full authority + owed answers; everyone else
+  // = chat + lookups, best-effort. A group chat has a negative Telegram id.
+  const ownerPerson = deps.ownerPerson;
+  const ownerDm = deps.allowedChatIds[0];
+  // Owner-authored = his person id, OR arriving in his DM (only he can send there).
+  const isOwnerMsg = (m: InboundMsg): boolean => ownerPerson === undefined || m.speaker.person === ownerPerson || m.chatId === ownerDm;
+  const isGroupChat = (chatId: number): boolean => chatId < 0;
+  const aliases = (deps.selfAliases ?? ['thea']).map((a) => a.toLowerCase());
+  const addressedInGroup = (m: InboundMsg): boolean => {
+    const t = m.text.toLowerCase();
+    if (aliases.some((a) => new RegExp(`(^|[^a-z0-9_])${a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9_]|$)`, 'i').test(t))) return true;
+    return m.replyTo?.fromBot === true; // a reply to a bot message (most likely hers)
+  };
+  // Persons she has already met (in-memory; a restart may re-greet once — acceptable for v1).
+  const knownPersons = new Set<string>(ownerPerson !== undefined ? [ownerPerson] : []);
   const inFlight = new Set<number>();
   const MAX_ANSWER_ATTEMPTS = 3;
   const answered = (ids: readonly number[]): void => {
@@ -400,7 +426,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
 
     const st = deps.mind.state();
     const now = deps.clock.epochMs();
-    const who = deps.personLabel?.(m.speaker.person) ?? 'he';
+    const who = deps.personLabel?.(m.speaker.person) ?? (isOwnerMsg(m) ? 'he' : (m.senderName ?? 'someone'));
     const recentThoughts = deps.mind.stream().filter((t) => t.source === 'lived' && now - t.ts < 24 * 3600_000);
     const openConcerns: Concern[] = [...deps.mind.openConcerns()].sort((x, y) => y.importance - x.importance || y.touched - x.touched);
     const howTo = !selfEntry && deps.body?.skillFor !== undefined ? await deps.body.skillFor(m.text).catch(() => undefined) : undefined;
@@ -468,6 +494,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       inbound: m,
       turnId,
       ...(item.goal !== undefined ? { goal: item.goal } : {}),
+      // v11: a non-owner turn is gated to chat + lookups in the loop
+      ...(item.authority !== undefined ? { authority: item.authority } : {}),
     };
 
     const failed = (code: string): DecisionObject => {
@@ -804,7 +832,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     absorb: absorbFn,
     sweep: sweepFn,
     adoptOwed: (ms) => {
-      for (const m of ms) if (!owed.has(m.updateId) && deps.allowedChatIds.includes(m.chatId)) owed.set(m.updateId, { m, attempts: 0 });
+      // v11: only Diego's messages are owed a guaranteed answer; group/other chatter is best-effort.
+      for (const m of ms) if (!owed.has(m.updateId) && deps.allowedChatIds.includes(m.chatId) && isOwnerMsg(m)) owed.set(m.updateId, { m, attempts: 0 });
     },
     inbound: (m) => {
       if (m.skipped !== undefined) {
@@ -821,13 +850,27 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         onReaction(m);
         return undefined;
       }
+      const owner = isOwnerMsg(m);
+      // v11: in a group she engages only when addressed (named, or a reply to a bot);
+      // a DM always engages. Ambient group chatter is recorded, not turned, not owed.
+      if (isGroupChat(m.chatId) && !addressedInGroup(m)) {
+        emit('mind.group_ambient', { updateId: m.updateId, chatId: m.chatId, person: m.speaker.person });
+        return undefined;
+      }
+      // v11: a new person reaching her → tell Diego, then go ahead (his rule).
+      if (!owner && !knownPersons.has(m.speaker.person)) {
+        knownPersons.add(m.speaker.person);
+        const name = deps.personLabel?.(m.speaker.person) ?? m.senderName ?? m.speaker.person;
+        selfEntryFn('heartbeat', `(someone new just reached you${isGroupChat(m.chatId) ? ' in the group' : ''} — ${name}: "${m.text.slice(0, 160)}". you two haven't talked before.)`);
+      }
       const turnId = newId(deps.clock, deps.rng);
-      queue.push({ m, turnId });
-      owed.set(m.updateId, { m, attempts: owed.get(m.updateId)?.attempts ?? 0 });
-      // seen: if she is in the middle of something, his message gets a 👀 at once
+      queue.push({ m, turnId, authority: owner ? 'owner' : 'other' });
+      // only Diego's messages are owed a guaranteed answer; others are best-effort.
+      if (owner) owed.set(m.updateId, { m, attempts: owed.get(m.updateId)?.attempts ?? 0 });
+      // seen: if she is in the middle of something, an engaged message gets a 👀 at once
       if (running && deps.channel.body !== undefined && m.msgId > 0) void deps.channel.body.react(m.chatId, m.msgId, '👀').catch(() => undefined);
-      // he interrupts, she follows (golden rule 12): stop sending the rest of what she was saying
-      if (live !== null && live.armed) live.abort.abort();
+      // he interrupts, she follows (golden rule 12) — only Diego interrupts; a group message never cuts off her reply to him
+      if (owner && live !== null && live.armed) live.abort.abort();
       kick();
       return turnId;
     },

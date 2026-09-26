@@ -91,6 +91,12 @@ export type SpeakerResolver = (src: SpeakerSource) => SpeakerRef;
 export const personFromWire = (from: WireUser | undefined): string =>
   from?.id !== undefined ? `tg:${from.id}` : 'tg:unknown';
 
+/** v11: a human-readable sender name from the wire, for naming group members. */
+export const nameFromWire = (from: WireUser | undefined): string | undefined => {
+  const n = from?.first_name ?? from?.username;
+  return typeof n === 'string' && n.trim() !== '' ? n.trim().slice(0, 40) : undefined;
+};
+
 /** Default: the raw telegram identity. Honest, but impersonal — prod always injects a resolver that knows Diego. */
 export const defaultSpeakerResolver: SpeakerResolver = ({ from }) => ({
   person: personFromWire(from),
@@ -191,6 +197,7 @@ const parseMessage = (updateId: number, m: WireMessage, speaker: SpeakerResolver
       ts: date * 1000,
       text,
       speaker: speaker({ from: m.from, chat: m.chat }),
+      ...(nameFromWire(m.from) !== undefined ? { senderName: nameFromWire(m.from) } : {}),
       ...(media !== undefined ? { media } : {}),
       ...(replyTo !== undefined ? { replyTo } : {}),
     },
