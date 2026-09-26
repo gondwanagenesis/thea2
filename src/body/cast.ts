@@ -70,21 +70,22 @@ type Entry = ToolRegistryEntry<never>;
 
 /** One worker run: tool rounds until it answers in content, the step cap, or the clock. */
 export const runWorker = async (
-  d: { model: ModelClient; registry: ToolRegistry; clock: Clock; rng: Rng; tier: 'main' | 'cheap'; id: string },
+  d: { model: ModelClient; registry: ToolRegistry; clock: Clock; rng: Rng; tier: 'main' | 'cheap'; id: string; classes?: ReadonlySet<string> | undefined; maxMs?: number | undefined },
   system: string,
   brief: string,
 ): Promise<{ text: string; steps: number; tools: string[] }> => {
+  const allowed = d.classes ?? WORKER_CLASSES;
   const defs: ToolDef[] = d.registry
     .names()
     .map((n) => d.registry.get(n))
-    .filter((e): e is ToolRegistryEntry => e !== undefined && WORKER_CLASSES.has(e.inhibitionMeta.class ?? ''))
+    .filter((e): e is ToolRegistryEntry => e !== undefined && allowed.has(e.inhibitionMeta.class ?? ''))
     .map((e) => e.def);
   const msgs: ChatMsg[] = [
     { role: 'system', content: system },
     { role: 'user', content: brief },
   ];
   const used: string[] = [];
-  const deadline = d.clock.epochMs() + MAX_MS;
+  const deadline = d.clock.epochMs() + (d.maxMs ?? MAX_MS);
   const ctx: ToolCtx = {
     entry: 'ponder',
     turnId: d.id,
@@ -106,7 +107,7 @@ export const runWorker = async (
     for (const call of calls) {
       const e = d.registry.get(call.name);
       let out: string;
-      if (e === undefined || !WORKER_CLASSES.has(e.inhibitionMeta.class ?? '')) {
+      if (e === undefined || !allowed.has(e.inhibitionMeta.class ?? '')) {
         out = `${call.name} is not available out here`;
       } else {
         const parsed = e.input.safeParse(call.args);

@@ -1,0 +1,14 @@
+[Unit]
+Description=Thea2 Mini App — Cloudflare quick tunnel to thead's face server (127.0.0.1:3471)
+After=network-online.target thea2.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3471 --metrics 127.0.0.1:3472
+ExecStartPost=-/bin/bash -c '/opt/thea2/deploy/tunnel-url.sh &'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

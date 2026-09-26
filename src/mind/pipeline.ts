@@ -104,6 +104,12 @@ export interface MindPipelineDeps {
 
 export interface MindPipeline {
   inbound(m: InboundMsg): string | undefined;
+  /**
+   * v9: an exchange that happened off the text line (a live voice call) joins
+   * her like a turn does — sensed, felt, windowed, graded, remembered — without
+   * a model call of its own (she already said it). Serialized with turns.
+   */
+  absorb(heard: string, said: string, via: 'call'): Promise<void>;
   selfEntry(kind: 'heartbeat', goal: string): SelfEntryHandle;
   lastInboundAtMs(): number | undefined;
   isBusy(): boolean;
@@ -618,7 +624,31 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     return { turnId, sent };
   };
 
+  const absorbFn = (heard: string, said: string, via: 'call'): Promise<void> => {
+    const run = chain.then(async () => {
+      const turnId = newId(deps.clock, deps.rng);
+      const chatId = deps.allowedChatIds[0] ?? 0;
+      const m: InboundMsg = {
+        updateId: 0,
+        msgId: 0,
+        chatId,
+        ts: deps.clock.epochMs(),
+        text: heard.trim() === '' ? '(on the call)' : `(on the call) ${heard.trim()}`,
+        speaker: { channel: 'voice', person: `tg:${chatId}` },
+      };
+      const item: Queued = { m, turnId };
+      const before = contextLines(deps.window);
+      const { sensed, fast, met } = await perceive(item, before);
+      const decision: DecisionObject = { turnId, plan: 'reply', decidedBy: 'model', bubbles: said.trim() === '' ? [] : [said.trim()], confidence: 0.7, weight: 0.5, reluctance: 0.2, completeness: 1, toolTrace: [], spawns: [], inhibitions: [] };
+      await settle(item, decision, said.trim() === '' ? [] : [{ msgId: 0, text: said.trim() }], before, sensed, fast, met, []);
+      emit('mind.absorbed', { turnId, via, heardChars: heard.length, saidChars: said.length }, turnId);
+    });
+    chain = run.catch(() => undefined);
+    return run;
+  };
+
   return {
+    absorb: absorbFn,
     inbound: (m) => {
       if (m.skipped !== undefined) {
         emit('bridge.update_skipped', { updateId: m.updateId, chatId: m.chatId, reason: m.skipped.reason });

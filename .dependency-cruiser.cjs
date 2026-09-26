@@ -48,6 +48,8 @@ const MODULES = {
   // stores (recall, her house of memories); the mind reaches it only through
   // the BodySeam it declares, so there is no cycle.
   "src/body": ["kernel", "events", "model", "embed", "affect", "bridge", "loop", "mind", "sched"],
+  // v9 face: the Mini App + voice mode, reading her live state for Diego.
+  "src/face": ["kernel", "events", "model", "affect", "mind", "body", "loop"],
   "src/app": [
     "kernel", "events", "model", "embed", "affect", "coupling", "corpus",
     "memory", "assemble", "inhibit", "loop", "realize", "bridge", "sched",
@@ -58,8 +60,8 @@ const MODULES = {
     "consolidate", "probes", "life", "siblings", "derive", "spine",
     // v8: compose-v8 wires the mind pipeline.
     "mind",
-    // v9: compose-v8 wires the body.
-    "body",
+    // v9: compose-v8 wires the body and the face.
+    "body", "face",
   ],
 };
 

@@ -65,6 +65,8 @@ export interface Thea2Config {
   mind?: MindConfig | undefined;
   /** v9 body block. Absent ⇒ text-only (v8). */
   body?: BodyConfig | undefined;
+  /** v9 face block (Mini App + calls). Absent ⇒ no dashboard. */
+  face?: FaceConfig | undefined;
   /**
    * M21: the pinned OpenCode spine child. Absent ⇒ absent registration — the
    * native loop serves (rule 5). Present ⇒ compose constructs the runner; the
@@ -92,6 +94,13 @@ export interface BodyConfig {
   elevenKey?: string | undefined;
   elevenVoice?: string | undefined;
   walletMonthUsd: number;
+}
+
+/** v9 face: the Mini App + voice mode server (127.0.0.1; a tunnel is the only way in). */
+export interface FaceConfig {
+  port: number;
+  key: string;
+  staticDir: string;
 }
 
 /** v8 "Nothing Told" mind settings (defaults applied by the schema). */
@@ -343,6 +352,14 @@ const configSchema = z.strictObject({
       walletMonthUsd: z.number().min(0).max(1000).default(10),
     })
     .optional(),
+  /** v9 face (Mini App + voice mode). Present ⇒ thead serves the app on 127.0.0.1:port. */
+  face: z
+    .strictObject({
+      port: z.number().int().min(1024).max(65535).default(3471),
+      keyEnv: envName,
+      staticDir: z.string().min(1).default('dashboard/static'),
+    })
+    .optional(),
 });
 
 type YamlConfig = z.infer<typeof configSchema>;
@@ -493,6 +510,7 @@ export const loadConfig = (
     ...(y.spine !== undefined ? { spine: y.spine } : {}),
     ...(y.mind !== undefined ? { mind: y.mind } : {}),
     ...(y.body !== undefined ? { body: resolveBody(y.body, env) } : {}),
+    ...(y.face !== undefined && optEnv(env, y.face.keyEnv) !== undefined ? { face: { port: y.face.port, key: optEnv(env, y.face.keyEnv)!, staticDir: y.face.staticDir } } : {}),
   };
 };
 

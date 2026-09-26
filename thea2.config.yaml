@@ -101,3 +101,9 @@ body:
   falKeyEnv: THEA2_FAL_KEY
   braveKeyEnv: THEA2_BRAVE_KEY
   walletMonthUsd: 10
+# v9 face: the Mini App + voice mode, served by thead on 127.0.0.1:3471 (the
+# thea2-dashboard-tunnel quick tunnel is the only way in; key via env).
+face:
+  port: 3471
+  keyEnv: THEA2_DASHBOARD_KEY
+  staticDir: dashboard/static

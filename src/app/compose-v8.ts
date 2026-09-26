@@ -34,6 +34,7 @@ import {
 } from '../mind/index.js';
 import { describeWhere, loadWhere, makeBody, remindersJob, type Body, type Exec, type Fal, type OpenAIBody } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
+import { makeLive, startFaceServer, type FaceServer } from '../face/index.js';
 import { makeEmbedder } from './embedder.js';
 import { withStderrMirror } from './compose.js';
 import { affectSnapshotJob, reconcileJob, runReconcile, type RecoverLostDeps } from './maintenance-jobs.js';
@@ -317,6 +318,54 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     selfEntry: (goal) => void pipeline.selfEntry('heartbeat', goal),
   });
 
+  // v9 face: the Mini App + voice mode, served from inside thead (it reads her live state).
+  let face: FaceServer | undefined;
+  if (cfg.face !== undefined && body !== undefined && cfg.body !== undefined && preset === 'prod') {
+    const seam = bodySeam(body, clock);
+    const recentLines = (): Array<{ who: 'him' | 'her'; text: string }> =>
+      window
+        .messages()
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+        .slice(-24)
+        .map((m) => ({ who: m.role === 'user' ? ('him' as const) : ('her' as const), text: String(m.content) }));
+    const live = makeLive({
+      key: cfg.body.openaiKey,
+      clock,
+      rng: rng.fork('live'),
+      events,
+      mind,
+      body,
+      model: () => model,
+      registry: tools,
+      timeZone: cfg.timezone,
+      recent: recentLines,
+      nowFacts: () => seam.nowFacts?.() ?? [],
+      absorb: (heard, said) => pipeline.absorb(heard, said, 'call'),
+    });
+    try {
+      face = await startFaceServer({
+        port: cfg.face.port,
+        key: cfg.face.key,
+        staticDir: path.resolve(root, cfg.face.staticDir),
+        events,
+        live,
+        sources: {
+          affect,
+          mind,
+          events,
+          body,
+          clock,
+          timeZone: cfg.timezone,
+          brain: { voice: doors.voice.model, fallback: doors.voiceFallback?.model, mind: doors.mind.model },
+          live: { status: () => live.status() },
+        },
+      });
+      await events.emit('app.boot', { stage: 'face', port: face.port });
+    } catch (e) {
+      await events.emit('incident.face_boot_failed', { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
   const CONVERSATION_QUIET_MS = 10 * 60_000;
   const conversationActive = (): boolean =>
     pipeline.isBusy() || clock.epochMs() - (pipeline.lastInboundAtMs() ?? Number.NEGATIVE_INFINITY) < CONVERSATION_QUIET_MS;
@@ -394,6 +443,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     stop: async () => {
       if (stopped) return;
       stopped = true;
+      await face?.close();
       await pipeline.drain();
       await mind.flush();
       await sched.stop();

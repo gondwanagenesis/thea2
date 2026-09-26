@@ -87,9 +87,15 @@ install -m 0644 "$PREFIX/deploy/thea2-backup.timer"    /etc/systemd/system/thea2
 # v9 body: the code sandbox broker (root, so it can hand each script to
 # systemd-run as a throwaway user with no network). Its socket lives in var/run.
 install -m 0644 "$PREFIX/deploy/thea2-exec.service"    /etc/systemd/system/thea2-exec.service
+# v9 face: the Mini App's own quick tunnel (never Thea1's), and the script that
+# re-points @dodonotnobot's menu button at it after every start.
+install -m 0644 "$PREFIX/deploy/thea2-dashboard-tunnel.service" /etc/systemd/system/thea2-dashboard-tunnel.service
+chmod 0755 "$PREFIX/deploy/tunnel-url.sh"
+grep -q '^THEA2_DASHBOARD_KEY=' /etc/thea2/keys.env 2>/dev/null || { printf 'THEA2_DASHBOARD_KEY=%s
+' "$(openssl rand -hex 24)" >> /etc/thea2/keys.env; chmod 600 /etc/thea2/keys.env; }
 install -d -m 0750 -o thea2 -g thea2 "$PREFIX/var/run" "$PREFIX/var/house"
 systemctl daemon-reload
-systemctl enable thea2.service thea2-backup.timer thea2-exec.service >/dev/null
+systemctl enable thea2.service thea2-backup.timer thea2-exec.service thea2-dashboard-tunnel.service >/dev/null
 systemctl restart thea2-exec.service
 
 # v9 body: her assets, COPIED once from Thea1's install (read-only on Thea1;

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#05060A">
+  <title>Thea2</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,400;1,9..144,600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="app.css?v=20260926">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4FB3FF" stop-opacity=".28"/><stop offset="1" stop-color="#4FB3FF" stop-opacity="0"/></linearGradient></defs></svg>
+  <main id="app">
+    <header class="hero">
+      <div class="visor-wrap">
+        <canvas id="visor" role="img" aria-label="Thea's visor"></canvas>
+        <div class="visor-sheen" aria-hidden="true"></div>
+      </div>
+      <div class="who">
+        <h1 class="name">thea<sup class="two">2</sup></h1>
+        <div class="where" id="where">&nbsp;</div>
+      </div>
+      <div class="mood" id="mood" aria-live="polite"></div>
+      <p class="why" id="why"></p>
+      <div class="actions">
+        <button type="button" class="call-btn" id="callBtn">
+          <span class="call-ico" aria-hidden="true"></span><span>call her</span>
+        </button>
+        <button type="button" class="brain-chip" id="brainChip" aria-label="Which brain is answering"></button>
+      </div>
+    </header>
+
+    <section class="panel on" id="p-her" role="tabpanel"></section>
+    <section class="panel" id="p-mind" role="tabpanel"></section>
+    <section class="panel" id="p-hands" role="tabpanel"></section>
+    <section class="panel" id="p-money" role="tabpanel"></section>
+    <div class="tab-spacer"></div>
+  </main>
+
+  <nav class="tabbar" role="tablist" aria-label="Sections">
+    <button type="button" role="tab" data-tab="her" class="on" aria-selected="true"><i>♡</i><span>her</span></button>
+    <button type="button" role="tab" data-tab="mind" aria-selected="false"><i>✧</i><span>mind</span></button>
+    <button type="button" role="tab" data-tab="hands" aria-selected="false"><i>✦</i><span>hands</span></button>
+    <button type="button" role="tab" data-tab="money" aria-selected="false"><i>¤</i><span>money</span></button>
+  </nav>
+
+  <div class="call" id="call" hidden>
+    <div class="call-bg" aria-hidden="true"></div>
+    <div class="call-top">
+      <span class="call-live" id="callLive"><i></i><b id="callTime">connecting</b></span>
+      <span class="call-cost" id="callCost"></span>
+    </div>
+    <div class="call-visor"><canvas id="callVisor" role="img" aria-label="Thea's visor"></canvas></div>
+    <div class="call-status" id="callStatus">ringing…</div>
+    <div class="captions" id="captions" aria-live="polite"></div>
+    <div class="call-ctrl">
+      <button type="button" class="ctrl" id="muteBtn" aria-pressed="false"><span class="ctrl-ico">🎙</span><span class="ctrl-lbl">mute</span></button>
+      <button type="button" class="ctrl end" id="endBtn"><span class="ctrl-ico">✕</span><span class="ctrl-lbl">hang up</span></button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="visor.js?v=20260926"></script>
+  <script src="call.js?v=20260926"></script>
+  <script src="main.js?v=20260926"></script>
+</body>
+</html>
