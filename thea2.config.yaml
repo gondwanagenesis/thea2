@@ -64,8 +64,12 @@ people:
     name: Diego
     language: es
 bridge:
-  # Diego's telegram chat id — the ONLY chat the bridge answers.
-  allowedChatIds: [6971556140]
+  # allowedChatIds[0] is Diego's DM (the owner). v11: the second id is the
+  # "House of Tiktaalik" group — she lives there too, with full owner powers for
+  # Diego and chat + lookups only for everyone else (people and other bots).
+  allowedChatIds: [6971556140, -1003753077911]
+  # names that mean she's being addressed in the group
+  selfAliases: [thea, dodonotnobot]
 # Diego's zone: quiet hours, the day census, the sleep hour are read in THIS zone.
 timezone: Europe/Madrid
 affect:
