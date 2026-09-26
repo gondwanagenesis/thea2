@@ -11,7 +11,7 @@ import { bootV9 } from '../body/helpers.js';
 const appraisal = { toolCalls: [{ id: 'a1', name: 'emit', args: { event: [], self: [], outcome_prev: null, concerns: [], importance: 4 } }] };
 const decide = (plan: 'reply' | 'silent', bubbles: string[]) => ({ toolCalls: [{ id: 'd1', name: 'decide', args: { plan, bubbles, confidence: 0.8, weight: 0.6, reluctance: 0.1, completeness: 1 } }] });
 /** Her turns, scripted in order per task (the mock's FIFO would feed them to the appraiser too). */
-const says = (h: Awaited<ReturnType<typeof bootV9>>, replies: Array<ReturnType<typeof decide> | { content: string }>): void => {
+const says = (h: Awaited<ReturnType<typeof bootV9>>, replies: Array<(ReturnType<typeof decide> | { content: string }) & { delayMs?: number }>): void => {
   const q = [...replies];
   h.model.onTask('turn', () => q.shift() ?? { content: '' });
   h.model.onTask('appraisal', () => appraisal);

@@ -98,7 +98,7 @@ export const runWorker = async (
   let last = '';
   for (let step = 0; step < MAX_STEPS; step++) {
     if (d.clock.epochMs() > deadline) return { text: `${last}\n[stopped: out of time]`.trim(), steps: step, tools: used };
-    const res = await d.model.chat({ taskClass: 'cast', tier: d.tier, messages: msgs, ...(defs.length > 0 ? { tools: defs } : {}), maxTokens: 2500, temperature: 0.6 });
+    const res = await d.model.chat({ taskClass: 'cast', tier: d.tier, messages: msgs, ...(defs.length > 0 ? { tools: defs } : {}), maxTokens: 8000, temperature: 0.6 });
     const content = typeof res.content === 'string' ? res.content : '';
     if (content.trim() !== '') last = content;
     const calls = res.toolCalls ?? [];

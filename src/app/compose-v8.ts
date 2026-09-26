@@ -268,7 +268,10 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
   }
 
 
-  const loopCfg = resolveLoopConfig({ turnTokenBudget: cfg.budgets.turnTokens });
+  // v9 (found live 2026-09-26): 1536 output tokens cut off a long reply (he asked her to write
+  // two prompts) — the turn failed twice before the keeper got it through. Sol runs without a
+  // thinking trace here, so the cap is all words: room for a real piece of writing.
+  const loopCfg = resolveLoopConfig({ turnTokenBudget: cfg.budgets.turnTokens, assessMaxTokens: 6000 });
   const window = openSessionWindow(paths.memory, { model, clock, events });
 
   // First boot after the fork: her last conversation (written by the importer) becomes her window.
