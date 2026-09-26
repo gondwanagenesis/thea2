@@ -103,6 +103,9 @@ export const parseDecisionValue = (value: unknown): DecisionParse => {
   return { ok: true, value: check.data };
 };
 
+/** Tool classes whose result she does not need to read before speaking (the act is the point). */
+const ACTION_CLASSES: ReadonlySet<string> = new Set(['camera', 'expression', 'spawn']);
+
 type Settle =
   | { kind: 'decision'; value: ModelDecision; via: 'decide' | 'json' | 'prose' }
   | { kind: 'repair'; malformed: string; error: string }
@@ -426,6 +429,24 @@ export const runLoop: RunLoop = async (entry, deps) => {
         }
         const res: ChatResponse = await assess(state, msgs, { tier: 'main', taskClass: taskClassFor(entry.kind) });
         const s = settleReply(res);
+        // v9 (found live 2026-09-26): a model often calls a tool AND decide in the
+        // same reply ("take the selfie, then say 'one sec'"). settleReply takes the
+        // decision — the other calls used to be dropped on the floor, so she said
+        // "making it now" and nothing ever ran. They run now, before the decision
+        // stands, through the same mediation (gate, trace) as any tool round.
+        if (s.kind !== 'tools') {
+          const alongside = (res.toolCalls ?? []).filter((c) => !isDecideCall(c));
+          if (alongside.length > 0) {
+            state.hops += 1;
+            await mediate(state, msgs, alongside, 0);
+            // Actions (a selfie, a voice note, sending someone out) can ride with her
+            // words; an answer she has not read yet (a search, a memory, a file) must
+            // not — she looks again with the results in front of her.
+            const actionsOnly = alongside.every((c) => ACTION_CLASSES.has(state.tools.get(c.name)?.inhibitionMeta.class ?? ''));
+            await emit(state.events, 'loop.tools_alongside_decide', { turnId: state.turnId, tools: alongside.map((c) => c.name), reassess: !actionsOnly }, state.turnId);
+            if (!actionsOnly) continue;
+          }
+        }
         if (s.kind === 'tools') {
           state.hops += 1;
           const med = await mediate(state, msgs, s.calls, 0);

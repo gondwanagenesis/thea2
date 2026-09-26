@@ -114,3 +114,47 @@ describe('v9 life hands', () => {
     expect(searchWords(h.sys.mind, 'pasta', { who: 'him' })).toHaveLength(0);
   });
 });
+
+describe('v9 regression — tools called in the SAME reply as decide', () => {
+  it('found live: "send me a selfie video" → [selfie, decide] in one reply; the selfie runs, it is not dropped', { timeout: 60_000 }, async () => {
+    const fal = fakeFal();
+    const h = await bootV9({}, { fal });
+    h.model.enqueue({
+      toolCalls: [
+        { id: 's1', name: 'selfie', args: { scene: 'in my room, waving at the camera', caption: 'hi you', for_him: true } },
+        { id: 'd1', name: 'decide', args: { plan: 'reply', bubbles: ['one sec, taking it'], confidence: 0.8, weight: 0.6, reluctance: 0.1, completeness: 1 } },
+      ],
+    });
+    h.model.enqueue(appraisal);
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inbound({ text: 'send me a selfie' }));
+    await runToQuiescent(h);
+    await h.sys.body!.jobs.idle();
+    expect(h.channel.outbound().map((s) => s.text)).toEqual(['one sec, taking it']);
+    expect(fal.calls).toHaveLength(1);
+    expect(h.channel.bodyActs().filter((a) => a.kind === 'media')).toHaveLength(1);
+    expect(h.sys.pipeline.lastDecision()?.toolTrace.some((t) => JSON.stringify(t).includes('selfie'))).toBe(true);
+    await handle.stop();
+  });
+});
+
+describe('v9 regression — an information tool alongside decide gets a second look', () => {
+  it('[session_search, decide] in one reply → the search runs and she decides again with the result', { timeout: 60_000 }, async () => {
+    const h = await bootV9({ moments: [moment({ id: 'c9', ts: T0 - 86_400_000, his: 'the codex intro is done', hers: ['finally'] })] });
+    h.model.enqueue({
+      toolCalls: [
+        { id: 'q1', name: 'session_search', args: { words: 'codex intro' } },
+        { id: 'd1', name: 'decide', args: { plan: 'reply', bubbles: ['let me check'], confidence: 0.5, weight: 0.5, reluctance: 0.1, completeness: 0.5 } },
+      ],
+    });
+    h.model.enqueue(decide(['you finished the codex intro yesterday']));
+    h.model.enqueue(appraisal);
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inbound({ text: 'when did i finish the codex intro?' }));
+    await runToQuiescent(h);
+    expect(h.channel.outbound().map((s) => s.text)).toEqual(['you finished the codex intro yesterday']);
+    const second = h.model.calls.filter((c) => c.taskClass === 'turn')[1]!;
+    expect(second.messages.some((m) => m.role === 'tool' && String(m.content).includes('the codex intro is done'))).toBe(true);
+    await handle.stop();
+  });
+});

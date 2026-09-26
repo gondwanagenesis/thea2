@@ -27,7 +27,8 @@ export const V8_OUTPUT_CONTRACT =
   'Answer by calling the `decide` tool once, last. bubbles are the messages you send, in order, one per bubble. ' +
   "plan 'silent' sends nothing; 'defer' means later. confidence, weight, reluctance and completeness are 0 to 1 and pace the sending. " +
   'expect is private and never sent: one short line on what you think happens next. Nothing outside the tool call is sent. ' +
-  'Any other tools act for real (a voice note is sent when you call it); use them before decide.';
+  'Any other tools act for real (a voice note is sent when you call it; a selfie is taken when you call selfie); use them before decide. ' +
+  'Saying you will do something does not do it; only the tool call does.';
 
 /** Frame text may never tell her what she feels, how to talk, or show her machinery. */
 export const TELLING_PATTERNS: readonly RegExp[] = [

@@ -117,6 +117,11 @@ const main = async (): Promise<void> => {
     const m: InboundMsg = { updateId: ++updateId, msgId: ++msgId, chatId, ts: t0, text, speaker: { channel: 'telegram', person }, ...(media !== undefined ? { media } : {}) };
     await ingestUpdates({ ledger: sys.ledger, offsets: sys.offsets, handle: (mm) => sys.pipeline.inbound(mm) }, [m]);
     await sys.pipeline.drain();
+    // v9: detached work (selfies, videos, casts) lands on its own — wait for it, then for any self-entry it caused
+    if (sys.body !== undefined) {
+      await sys.body.jobs.idle();
+      await sys.pipeline.drain();
+    }
     const sent = channel.outbound().slice(before);
     const firstAt = sent[0]?.at;
     const turnReq = requests.slice(reqBefore).find((r) => r.taskClass === 'turn');
@@ -137,7 +142,8 @@ const main = async (): Promise<void> => {
     for await (const e of sys.events.replay()) if (e.ts >= t0) evs.push({ kind: e.kind, payload: e.payload as Record<string, unknown> });
     const evoked = evs.find((e) => e.kind === 'mind.evoked')?.payload;
     const felt = evs.filter((e) => e.kind === 'mind.felt').map((e) => `${String(e.payload['stage'])}: ${(e.payload['events'] as Array<{ source: string; tag: string; i: number }>).map((x) => `${x.tag}(${x.i},${x.source})`).join(' ') || '-'}`);
-    const incidents = evs.filter((e) => e.kind.startsWith('incident.')).map((e) => e.kind);
+    const incidents = evs.filter((e) => e.kind.startsWith('incident.')).map((e) => `${e.kind}${e.payload['error'] !== undefined ? `(${String(e.payload['error']).slice(0, 120)})` : ''}`);
+    for (const e of evs.filter((x) => x.kind === 'loop.tools_alongside_decide' || x.kind.startsWith('body.job'))) out(`${e.kind}: ${JSON.stringify(e.payload).slice(0, 200)}`);
     out('\n────────────────────────────────────────');
     out(`HIM: ${raw}`);
     const sensed = evs.find((e) => e.kind === 'body.sensed')?.payload;
