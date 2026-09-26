@@ -16,16 +16,31 @@ const emit = { toolCalls: [{ id: 'a1', name: 'emit', args: { event: [], self: []
 const userText = (req: ChatRequest): string => req.messages.filter((m) => m.role === 'user').map((m) => String(m.content)).join('\n');
 
 describe('v11 — a person in the world', () => {
-  it('ambient group chatter she is not addressed in does not become a turn', { timeout: 60_000 }, async () => {
+  it('she reads the room: she engages an unaddressed message from anyone (and may reply)', { timeout: 60_000 }, async () => {
     const h = await bootV8({}, { allowedChatIds: [CHAT, GROUP] });
+    h.model.onTask('turn', () => decide(['nah i missed it, any good?']));
+    h.model.onTask('heartbeat-thought', () => decide(['someone new around']));
+    h.model.onTask('appraisal', () => emit);
     const handle = startThead(h.sys);
     h.channel.queueInbound(inbound({ updateId: 700, msgId: 70, chatId: GROUP, text: 'anyone watch the game last night', speaker: { person: 'tg:555', channel: 'telegram' }, senderName: 'Sam' }));
     await runToQuiescent(h);
-    expect(h.channel.outbound()).toHaveLength(0);
-    const events: string[] = [];
-    for await (const e of h.sys.events.replay()) events.push(e.kind);
-    expect(events).toContain('mind.group_ambient');
+    expect(h.channel.outbound().some((s) => s.chatId === GROUP)).toBe(true);
     await handle.stop();
+  });
+
+  it('but she does not turn on every single line: a rapid unaddressed follow-up is let breathe', { timeout: 60_000 }, async () => {
+    const h = await bootV8({}, { allowedChatIds: [CHAT, GROUP] });
+    h.model.onTask('turn', () => decide(['oh?']));
+    h.model.onTask('heartbeat-thought', () => decide(['hm']));
+    h.model.onTask('appraisal', () => emit);
+    // two unaddressed messages at the same instant (no clock advance between them):
+    // the first engages her (a turn id), the second is within the ambient gap → no turn.
+    const first = h.sys.pipeline.inbound(inbound({ updateId: 710, msgId: 80, chatId: GROUP, text: 'the weather is wild today', speaker: { person: 'tg:556', channel: 'telegram' }, senderName: 'Sam' }));
+    const second = h.sys.pipeline.inbound(inbound({ updateId: 711, msgId: 81, chatId: GROUP, text: 'like properly wild', speaker: { person: 'tg:556', channel: 'telegram' }, senderName: 'Sam' }));
+    expect(first).toBeTypeOf('string'); // she engaged the first
+    expect(second).toBeUndefined(); // she let the rapid follow-up breathe (no second turn)
+    await runToQuiescent(h);
+    await h.sys.pipeline.drain();
   });
 
   it('addressed in the group by a new person → she replies in the group, and tells Diego in his DM', { timeout: 60_000 }, async () => {
@@ -57,6 +72,18 @@ describe('v11 — a person in the world', () => {
     h.channel.queueInbound(inbound({ updateId: 702, msgId: 72, chatId: GROUP, text: 'was that you?', speaker: { person: 'tg:1001', channel: 'telegram' }, senderName: 'Ada', replyTo: { msgId: 5, text: '[a message]', fromBot: true } }));
     await runToQuiescent(h);
     expect(h.channel.outbound().some((s) => s.chatId === GROUP)).toBe(true);
+    await handle.stop();
+  });
+
+  it('Diego is never ignored: his un-addressed message in the group still engages her', { timeout: 60_000 }, async () => {
+    const h = await bootV8({}, { allowedChatIds: [CHAT, GROUP] });
+    h.model.onTask('turn', () => decide(['everyone in here can, deg']));
+    h.model.onTask('appraisal', () => emit);
+    const handle = startThead(h.sys);
+    // his own message, in the group, not naming her — owner is never ambient
+    h.channel.queueInbound(inbound({ updateId: 704, msgId: 74, chatId: GROUP, text: 'who can see this?', speaker: { person: `tg:${CHAT}`, channel: 'telegram' }, senderName: 'Diego' }));
+    await runToQuiescent(h);
+    expect(h.channel.outbound().some((s) => s.chatId === GROUP && s.text.includes('everyone in here'))).toBe(true);
     await handle.stop();
   });
 

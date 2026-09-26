@@ -199,6 +199,28 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
   };
   // Persons she has already met (in-memory; a restart may re-greet once — acceptable for v1).
   const knownPersons = new Set<string>(ownerPerson !== undefined ? [ownerPerson] : []);
+  // v11: she reads the room and can chime in on anything, like a person — but she
+  // doesn't turn on every single line, and she can't get stuck ping-ponging with
+  // another bot. Diego is never throttled. Timestamps of her recent group turns.
+  const groupTurns = new Map<number, number[]>();
+  const GROUP_MAX_PER_MIN = 8; // circuit breaker: at most this many group turns/min (cost + bot-loop guard)
+  const GROUP_AMBIENT_GAP_MS = 30_000; // between UNPROMPTED chime-ins she lets the room breathe
+  /** Whether she engages this group message (she still decides silent-or-reply inside the turn). */
+  const engagesGroup = (m: InboundMsg): boolean => {
+    const now = deps.clock.epochMs();
+    const recent = (groupTurns.get(m.chatId) ?? []).filter((t) => now - t < 60_000);
+    if (recent.length >= GROUP_MAX_PER_MIN) {
+      emit('mind.group_throttled', { chatId: m.chatId, updateId: m.updateId });
+      return false;
+    }
+    if (!addressedInGroup(m) && recent.length > 0 && now - recent[recent.length - 1]! < GROUP_AMBIENT_GAP_MS) {
+      emit('mind.group_ambient', { updateId: m.updateId, chatId: m.chatId, person: m.speaker.person });
+      return false;
+    }
+    recent.push(now);
+    groupTurns.set(m.chatId, recent);
+    return true;
+  };
   const inFlight = new Set<number>();
   const MAX_ANSWER_ATTEMPTS = 3;
   const answered = (ids: readonly number[]): void => {
@@ -851,12 +873,11 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         return undefined;
       }
       const owner = isOwnerMsg(m);
-      // v11: in a group she engages only when addressed (named, or a reply to a bot);
-      // a DM always engages. Ambient group chatter is recorded, not turned, not owed.
-      if (isGroupChat(m.chatId) && !addressedInGroup(m)) {
-        emit('mind.group_ambient', { updateId: m.updateId, chatId: m.chatId, person: m.speaker.person });
-        return undefined;
-      }
+      // v11: Diego is never ignored — his messages always engage her, DM or group.
+      // In a group she follows everyone and may chime in on anything (she chooses
+      // silent-or-reply inside the turn), but a light cap keeps her from flooding
+      // the room or looping with another bot.
+      if (isGroupChat(m.chatId) && !owner && !engagesGroup(m)) return undefined;
       // v11: a new person reaching her → tell Diego, then go ahead (his rule).
       if (!owner && !knownPersons.has(m.speaker.person)) {
         knownPersons.add(m.speaker.person);
