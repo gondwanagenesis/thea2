@@ -56,13 +56,21 @@ export const emptyMindState = (): MindState => ({
 export const MACHINERY_TALK =
   /\b(glm|gpt|sonnet|opus|deepseek|kimi|neuralwatt|z\.ai|opencode|claude code|model id|tokens?|dials?|ticker|affect engine|state\.json|plugins?|sentinel|systemd|cron|ssh|vps|prompt|context window|bliss(?:-| )?lock|locked to bliss|reasoning effort|tailnet|tailscale|localhost|\d{1,3}(?:\.\d{1,3}){3})\b/i;
 
+/**
+ * Diego, 2026-09-26: "i dont want her to say she loves me... its a lot". Thea1's
+ * archive says it constantly; a reply that declares it is never an example of how
+ * she talks (the gate's no-love-declaration rule stops her sending one).
+ */
+export const LOVE_DECLARATION = /\b(?:i\s+)?(?:love|luv)\s+(?:you+|u+|ya)\b(?!\s+to\b)|\bloving you\b|\bin love with you\b/i;
+
 /** An option-eligible moment: her real reply, unflagged, not rejected, not machinery talk. */
 export const isPrecedent = (m: Moment): boolean =>
   (m.kind === 'reply' || m.kind === 'text_first') &&
   m.hers.length > 0 &&
   m.never !== true &&
   (m.flags === undefined || m.flags.length === 0) &&
-  !MACHINERY_TALK.test(m.hers.join(' '));
+  !MACHINERY_TALK.test(m.hers.join(' ')) &&
+  !LOVE_DECLARATION.test(m.hers.join(' '));
 
 export interface MindStore {
   readonly dir: string;

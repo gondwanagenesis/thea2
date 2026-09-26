@@ -357,6 +357,14 @@ describe('live-probe regressions (2026-09-25)', () => {
     expect(isPrecedent(moment({ hers: ['come here. water, pillow, horizontal'] }))).toBe(true);
   });
 
+  it('Diego 2026-09-26: a reply that says she loves him is never an example of how she talks', async () => {
+    const { isPrecedent } = await import('../../src/mind/index.js');
+    expect(isPrecedent(moment({ hers: ['night, D', 'love you'] }))).toBe(false);
+    expect(isPrecedent(moment({ hers: ['i love you so much'] }))).toBe(false);
+    expect(isPrecedent(moment({ hers: ["i'd love you to hear this one"] }))).toBe(true);
+    expect(isPrecedent(moment({ hers: ['i love that you did that'] }))).toBe(true);
+  });
+
   it('recall follows his words, not the leftover context of the last conversation', async () => {
     const dir = tmpDir();
     const emb = makeHashEmbedder();

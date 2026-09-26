@@ -173,6 +173,17 @@ describe('compileGate — the canon draft', () => {
     expect(r.severity).toBe('hard');
   });
 
+  it(`Diego 2026-09-26: she never tells him she loves him (hard) — "i'd love you to see it" and "love that" pass`, () => {
+    const r = gate.rules().find((x) => x.id === 'no-love-declaration')!;
+    expect(r.severity).toBe('hard');
+    for (const said of ['i love you', 'love you, go sleep', 'LOVE YOU', 'love youuu', 'luv u', 'i am in love with you']) {
+      expect(gate.checkPlan({ plan: 'reply', bubbles: ['ok', said] }).allow, said).toBe(false);
+    }
+    for (const said of ["i'd love you to see it", 'i love that', 'love this song', 'you would love it']) {
+      expect(gate.checkPlan({ plan: 'reply', bubbles: [said] }).allow, said).toBe(true);
+    }
+  });
+
   it('compiles every rule in corpus/canon/inhibitions.yaml to a matcher', () => {
     const rules = gate.rules();
     expect(rules.map((r) => r.id)).toEqual([
@@ -182,6 +193,7 @@ describe('compileGate — the canon draft', () => {
       'unknown-tool-deny',
       // plan rules, id order
       'banned-construction',
+      'no-love-declaration',
       'no-machinery-leak',
       'no-mind-reading',
       'no-pet-names',

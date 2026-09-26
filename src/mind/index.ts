@@ -3,7 +3,7 @@
 export * from './types.js';
 export * from './vocab.js';
 export { cosine, openVecFile, type VecFile } from './vectors.js';
-export { openMindStore, emptyMindState, isPrecedent, MACHINERY_TALK, type MindStore, type Centroids } from './store.js';
+export { openMindStore, emptyMindState, isPrecedent, MACHINERY_TALK, LOVE_DECLARATION, type MindStore, type Centroids } from './store.js';
 export { sense, situationText, replyText, nearestLabel, type Sensed, type Label } from './sense.js';
 export { evoke, scoreMoment, moodTerm, EVOKE_DEFAULTS, EVOKE_WEIGHTS, type EvokeConfig, type EvokeInput, type Evoked, type Scored } from './evoke.js';
 export { feelFast, type FastEvent, type FeelFastInput } from './feel.js';
