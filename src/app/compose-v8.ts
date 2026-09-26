@@ -20,7 +20,7 @@ import { compileCoupling, signature, COUPLING_BASELINES, type CompiledCoupling }
 import { openSessionWindow, type SessionWindow } from '../memory/index.js';
 import { compileGate, type InhibitionGate } from '../inhibit/index.js';
 import { createToolRegistry, resolveLoopConfig, type LoopConfig } from '../loop/index.js';
-import { openMessageLedger, openOffsetStore, telegramChannel, FakeChannel, type Channel, type MessageLedger, type OffsetStore } from '../bridge/index.js';
+import { openMessageLedger, openOffsetStore, telegramChannel, FakeChannel, type Channel, type InboundMsg, type MessageLedger, type OffsetStore } from '../bridge/index.js';
 import { startScheduler, type Job, type SchedulerHandle } from '../sched/index.js';
 import {
   hourIn,
@@ -380,7 +380,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
   const reconcileDeps: RecoverLostDeps = {
     ledger,
     events,
-    pipeline,
+    // v9: the answer keeper (pipeline.sweep) owns re-runs; reconcile keeps its alarms
+    // but never re-enqueues, so nothing he sent can be answered twice.
+    pipeline: { inbound: () => undefined, isBusy: () => pipeline.isBusy() },
     window: {
       pushPending: async (msg) => {
         if (window.pushPending === undefined) return fail('app/boot-failed', 'stage pipeline: the session window lacks pushPending');
@@ -394,6 +396,8 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
   if (opts.jobs === undefined) {
     jobs = [
       reconcileJob(reconcileDeps),
+      // v9 answer keeper: every 30 s, anything of his still unanswered is picked up again
+      { name: 'answer-keeper', cadence: { kind: 'every', ms: 30_000 }, lane: 'maintenance', catchUp: 'skip', timeoutMs: 10_000, run: async () => void pipeline.sweep() },
       affectSnapshotJob({ affect }),
       wanderJob({
         mind,
@@ -459,6 +463,26 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
       await events.emit('app.boot', { stage: 'stopped' });
     },
   };
+  // v9 answer keeper, at boot: what the ledger shows unanswered in the last 6 h (a
+  // restart, a crash, the old interruption path) is owed again, and swept now.
+  {
+    const since = clock.epochMs() - 6 * 3600_000;
+    const ins = new Map<number, InboundMsg>();
+    const turnsOf = new Map<number, string[]>();
+    const sentTurns = new Set<string>();
+    for await (const row of ledger.read()) {
+      const r = row as { kind: string; ts?: number; msg?: InboundMsg; updateId?: number; turnId?: string };
+      if (r.kind === 'inbound' && r.msg !== undefined && (r.ts ?? 0) >= since && r.msg.skipped === undefined && r.msg.reaction === undefined && r.msg.msgId > 0) ins.set(r.msg.updateId, r.msg);
+      else if (r.kind === 'link' && r.updateId !== undefined && r.turnId !== undefined) turnsOf.set(r.updateId, [...(turnsOf.get(r.updateId) ?? []), r.turnId]);
+      else if (r.kind === 'outbound' && r.turnId !== undefined) sentTurns.add(r.turnId);
+    }
+    const unanswered = [...ins.values()].filter((m) => !(turnsOf.get(m.updateId) ?? []).some((t) => sentTurns.has(t)));
+    pipeline.adoptOwed(unanswered);
+    if (unanswered.length > 0) {
+      await events.emit('mind.answer_adopted', { updateIds: unanswered.map((m) => m.updateId) });
+      pipeline.sweep(0);
+    }
+  }
   await events.emit('app.boot', { stage: 'bridge', channel: preset === 'prod' ? 'telegram' : 'fake', mind: 'v8' });
   return system;
 };

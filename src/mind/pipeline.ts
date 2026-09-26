@@ -46,6 +46,8 @@ interface Carry {
 interface Queued {
   m: InboundMsg;
   turnId: string;
+  /** v9: more of his messages from the same burst, read together in this one turn (oldest first). */
+  also?: InboundMsg[] | undefined;
   /** Self-initiated (a thought became a wish to text him). */
   kind?: 'heartbeat' | undefined;
   goal?: string | undefined;
@@ -114,6 +116,14 @@ export interface MindPipeline {
    * a model call of its own (she already said it). Serialized with turns.
    */
   absorb(heard: string, said: string, via: 'call'): Promise<void>;
+  /**
+   * v9 answer keeper: every message of his ends in a visible answer. Re-queues
+   * any that are still owed (older than `minAgeMs`, not queued, not in flight),
+   * together, as one burst. Called by a 30 s job and once at boot.
+   */
+  sweep(minAgeMs?: number): number;
+  /** Boot: messages the ledger shows unanswered (a restart, a crash) become owed again. */
+  adoptOwed(ms: readonly InboundMsg[]): void;
   selfEntry(kind: 'heartbeat', goal: string): SelfEntryHandle;
   lastInboundAtMs(): number | undefined;
   isBusy(): boolean;
@@ -140,13 +150,24 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
   };
 
   let running = false;
+  /**
+   * v9 answer keeper — the one invariant Diego asked for: every message of his
+   * ends in a visible answer (text, voice, a photo, or at the least a reaction).
+   * A message is owed from arrival until a turn that covers it sends something.
+   */
+  const owed = new Map<number, { m: InboundMsg; attempts: number }>();
+  const inFlight = new Set<number>();
+  const MAX_ANSWER_ATTEMPTS = 3;
+  const answered = (ids: readonly number[]): void => {
+    for (const id of ids) owed.delete(id);
+  };
   let chain: Promise<void> = Promise.resolve();
   /** Afterturns (slow appraisal → remember) run one at a time, in turn order. */
   let afterChain: Promise<void> = Promise.resolve();
   let carry: Carry | null = null;
   let last: DecisionObject | null = null;
   let lastInboundAt: number | undefined;
-  let live: { abort: AbortController; armed: boolean } | null = null;
+  // (v9: no in-flight abort handle — a newer message never cancels words already decided)
 
   const emit = (kind: string, payload: Record<string, unknown>, turnId?: string): void => {
     void deps.events.emit(kind, payload, turnId);
@@ -157,10 +178,35 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     await Promise.allSettled(afterturns);
   };
 
+  /**
+   * v9 (found live 2026-09-26): a long paste arrives as a burst — Telegram splits
+   * at 4096 chars — and each chunk used to start its own turn, interrupting the
+   * reply to the one before (5, 6, 10 bubbles written, none sent). She now waits
+   * a beat for the burst to finish and reads it together, like a person would.
+   */
+  const GATHER_MS = 700;
+  const GATHER_LONG_MS = 2_500;
+  const GATHER_CAP_MS = 6_000;
+  const TELEGRAM_SPLIT_NEAR = 3_500;
+  const gather = async (first: Queued): Promise<Queued> => {
+    const start = deps.clock.epochMs();
+    for (;;) {
+      const last = [first, ...queue].filter((q) => q.kind === undefined).at(-1)!;
+      const quiet = last.m.text.length >= TELEGRAM_SPLIT_NEAR ? GATHER_LONG_MS : GATHER_MS;
+      const since = deps.clock.epochMs() - (lastInboundAt ?? 0);
+      if (since >= quiet || deps.clock.epochMs() - start >= GATHER_CAP_MS) break;
+      await deps.clock.waitUntil(deps.clock.epochMs() + Math.min(quiet - since, GATHER_CAP_MS));
+    }
+    const also: InboundMsg[] = [];
+    while (queue.length > 0 && queue[0]!.kind === undefined && queue[0]!.m.chatId === first.m.chatId) also.push(queue.shift()!.m);
+    return also.length > 0 ? { ...first, also } : first;
+  };
+
   const pump = async (): Promise<void> => {
     for (;;) {
-      const item = queue.shift();
-      if (item === undefined) return;
+      const next = queue.shift();
+      if (next === undefined) return;
+      const item = next.kind === undefined ? await gather(next) : next;
       try {
         await runTurn(item);
       } catch (e) {
@@ -243,6 +289,52 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     return { sensed, evoked, fast, met };
   };
 
+  /** After a turn over `burst`: answered if anything went out; a chosen silence still leaves a 👀; a failure stays owed. */
+  const keepPromise = async (burst: readonly InboundMsg[], sentCount: number, decision: DecisionObject, turnId: string, chatId: number): Promise<void> => {
+    for (const b of burst) inFlight.delete(b.updateId);
+    const ids = burst.map((b) => b.updateId);
+    if (sentCount > 0) return answered(ids);
+    const lastMsg = burst.at(-1)!;
+    const failed = decision.decidedBy === 'failure';
+    const attempts = Math.max(...ids.map((id) => (owed.get(id)?.attempts ?? 0) + 1));
+    for (const id of ids) {
+      const o = owed.get(id);
+      if (o !== undefined) o.attempts = attempts;
+    }
+    if (failed && attempts < MAX_ANSWER_ATTEMPTS) {
+      emit('mind.answer_retry', { turnId, updateIds: ids, attempts }, turnId);
+      return; // still owed: the sweeper runs it again
+    }
+    // She chose not to write (or kept failing): he still sees it was received.
+    if (deps.channel.body !== undefined && lastMsg.msgId > 0) {
+      try {
+        await deps.channel.body.react(chatId, lastMsg.msgId, '👀');
+        await deps.ledger.recordOutbound(turnId, 0, '[seen 👀]');
+      } catch {
+        // a reaction that fails leaves the message owed for the next sweep
+        return;
+      }
+    }
+    if (failed) emit('incident.answer_gave_up', { turnId, updateIds: ids, attempts }, turnId);
+    answered(ids);
+  };
+
+  const sweepFn = (minAgeMs = 45_000): number => {
+    const now = deps.clock.epochMs();
+    const queuedIds = new Set(queue.flatMap((q) => [q.m.updateId, ...(q.also ?? []).map((a) => a.updateId)]));
+    const due = [...owed.values()]
+      .filter((o) => !inFlight.has(o.m.updateId) && !queuedIds.has(o.m.updateId) && now - o.m.ts >= minAgeMs)
+      .sort((a, b) => a.m.updateId - b.m.updateId);
+    if (due.length === 0) return 0;
+    const [first, ...rest] = due;
+    const turnId = newId(deps.clock, deps.rng);
+    for (const d of due) void deps.ledger.linkTurn(d.m.updateId, turnId);
+    queue.push({ m: first!.m, turnId, ...(rest.length > 0 ? { also: rest.map((r) => r.m) } : {}) });
+    emit('mind.answer_sweep', { turnId, updateIds: due.map((d) => d.m.updateId) }, turnId);
+    kick();
+    return due.length;
+  };
+
   const runTurn = async (raw: Queued): Promise<void> => {
     const t0 = deps.clock.epochMs();
     const selfEntry = raw.kind !== undefined;
@@ -250,17 +342,35 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     // a place) becomes the text this turn runs on — before anything is recalled.
     let item = raw;
     let voiceReply = false;
+    const burst = [raw.m, ...(raw.also ?? [])];
+    for (const b of burst) if (!selfEntry) inFlight.add(b.updateId);
     if (deps.body !== undefined && !selfEntry) {
       void deps.channel.typing(raw.m.chatId).catch(() => undefined);
-      try {
-        const p = await deps.body.perceive(raw.m);
-        item = { ...raw, m: { ...raw.m, text: p.text } };
-        voiceReply = p.voice;
-      } catch (e) {
-        emit('incident.body_sense_failed', { turnId: raw.turnId, error: asError(e).message }, raw.turnId);
+      const texts: string[] = [];
+      const turnNow = deps.clock.epochMs();
+      const olderNote = (bm: InboundMsg): string =>
+        turnNow - bm.ts > 120_000 ? `(from ${new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: deps.timezone }).format(bm.ts)}, still unanswered)
+` : '';
+      for (const bm of burst) {
+        try {
+          const p = await deps.body.perceive(bm);
+          texts.push(olderNote(bm) + p.text);
+          if (p.voice) voiceReply = true;
+        } catch (e) {
+          texts.push(olderNote(bm) + bm.text);
+          emit('incident.body_sense_failed', { turnId: raw.turnId, error: asError(e).message }, raw.turnId);
+        }
       }
+      item = { ...raw, m: { ...raw.m, text: texts.join('\n\n') } };
+    } else if (burst.length > 1) {
+      item = { ...raw, m: { ...raw.m, text: burst.map((b) => b.text).join('\n\n') } };
     }
-    deps.body?.begin(item.turnId, { chatId: item.m.chatId, ...(selfEntry ? {} : { inboundMsgId: item.m.msgId, text: item.m.text }) });
+    if (burst.length > 1) {
+      // every message in the burst is answered by this one turn
+      for (const extra of raw.also ?? []) await deps.ledger.linkTurn(extra.updateId, raw.turnId);
+      emit('mind.burst', { turnId: raw.turnId, messages: burst.length, chars: item.m.text.length }, raw.turnId);
+    }
+    deps.body?.begin(item.turnId, { chatId: item.m.chatId, ...(selfEntry ? {} : { inboundMsgId: burst.at(-1)!.msgId, text: item.m.text }) });
     const { m, turnId } = item;
 
     await deps.affect.applyEvents([], { source: 'other' }); // bring the engine to now
@@ -376,16 +486,17 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     if (decision.plan !== 'reply' || decision.bubbles.length === 0) {
       // v9: a turn can speak through its hands alone (a voice note, a photo, a reaction).
       const bodySent = deps.body?.end(turnId) ?? [];
+      if (!selfEntry) await keepPromise(burst, bodySent.length, decision, turnId, m.chatId);
       await settle(item, decision, bodySent, before, sensed, fast, met, shownIds);
       settleSelfOutcome(turnId, bodySent.length);
       return;
     }
 
     const abort = new AbortController();
-    live = { abort, armed: true };
-    // Only a newer message FROM HIM makes these words stale; her own self-entries
-    // (a fork coming back, a reminder) queue behind the reply, never over it.
-    const stale = !selfEntry && queue.some((q) => q.kind === undefined);
+    // realize runs to the end; the abort signal stays for shutdown only
+    // v9: a newer message never cancels words she already decided — every message
+    // gets its answer (the newer one gets its own turn right after, burst-gathered).
+    const stale = false;
     // v9: he spoke, so she answers out loud — the same words, as one voice note.
     // A voice that fails falls back to the text path; nothing is ever lost to it.
     const spoken =
@@ -409,7 +520,6 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       });
       report = { sent: [...r.sent], aborted: r.aborted, undelivered: [...r.undelivered] };
     }
-    live = null;
 
     if (report.aborted && report.undelivered.length > 0 && !selfEntry) {
       carry = { bubbles: [...report.undelivered], fromUpdateId: m.updateId, fromTurnId: turnId };
@@ -423,6 +533,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     }
 
     const bodySent = deps.body?.end(turnId) ?? [];
+    if (!selfEntry) await keepPromise(burst, report.sent.length + bodySent.length, decision, turnId, m.chatId);
     settleSelfOutcome(turnId, report.sent.length + bodySent.length);
     await settle(item, decision, [...bodySent, ...report.sent], before, sensed, fast, met, shownIds);
     emit('app.turn_done', { turnId, plan: decision.plan, sent: report.sent.length, undelivered: report.undelivered.length, ms: deps.clock.epochMs() - t0, mind: 'v8' }, turnId);
@@ -659,6 +770,10 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
 
   return {
     absorb: absorbFn,
+    sweep: sweepFn,
+    adoptOwed: (ms) => {
+      for (const m of ms) if (!owed.has(m.updateId) && deps.allowedChatIds.includes(m.chatId)) owed.set(m.updateId, { m, attempts: 0 });
+    },
     inbound: (m) => {
       if (m.skipped !== undefined) {
         emit('bridge.update_skipped', { updateId: m.updateId, chatId: m.chatId, reason: m.skipped.reason });
@@ -676,7 +791,9 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       }
       const turnId = newId(deps.clock, deps.rng);
       queue.push({ m, turnId });
-      if (live !== null && live.armed) live.abort.abort();
+      owed.set(m.updateId, { m, attempts: owed.get(m.updateId)?.attempts ?? 0 });
+      // seen: if she is in the middle of something, his message gets a 👀 at once
+      if (running && deps.channel.body !== undefined && m.msgId > 0) void deps.channel.body.react(m.chatId, m.msgId, '👀').catch(() => undefined);
       kick();
       return turnId;
     },
