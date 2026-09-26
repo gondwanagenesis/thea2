@@ -132,6 +132,8 @@ export interface WanderState {
   thoughts: number;
   textsFirst: number;
   lastTextFirstAt?: number | undefined;
+  /** Texts she started since he last wrote (golden rule 20: the wait doubles with each). */
+  firstsSinceHis?: number | undefined;
   /** item key → epoch ms it last won attention (habituation decays from here). */
   habit: Record<string, number>;
 }

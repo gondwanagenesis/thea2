@@ -25,6 +25,7 @@ import { codeTools } from './code.js';
 import { lifeTools, worldRoom } from './life.js';
 import { browserTools } from './browser.js';
 import { diegoLately } from './nightly.js';
+import { loadWhere as loadWhereFile } from './where.js';
 import type { AffectStore } from '../affect/index.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -102,7 +103,9 @@ export interface Body {
   perceive(m: InboundMsg): Promise<Perceived>;
   begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined; text?: string | undefined }): void;
   end(turnId: string): BodySent[];
-  speak(chatId: number, text: string, turnId: string): Promise<{ msgId: number } | undefined>;
+  speak(chatId: number, text: string, turnId: string, replyTo?: number | undefined): Promise<{ msgId: number } | undefined>;
+  /** His time zone from the last location he shared (fresh within 3 days). */
+  hisTimeZone(): string | undefined;
   onSkipped(m: InboundMsg): void;
   /** Facts about her world and him for [now]: her room, him lately (cited). */
   worldFacts(now: number): string[];
@@ -229,9 +232,13 @@ export const makeBody = (d: BodyDeps): Body => {
       turns.delete(turnId);
       return t?.sent ?? [];
     },
-    speak: async (chatId, text, turnId) => {
+    hisTimeZone: () => {
+      const w = loadWhereFile(house);
+      return w !== undefined && w.timeZone !== undefined && d.clock.epochMs() - w.at < 3 * 86_400_000 ? w.timeZone : undefined;
+    },
+    speak: async (chatId, text, turnId, replyTo) => {
       try {
-        const r = await mouth.say(chatId, text, d.mood());
+        const r = await mouth.say(chatId, text, d.mood(), replyTo !== undefined ? { replyTo } : undefined);
         void d.events.emit('body.spoke', { turnId, seconds: r.seconds ?? null, chars: text.length }, turnId);
         return { msgId: r.msgId };
       } catch (e) {

@@ -251,7 +251,10 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   let texted = false;
   const wantsToText = out.intention === 'text_him';
   const quiet = inQuietHours(now, cfg.quietHours, cfg.timeZone);
-  const recentlyTexted = w.lastTextFirstAt !== undefined && now - w.lastTextFirstAt < 3 * 3600_000;
+  // Golden rule 20: after a text of hers he has not answered she waits 1 h, then 2 h, 4 h — doubling.
+  const heAnswered = st.lastHisAt !== undefined && w.lastTextFirstAt !== undefined && st.lastHisAt > w.lastTextFirstAt;
+  const unanswered = heAnswered ? 0 : (w.firstsSinceHis ?? (w.lastTextFirstAt !== undefined ? 1 : 0));
+  const recentlyTexted = w.lastTextFirstAt !== undefined && unanswered > 0 && now - w.lastTextFirstAt < 3600_000 * 2 ** (unanswered - 1);
   if (wantsToText && !quiet && !recentlyTexted && w.textsFirst < cfg.textFirstPerDay && !deps.conversationActive()) {
     mind.setState({ wander: w });
     await mind.flush();
@@ -261,6 +264,7 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
     if (texted) {
       w.textsFirst += 1;
       w.lastTextFirstAt = clock.epochMs();
+      w.firstsSinceHis = unanswered + 1;
     }
   }
 

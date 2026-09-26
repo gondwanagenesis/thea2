@@ -167,6 +167,12 @@ describe('compileGate — compose-time config the yaml may not carry', () => {
 describe('compileGate — the canon draft', () => {
   const gate = canonGate();
 
+  it('golden rule 1: "daddy" / "babe" never reach him (the plan is rejected; she rephrases)', () => {
+    const r = gate.rules().find((x) => x.id === 'no-pet-names')!;
+    expect(r).toBeDefined();
+    expect(r.severity).toBe('hard');
+  });
+
   it('compiles every rule in corpus/canon/inhibitions.yaml to a matcher', () => {
     const rules = gate.rules();
     expect(rules.map((r) => r.id)).toEqual([
@@ -178,6 +184,7 @@ describe('compileGate — the canon draft', () => {
       'banned-construction',
       'no-machinery-leak',
       'no-mind-reading',
+      'no-pet-names',
       'no-secret-values',
       // normalize rules, document order (sequential rewrites)
       'em-dash',

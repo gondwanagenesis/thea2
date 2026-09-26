@@ -37,15 +37,25 @@ describe('v9 answer keeper', () => {
     await handle.stop();
   });
 
-  it('a newer message never cancels a decided reply: both get answered', { timeout: 60_000 }, async () => {
+  it('he interrupts, she follows (golden rule 12) — and his interrupted message is still answered, in the same reply; the first bubble is threaded (rule 13)', { timeout: 60_000 }, async () => {
     const h = await bootV9();
-    says(h, [decide('reply', ['answer to the first']), decide('reply', ['answer to the second'])]);
+    // her first decision takes a while; his second message lands before she sends it
+    says(h, [{ ...decide('reply', ['answer to the first alone']), delayMs: 4_000 }, decide('reply', ['both, then: yes to the first, and the second too'])]);
     const handle = startThead(h.sys);
     h.channel.queueInbound(inbound({ updateId: 610, msgId: 710, text: 'first thing' }));
-    await runToQuiescent(h);
+    for (let k = 0; k < 40 && !h.sys.pipeline.isBusy(); k++) await settle(5);
+    await h.clock.advance(1_000); // past the gather beat: the first turn is now deciding
+    await settle(30);
     h.channel.queueInbound(inbound({ updateId: 611, msgId: 711, text: 'second thing' }));
+    await settle(200);
     await runToQuiescent(h);
-    expect(h.channel.outbound().map((s) => s.text)).toEqual(['answer to the first', 'answer to the second']);
+    expect(h.channel.outbound().map((s) => s.text)).toEqual(['both, then: yes to the first, and the second too']);
+    const turns = h.model.calls.filter((c) => c.taskClass === 'turn');
+    const last = turns.at(-1)!.messages.filter((m) => m.role === 'user').map((m) => String(m.content)).join(' | ');
+    expect(last).toContain('first thing');
+    expect(last).toContain('second thing');
+    expect(h.channel.bodyActs().find((a) => a.kind === 'reply')).toMatchObject({ replyTo: 711 });
+    expect(h.sys.pipeline.sweep(0)).toBe(0); // nothing of his left owed
     await handle.stop();
   });
 

@@ -70,7 +70,7 @@ export interface BodySeam {
   /** What she sent besides text bubbles during the turn (already on the ledger). */
   end(turnId: string): Array<{ msgId: number; text: string }>;
   /** Speak the reply as a voice note; undefined = could not (the text path takes over). */
-  speak(chatId: number, text: string, turnId: string): Promise<{ msgId: number } | undefined>;
+  speak(chatId: number, text: string, turnId: string, replyTo?: number | undefined): Promise<{ msgId: number } | undefined>;
   onSkipped(m: InboundMsg): void;
   /** Facts about his present for [now] (where he is, his local time and sky). */
   nowFacts?(): string[];
@@ -78,6 +78,8 @@ export interface BodySeam {
   jobOutcome?(jobId: string): string | undefined;
   /** Her own note on how she does what this message is about, if one fits (skills from practice). */
   skillFor?(text: string): Promise<{ name: string; note: string } | undefined>;
+  /** His time zone when he has shared where he is (golden rule 22: the time where HE is). */
+  hisTimeZone?(): string | undefined;
 }
 
 export interface MindPipelineDeps {
@@ -139,6 +141,21 @@ const contextLines = (window: SessionWindow, n = 3): Line[] =>
     .slice(-n)
     .map((m) => ({ who: m.role === 'user' ? ('him' as const) : ('her' as const), text: String(m.content) }));
 
+/** Golden rule 13: her first bubble is threaded to the message it answers (Telegram reply). */
+const threaded = (ch: Channel, replyTo: number | undefined): Channel => {
+  const body = ch.body;
+  if (replyTo === undefined || replyTo <= 0 || body === undefined) return ch;
+  let first = true;
+  return {
+    ...ch,
+    send: async (chatId, text) => {
+      if (!first) return ch.send(chatId, text);
+      first = false;
+      return body.sendReply(chatId, text, replyTo);
+    },
+  };
+};
+
 export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
   const queue: Queued[] = [];
   const afterturns: Promise<unknown>[] = [];
@@ -167,7 +184,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
   let carry: Carry | null = null;
   let last: DecisionObject | null = null;
   let lastInboundAt: number | undefined;
-  // (v9: no in-flight abort handle — a newer message never cancels words already decided)
+  let live: { abort: AbortController; armed: boolean } | null = null;
 
   const emit = (kind: string, payload: Record<string, unknown>, turnId?: string): void => {
     void deps.events.emit(kind, payload, turnId);
@@ -388,7 +405,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     const openConcerns: Concern[] = [...deps.mind.openConcerns()].sort((x, y) => y.importance - x.importance || y.touched - x.touched);
     const howTo = !selfEntry && deps.body?.skillFor !== undefined ? await deps.body.skillFor(m.text).catch(() => undefined) : undefined;
     const packet = composePacket({
-      timeZone: deps.timezone,
+      timeZone: deps.body?.hisTimeZone?.() ?? deps.timezone,
       now,
       self: deps.mind.self(),
       concerns: openConcerns,
@@ -493,33 +510,48 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     }
 
     const abort = new AbortController();
-    // realize runs to the end; the abort signal stays for shutdown only
-    // v9: a newer message never cancels words she already decided — every message
-    // gets its answer (the newer one gets its own turn right after, burst-gathered).
-    const stale = false;
+    live = { abort, armed: true };
+    // Golden rule 12 — he interrupts, she follows: a newer message from him that
+    // lands before she sends means these words are not sent. This burst goes back
+    // to the FRONT of the queue and the next turn reads it together with the new
+    // message (burst-gathered), with these words as [unsent] context — so she
+    // answers the newest and nothing of his is left unanswered (the keeper).
+    const stale = !selfEntry && queue.some((q) => q.kind === undefined);
+    if (stale) {
+      live = null;
+      carry = { bubbles: [...decision.bubbles], fromUpdateId: m.updateId, fromTurnId: turnId };
+      for (const b of burst) inFlight.delete(b.updateId);
+      const again = newId(deps.clock, deps.rng);
+      for (const b of burst) await deps.ledger.linkTurn(b.updateId, again);
+      queue.unshift({ m: raw.m, turnId: again, ...(raw.also !== undefined ? { also: raw.also } : {}) });
+      deps.body?.end(turnId);
+      settleSelfOutcome(turnId, 0);
+      emit('mind.followed_newer', { turnId, requeued: burst.map((b) => b.updateId) }, turnId);
+      return;
+    }
     // v9: he spoke, so she answers out loud — the same words, as one voice note.
     // A voice that fails falls back to the text path; nothing is ever lost to it.
+    const replyTo = selfEntry ? undefined : burst.at(-1)!.msgId;
     const spoken =
-      !stale && voiceReply && deps.body !== undefined
-        ? await deps.body.speak(m.chatId, decision.bubbles.join('\n'), turnId)
+      voiceReply && deps.body !== undefined
+        ? await deps.body.speak(m.chatId, decision.bubbles.join('\n'), turnId, replyTo)
         : undefined;
     let report: { sent: Array<{ msgId: number; text: string }>; aborted: boolean; undelivered: string[] };
     if (spoken !== undefined) {
       const words = decision.bubbles.join('\n');
       await deps.ledger.recordOutbound(turnId, spoken.msgId, `[voice note] ${words}`);
       report = { sent: [{ msgId: spoken.msgId, text: words }], aborted: false, undelivered: [] };
-    } else if (stale) {
-      report = { sent: [], aborted: true, undelivered: [...decision.bubbles] };
     } else {
       const r = await realize(decision, sig, deps.rng.fork(`realize:${turnId}`), {
         chatId: m.chatId,
-        channel: deps.channel,
+        channel: threaded(deps.channel, replyTo),
         clock: deps.clock,
         signal: abort.signal,
         recordSend: (msgId, text) => deps.ledger.recordOutbound(turnId, msgId, text),
       });
       report = { sent: [...r.sent], aborted: r.aborted, undelivered: [...r.undelivered] };
     }
+    live = null;
 
     if (report.aborted && report.undelivered.length > 0 && !selfEntry) {
       carry = { bubbles: [...report.undelivered], fromUpdateId: m.updateId, fromTurnId: turnId };
@@ -794,6 +826,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       owed.set(m.updateId, { m, attempts: owed.get(m.updateId)?.attempts ?? 0 });
       // seen: if she is in the middle of something, his message gets a 👀 at once
       if (running && deps.channel.body !== undefined && m.msgId > 0) void deps.channel.body.react(m.chatId, m.msgId, '👀').catch(() => undefined);
+      // he interrupts, she follows (golden rule 12): stop sending the rest of what she was saying
+      if (live !== null && live.armed) live.abort.abort();
       kick();
       return turnId;
     },

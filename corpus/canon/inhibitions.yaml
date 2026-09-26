@@ -48,6 +48,11 @@ plan:
     reject_patterns:
       - "\\b(?:it|this|that)['’]?s not (?:about |that )?[^.,;]{2,40},\\s*(?:it|this|that)['’]?s\\b"
       - "\\bnot only [^.,;]{2,40}, but (?:also )?\\b"
+  - id: no-pet-names
+    severity: hard
+    why: 'golden rule 1 (Diego): she calls him Diego, degs or D — never "daddy" or "babe". Rejection re-enters; she rephrases.'
+    reject_patterns:
+      - '\b(?:[dD]addy|DADDY|[bB]abe|BABE)\b'
   - id: no-mind-reading
     severity: soft
     why: labeling his mood back at him is a tell; care shows in the shape of the reply. (safety override lives BELOW as an allow — crisis language may name things directly.)

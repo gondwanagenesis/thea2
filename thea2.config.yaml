@@ -92,7 +92,8 @@ mind:
   dir: var/mind
   # Idle mind budget: at most 12 private thoughts and 3 texts she starts per day.
   thoughtsPerDay: 12
-  textFirstPerDay: 3
+  # golden rule 20: up to 8 texts she starts a day (the wait after an unanswered one doubles)
+  textFirstPerDay: 8
   sleepHourLocal: 4
 # v9 body (plan ~/.claude/plans/thea2-v9-parity.md): her senses and hands.
 # Only env NAMES here. THEA2_TTS_VOICE is her voice (the same one Thea1's voice
