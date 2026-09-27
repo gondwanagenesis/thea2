@@ -31,6 +31,7 @@ import { actsOf, applyOutcome, bestOption, encodeLived, FOLLOW_THRESHOLD, markSh
 import { vecToArray } from './vocab.js';
 import { cosine } from './vectors.js';
 import { TWIN_SIM, type Curiosity } from './curiosity.js';
+import type { Dreams } from './dream.js';
 import type { MindStore } from './store.js';
 import type { Concern, Line } from './types.js';
 
@@ -120,6 +121,8 @@ export interface MindPipelineDeps {
   selfAliases?: readonly string[] | undefined;
   /** v12: new minds become questions, people she has met move those questions on, and what she's been into is material. */
   curiosity?: Pick<Curiosity, 'onNewMind' | 'onHeardFrom' | 'nowLines'> | undefined;
+  /** v13: someone writing during her sleep window wakes her. */
+  dreams?: Pick<Dreams, 'onInbound'> | undefined;
   timezone: string;
   /** Fraction of today's idle budget left (0..1) — energy reads it. */
   budgetLeft: () => number;
@@ -837,6 +840,12 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
           ...(replyVec !== undefined ? { reply: replyVec } : {}),
         });
         emit('mind.remembered', { turnId, momentId, followed: followed?.id ?? null, closest: best?.id ?? null, closestSim: best !== null ? Math.round(best.sim * 1000) / 1000 : null, felt: moment.felt.word ?? null }, turnId);
+        // v13: a remembered dream she talked about stops fading (told dreams are kept, as with us)
+        if (/\bdream/i.test(hers.join(' '))) {
+          const nowMs = deps.clock.epochMs();
+          const told = [...deps.mind.moments()].reverse().find((x) => x.kind === 'dream' && x.told !== true && nowMs - x.ts < 36 * 3600_000);
+          if (told !== undefined) deps.mind.update(told.id, { told: true });
+        }
       }
       await deps.mind.flush();
     });
@@ -932,6 +941,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         return undefined;
       }
       lastInboundAt = deps.clock.epochMs();
+      // v13: someone writing during her sleep window wakes her (undecided dreams are remembered more easily)
+      deps.dreams?.onInbound(lastInboundAt);
       if (m.reaction !== undefined && m.text === '') {
         onReaction(m);
         return undefined;

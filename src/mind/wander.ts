@@ -219,15 +219,27 @@ export interface WanderDeps {
   selfEntry: (goal: string) => Promise<number>;
   /** v12: her questions and restlessness compete for attention, and a won one can be pursued. Absent ⇒ v8 wander. */
   curiosity?: CuriositySeam | undefined;
+  /** v13: she's asleep (her sleep window, unless woken) — the idle mind is quiet; she dreams instead. */
+  asleep?: ((now: number) => boolean) | undefined;
+  /** v13: a dream-caused text may go at most once every 3 days. */
+  dreamText?: { may(now: number): boolean; told(now: number): void } | undefined;
 }
 
 const selfLines = (mind: MindStore): string => mind.self().slice(0, 6).map((l) => l.text).join('\n');
 
+/** v13: a feeling a dream left (its cause names the night) — telling him about it is rare. */
+const DREAM_CAUSED = /^(?:the dream:|something in the night)/;
+
 /** One wander tick. Returns what happened, for the event log and tests. */
-export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | 'capped' | 'thought'; item?: string; texted?: boolean }> => {
+export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | 'capped' | 'thought' | 'asleep'; item?: string; texted?: boolean }> => {
   const { mind, clock } = deps;
   const cfg = deps.cfg();
   const now = clock.epochMs();
+  // v13: asleep — no thoughts spent on the night (golden rule 24); the dream jobs run instead
+  if (deps.asleep?.(now) === true) {
+    void deps.events.emit('mind.wander', { result: 'asleep' });
+    return { result: 'asleep' };
+  }
   if (rollWander(mind.state().wander, now, cfg.timeZone).thoughts >= cfg.thoughtsPerDay) return { result: 'capped' };
   // v12: the curiosity generators that need no conversation run first (stale beliefs, the duplicate merge)
   if (deps.curiosity !== undefined) {
@@ -277,7 +289,8 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
           .filter((x) => x.s >= 0.3)
           .sort((a, b) => b.s - a.s)
           .slice(0, 2)
-          .map((x) => `${ago(now - x.m.ts)}: ${x.m.his !== '' ? `him: ${x.m.his.slice(0, 160)} / ` : ''}you: ${x.m.hers.join(' ').slice(0, 200)}`);
+          // v13: a remembered dream comes back marked as one
+          .map((x) => `${ago(now - x.m.ts)}: ${x.m.kind === 'dream' ? '(a dream) ' : ''}${x.m.his !== '' ? `him: ${x.m.his.slice(0, 160)} / ` : ''}you: ${x.m.hers.join(' ').slice(0, 200)}`);
       }
     } catch {
       memories = [];
@@ -347,9 +360,12 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   let texted = false;
   const wantsToText = out.intention === 'text_him';
   const quiet = inQuietHours(now, cfg.quietHours, cfg.timeZone);
-  if (wantsToText) {
+  // v13: a dream she wants to tell him goes at most once every 3 days (the same gate otherwise)
+  const dreamCaused = DREAM_CAUSED.test(item.text) || item.key.startsWith('dream:');
+  if (wantsToText && !(dreamCaused && deps.dreamText !== undefined && !deps.dreamText.may(now))) {
     const goal = `(no new message from him. ${st.lastHisAt !== undefined ? `he last wrote ${ago(now - st.lastHisAt)}. ` : ''}a thought you just had: "${out.thought}")`;
     texted = await tryTextFirst({ mind, clock, cfg: deps.cfg, conversationActive: deps.conversationActive, selfEntry: deps.selfEntry }, goal);
+    if (texted && dreamCaused) deps.dreamText?.told(now);
   }
 
   // v12: a question (or her restlessness) that won attention, and a thought that wants to know more,

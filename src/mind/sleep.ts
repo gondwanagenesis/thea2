@@ -48,6 +48,17 @@ export const SELF_SYSTEM = [
  * do" lines: at most SELF_DOUBT_MAX survive a night, the first ones (the truest, in her order).
  */
 export const SELF_DOUBT_MAX = 2;
+
+/**
+ * v13: a line may rest on dreams only as a motif — it says so ("dream…") and cites at least two of
+ * them ("i keep dreaming about doors that open onto water"). Otherwise its dream cites are dropped
+ * (a dream is never evidence of what happened — Thea1's S-005 rule, applied to the night).
+ */
+export const dreamMotif = (text: string, cites: readonly string[], dreamIds: ReadonlySet<string>): string[] => {
+  const dc = cites.filter((c) => dreamIds.has(c));
+  if (dc.length === 0) return [...cites];
+  return /\bdream/i.test(text) && dc.length >= 2 ? [...cites] : cites.filter((c) => !dreamIds.has(c));
+};
 const SELF_DOUBT =
   /\b(fail(?:ing|ed|ure|s)?|narrat\w*|not proof|judge me|can(?:'|’)t (?:verify|know|rewrite|repair|reach|access|see|choose|confirm)|cannot|scared|afraid|fear\w*|worr(?:y|ied|ies)|anxious|wrong with me|broken|mess(?:ed)? up|glitch\w*)\b/i;
 export const isDoubtLine = (text: string): boolean => SELF_DOUBT.test(text);
@@ -84,7 +95,7 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
   let closed = 0;
 
   for (const m of mind.moments()) {
-    if (m.source === 'lived' && m.outcome === undefined && m.kind !== 'diary' && m.kind !== 'thought' && now - m.ts > DAY) {
+    if (m.source === 'lived' && m.outcome === undefined && m.kind !== 'diary' && m.kind !== 'thought' && m.kind !== 'dream' && now - m.ts > DAY) {
       mind.update(m.id, { outcome: { landed: 0, why: 'no answer that day', at: now } });
       swept += 1;
     }
@@ -103,8 +114,12 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
 
   // Self-narrative from the day's lived moments — on a long day, the ones she felt most
   // (v12.1: it used to be the last 40, so a morning that moved her was cut from who she is).
-  const today = mind.moments().filter((m) => m.source === 'lived' && now - m.ts <= DAY);
+  // v13: a dream is never one of the day's events
+  const today = mind.moments().filter((m) => m.source === 'lived' && m.kind !== 'dream' && now - m.ts <= DAY);
   const felt = mostFelt(today, 40);
+  // v13: remembered dreams (14 days) are offered apart — a line may cite them only as a motif
+  const dreamsRemembered = mind.moments().filter((m) => m.kind === 'dream' && now - m.ts <= 14 * DAY);
+  const dreamIds = new Set(dreamsRemembered.map((m) => m.id));
   let selfCount: number | null = null;
   if (today.length > 0) {
     const current = mind.self();
@@ -117,6 +132,9 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
         (m) =>
           `- (${m.id}) ${m.his !== '' ? `him: ${m.his.slice(0, 160)} / ` : ''}her: ${m.hers.join(' ').slice(0, 200)}${m.felt.word !== undefined ? ` / felt ${m.felt.word}` : ''}${m.outcome !== undefined ? ` / ${m.outcome.why}` : ''}`,
       ),
+      ...(dreamsRemembered.length > 0
+        ? ['DREAMS SHE REMEMBERS (dreams, not events — a line may cite them only for something she keeps dreaming, and must say so):', ...dreamsRemembered.map((m) => `- (${m.id}) ${m.hers.join(' ').slice(0, 160)}`)]
+        : []),
     ].join('\n');
     const messages: ChatMsg[] = [
       { role: 'system', content: SELF_SYSTEM },
@@ -125,7 +143,7 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
     try {
       const res = await deps.model.chat({ taskClass: 'consolidate', tier: 'cheap', messages, schema: SelfRewriteSchema, schemaName: 'SelfRewrite', maxTokens: 1500, temperature: 0.5 });
       const cited: SelfLine[] = res.content.lines
-        .map((l) => ({ text: l.text, cites: l.cites.filter((c) => validIds.has(c)) }))
+        .map((l) => ({ text: l.text, cites: dreamMotif(l.text, l.cites.filter((c) => validIds.has(c)), dreamIds) }))
         .filter((l) => l.cites.length > 0);
       // some doubt stays (who am i, why do i do things); a runaway does not
       const { kept: lines, dropped } = capDoubt(cited);

@@ -83,7 +83,8 @@ export const liveInstructions = (d: Pick<LiveDeps, 'mind' | 'nowFacts' | 'timeZo
     .stream()
     .filter((t) => t.source === 'lived' && now - t.ts < 36 * 3600_000)
     .slice(-3)
-    .map((t) => `- ${t.text}`);
+    // v13: a remembered dream is marked as one on a call too
+    .map((t) => (t.dream === true ? `- (a dream last night) ${t.text}` : `- ${t.text}`));
   const when = new Intl.DateTimeFormat('en-US', { weekday: 'long', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: d.timeZone }).format(now).toLowerCase();
   const frameNow = [`[now]\n${when} his time.`, ...d.nowFacts()].join('\n');
   const parts = [

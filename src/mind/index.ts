@@ -5,7 +5,7 @@ export * from './vocab.js';
 export { cosine, openVecFile, type VecFile } from './vectors.js';
 export { openMindStore, emptyMindState, isPrecedent, offVoice, MACHINERY_TALK, LOVE_DECLARATION, type MindStore, type Centroids } from './store.js';
 export { sense, situationText, replyText, nearestLabel, type Sensed, type Label } from './sense.js';
-export { evoke, scoreMoment, moodTerm, intensityTerm, EVOKE_DEFAULTS, EVOKE_WEIGHTS, NONEXACT_FELT_WEIGHT, type EvokeConfig, type EvokeInput, type Evoked, type Scored } from './evoke.js';
+export { evoke, scoreMoment, moodTerm, intensityTerm, dreamtTerm, linkBonus, EVOKE_DEFAULTS, EVOKE_WEIGHTS, NONEXACT_FELT_WEIGHT, type EvokeConfig, type EvokeInput, type Evoked, type Scored } from './evoke.js';
 export { feelFast, type FastEvent, type FeelFastInput } from './feel.js';
 export { metabolism, energyOf, type Metabolism, type MetabolismCtx } from './modulate.js';
 export {
@@ -67,6 +67,29 @@ export {
   type ValueCtx,
   type Learn,
 } from './curiosity.js';
-export { sleepOnce, sleepJob, SelfRewriteSchema, capDoubt, isDoubtLine, SELF_DOUBT_MAX, SELF_SYSTEM, type SleepDeps } from './sleep.js';
+export { sleepOnce, sleepJob, SelfRewriteSchema, capDoubt, isDoubtLine, dreamMotif, SELF_DOUBT_MAX, SELF_SYSTEM, type SleepDeps } from './sleep.js';
 export { appendChange, readChanges, renderChange, CHANGES_FILE, type MemoryChange, type ChangeKind } from './changes.js';
+export {
+  makeDreams,
+  dreamJob,
+  wakeJob,
+  dreamPool,
+  dreamTelling,
+  overlapRun,
+  rechargeToward,
+  aversiveNorm,
+  isAversive,
+  dreamFade,
+  DREAM,
+  DREAMER_SYSTEM,
+  DreamSchema,
+  DreamAppraisalSchema,
+  type Dreams,
+  type DreamDeps,
+  type DreamCfg,
+  type DreamMode,
+  type DreamCharge,
+  type DreamElement,
+  type DreamRole,
+} from './dream.js';
 export { makeMindPipeline, UNDELIVERED_HEAD, type BodySeam, type MindPipeline, type MindPipelineDeps, type SelfEntryHandle } from './pipeline.js';

@@ -150,7 +150,8 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
   }
   for (const t of i.thoughts.slice(-2)) {
     mind.push({ kind: 'quote', text: `- ${clip(t.text, 240)}` });
-    mind.push({ kind: 'frame', text: `  (a thought from ${ago(i.now - t.ts)})` });
+    // v13: a remembered dream is always marked as one — it never reads as something that happened
+    mind.push({ kind: 'frame', text: t.dream === true ? `  (from a dream, ${ago(i.now - t.ts)})` : `  (a thought from ${ago(i.now - t.ts)})` });
   }
   if (mind.length > 0) {
     head.push({ kind: 'frame', text: '[on my mind]' }, ...mind);
@@ -173,7 +174,7 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
     head.push({ kind: 'frame', text: '[things you remember]' });
     for (const m of i.memories) {
       const text = m.hers.join(' ') || m.his;
-      head.push({ kind: 'frame', text: `${dateLabel(m.ts, i.timeZone)}:` });
+      head.push({ kind: 'frame', text: m.kind === 'dream' ? `(a dream, ${dateLabel(m.ts, i.timeZone)}):` : `${dateLabel(m.ts, i.timeZone)}:` });
       head.push({ kind: 'quote', text: clip(text, 280) });
     }
     blank();

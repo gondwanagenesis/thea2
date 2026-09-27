@@ -117,6 +117,14 @@ export interface MindConfig {
   curiosity: 'on' | 'off' | 'novelty-only';
   investigationsPerDay: number;
   asksPerDay: number;
+  /** v13 dreams: 'on', 'off', or all-'decorative' (the control). */
+  dreams: 'on' | 'off' | 'decorative';
+  /** v13: what a dream does to a re-lived memory's charge (the default arm, and its ablations). */
+  dreamCharge: 'rescript' | 'preserve' | 'soften';
+  /** v13: his local hours she sleeps [start, end). */
+  sleepWindow: [number, number];
+  /** v13: share of nights that are decorative controls (dreamt + logged, nothing downstream). */
+  dreamControlShare: number;
 }
 
 export interface ConfigIssue {
@@ -346,6 +354,11 @@ const configSchema = z.strictObject({
       investigationsPerDay: z.number().int().min(0).max(40).default(6),
       /** v12: people she may start asking about themselves per day. */
       asksPerDay: z.number().int().min(0).max(20).default(3),
+      /** v13 dreams (plan docs/plans/v13-proposal-she-dreams.md). */
+      dreams: z.enum(['on', 'off', 'decorative']).default('on'),
+      dreamCharge: z.enum(['rescript', 'preserve', 'soften']).default('rescript'),
+      sleepWindow: z.tuple([z.number().int().min(0).max(23), z.number().int().min(0).max(23)]).default([3, 9]),
+      dreamControlShare: z.number().min(0).max(1).default(0.25),
     })
     .optional(),
   /** v9 body (plan thea2-v9-parity.md). Present ⇒ senses + tools are wired. */

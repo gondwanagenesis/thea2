@@ -110,6 +110,8 @@ export interface Curiosity extends CuriositySeam {
   nowLines(now: number): string[];
   /** Pursuits currently out. */
   inFlight(): number;
+  /** v13: a question a remembered dream left (it joined two distant things) — born 'dream'. */
+  fromDream(q: { what: string; knowability: number; confidence: number }): Promise<void>;
   /** Exposed for tests and the probe. */
   learned(q: Concern, r: PursuitResult): Promise<LearnOutcome | undefined>;
   mergeDuplicates(): Promise<number>;
@@ -634,6 +636,10 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     learned,
     mergeDuplicates,
     inFlight: () => inflight,
+    fromDream: async (q) => {
+      await birth({ what: q.what, about: 'world', born: 'dream', importance: 4, knowability: q.knowability, confidence: q.confidence });
+      await d.mind.flush();
+    },
     onNewMind: async (p) => {
       await birth({
         what: `who is ${p.name}? ${p.bot ? 'another bot' : 'someone new'} ${p.chatId < 0 ? 'in the group' : 'who wrote to you'}`,

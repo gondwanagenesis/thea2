@@ -14,7 +14,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteText } from '../kernel/index.js';
 import { openVecFile, type VecFile } from './vectors.js';
-import type { Concern, Interest, MindState, Moment, SelfLine, ShownRow, Thought } from './types.js';
+import type { Concern, DreamRecord, Interest, MindState, Moment, SelfLine, ShownRow, Thought } from './types.js';
 
 export interface Centroids {
   move: Record<string, number[]>;
@@ -128,6 +128,9 @@ export interface MindStore {
   /** v12: what she has come to be into (earned from learning progress). */
   interests(): readonly Interest[];
   upsertInterest(i: Interest): void;
+  /** v13: the night's dream records (dreams.jsonl) — machinery only, never read into a prompt. */
+  dreams(): readonly DreamRecord[];
+  appendDream(r: DreamRecord): void;
   /** Persist moments/concerns/state/interests if dirty (atomic rewrites). */
   flush(): Promise<void>;
 }
@@ -146,6 +149,7 @@ export const openMindStore = (dir: string, dim: number): MindStore => {
   const centroids: Centroids = readJson<Centroids>(p('centroids.json'), { move: {}, tone: {} });
   let state: MindState = { ...emptyMindState(), ...readJson<Partial<MindState>>(p('state.json'), {}) };
   let interests: Interest[] = readJson<Interest[]>(p('interests.json'), []);
+  const dreams: DreamRecord[] = readJsonl<DreamRecord>(p('dreams.jsonl'));
 
   const sit: VecFile = openVecFile(dir, 'sit', dim);
   const reply: VecFile = openVecFile(dir, 'reply', dim);
@@ -219,6 +223,11 @@ export const openMindStore = (dir: string, dim: number): MindStore => {
       if (i >= 0) interests[i] = it;
       else interests = [...interests, it];
       dirtyInterests = true;
+    },
+    dreams: () => dreams,
+    appendDream: (r) => {
+      dreams.push(r);
+      fs.appendFileSync(p('dreams.jsonl'), `${JSON.stringify(r)}\n`);
     },
     flush: async () => {
       if (dirtyInterests) {

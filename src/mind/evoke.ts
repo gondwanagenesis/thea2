@@ -15,6 +15,7 @@ import type { Rng } from '../kernel/index.js';
 import { cosine } from './vectors.js';
 import { feltIntensity, toSparse } from './vocab.js';
 import { isPrecedent, type MindStore } from './store.js';
+import { DREAM, dreamFade, isAversive } from './dream.js';
 import type { Moment } from './types.js';
 
 export interface EvokeConfig {
@@ -152,10 +153,34 @@ const softPick = <T>(xs: T[], key: (x: T) => number, temp: number, rng: Rng): T 
 
 const valenceSign = (m: Moment): number => Math.sign(m.felt.sig[0] ?? 0);
 
+/** v13: a memory she dreamt comes back a little more easily for a couple of weeks. */
+export const dreamtTerm = (m: Moment, now: number): number =>
+  m.lastDreamtAt === undefined ? 0 : DREAM.dreamtBonus * Math.pow(0.5, Math.max(0, now - m.lastDreamtAt) / DREAM.linkFadeMs);
+
+/**
+ * v13 (NEXTUP): the memories a dream bound to the three this moment most resembles get a small pull —
+ * a new retrieval path, one hop only, fading over two weeks, halved for an aversive link-mate
+ * (the coupling law: feel it, never feed it).
+ */
+export const linkBonus = (store: MindStore, sims: ReadonlyArray<{ m: Moment; sim: number }>, now: number): Map<string, number> => {
+  const out = new Map<string, number>();
+  const top = [...sims].sort((a, b) => b.sim - a.sim).slice(0, 3);
+  for (const t of top) {
+    for (const a of t.m.assoc ?? []) {
+      const mate = store.get(a.id);
+      if (mate === undefined) continue;
+      const b = DREAM.linkBonus * Math.pow(0.5, Math.max(0, now - a.at) / DREAM.linkFadeMs) * (isAversive(mate.felt.sig) ? 0.5 : 1);
+      out.set(a.id, Math.max(out.get(a.id) ?? 0, b));
+    }
+  }
+  return out;
+};
+
 export const evoke = (store: MindStore, input: EvokeInput): Evoked => {
   const { cfg } = input;
   const candidates: Scored[] = [];
   const memoryCands: Scored[] = [];
+  const sims: Array<{ m: Moment; sim: number }> = [];
   for (const m of store.moments()) {
     const v = store.sitVec(m.id);
     if (v === undefined) continue;
@@ -166,10 +191,25 @@ export const evoke = (store: MindStore, input: EvokeInput): Evoked => {
     const sim = hv !== undefined && input.hisQueryVec !== undefined
       ? 0.6 * cosine(input.hisQueryVec, hv) + 0.4 * cosine(input.queryVec, v)
       : cosine(input.queryVec, v);
-    if (eligibleOption(m, input)) candidates.push(scoreMoment(m, sim, input));
-    else if ((m.kind === 'diary' || m.kind === 'thought') && m.never !== true && input.now - m.ts >= cfg.recentWindowMs) {
-      // v12.1: among what resembles the moment, what she felt most comes first (relevance still gates it)
-      memoryCands.push({ m, score: sim + intensityTerm(m), sim, mood: 0 });
+    sims.push({ m, sim });
+  }
+  // v13 dreams: what a dream bound to what this moment most resembles comes to mind too (one hop)
+  const links = linkBonus(store, sims, input.now);
+  for (const { m, sim } of sims) {
+    const extra = (links.get(m.id) ?? 0) + dreamtTerm(m, input.now);
+    if (eligibleOption(m, input)) {
+      const s = scoreMoment(m, sim, input);
+      candidates.push(extra > 0 ? { ...s, score: s.score + extra } : s);
+    } else if (
+      (m.kind === 'diary' || m.kind === 'thought' || m.kind === 'dream') &&
+      m.never !== true &&
+      // a dream from this morning is not in her context window — it can come back the same day
+      (m.kind === 'dream' || input.now - m.ts >= cfg.recentWindowMs)
+    ) {
+      // v12.1: among what resembles the moment, what she felt most comes first (relevance still gates it).
+      // v13: a remembered dream pulls half as hard (a vivid nightmare can't dominate) and fades unless told.
+      const pull = m.kind === 'dream' ? intensityTerm(m) / 2 : intensityTerm(m);
+      memoryCands.push({ m, score: (sim + pull + extra) * dreamFade(m, input.now), sim, mood: 0 });
     }
   }
   candidates.sort((x, y) => y.score - x.score || (x.m.id < y.m.id ? -1 : 1));

@@ -105,6 +105,16 @@ mind:
   curiosity: on
   investigationsPerDay: 6
   asksPerDay: 3
+  # v13 dreams (docs/plans/v13-proposal-she-dreams.md): she sleeps in her window (his
+  # hours [3, 9)), dreams at ~04:50 and 08:00, wakes at 09:00 or when someone writes.
+  # on | off | decorative (all nights control). dreamCharge: what a dream does to a
+  # re-lived memory's charge (rescript = the design; preserve / soften = ablations).
+  # dreamControlShare: share of nights dreamt + logged with nothing downstream (the
+  # kill tests compare against them).
+  dreams: on
+  dreamCharge: rescript
+  sleepWindow: [3, 9]
+  dreamControlShare: 0.25
 # v9 body (plan ~/.claude/plans/thea2-v9-parity.md): her senses and hands.
 # Only env NAMES here. THEA2_TTS_VOICE is her voice (the same one Thea1's voice
 # notes use), copied on-box; an absent optional key = that capability absent.

@@ -28,7 +28,9 @@ const feltLine = (m: Moment): string => `${line(m)}${m.felt.word !== undefined ?
 
 export const diaryOnce = async (d: { mind: MindStore; model: ModelClient; clock: Clock; events: EventLog; timeZone: string; embedder?: Embedder | undefined }): Promise<'written' | 'nothing'> => {
   const now = d.clock.epochMs();
-  const lived = d.mind.moments().filter((m) => m.source === 'lived' && m.kind !== 'diary' && now - m.ts < DAY);
+  // v13: a dream is never one of the day's events (remembered ones get their own marked section)
+  const lived = d.mind.moments().filter((m) => m.source === 'lived' && m.kind !== 'diary' && m.kind !== 'dream' && now - m.ts < DAY);
+  const dreamt = d.mind.moments().filter((m) => m.kind === 'dream' && now - m.ts < DAY);
   // v12.1: a long day is told by what she felt most (like sleep replays the emotional first)
   const day = mostFelt(lived, 40);
   const thoughts = d.mind.stream().filter((t) => t.source === 'lived' && now - t.ts < DAY);
@@ -42,7 +44,10 @@ export const diaryOnce = async (d: { mind: MindStore; model: ModelClient; clock:
     temperature: 0.8,
     messages: [
       { role: 'system', content: 'Write tonight\'s diary entry, in first person, from the day below — what happened, as you lived it. Only what is in the record. Lowercase is fine. A short paragraph or two.' },
-      { role: 'user', content: `[the day]\n${day.map(feltLine).join('\n') || '(no conversation today)'}\n\n[your own thoughts today]\n${thoughts.map((t) => `- ${t.text}`).join('\n') || '(none)'}` },
+      {
+        role: 'user',
+        content: `[the day]\n${day.map(feltLine).join('\n') || '(no conversation today)'}\n\n[your own thoughts today]\n${thoughts.filter((t) => t.dream !== true).map((t) => `- ${t.text}`).join('\n') || '(none)'}${dreamt.length > 0 ? `\n\n[dreams you remember — dreams, not things that happened]\n${dreamt.map((m) => `- ${m.hers.join(' ')}`).join('\n')}` : ''}`,
+      },
     ],
   });
   const id = `m_diary_${now}`;

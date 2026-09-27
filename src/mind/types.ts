@@ -7,7 +7,8 @@
 // are memories of what happened. Nothing here is fiction: imported moments are
 // Thea's real texts, lived moments are Thea2's own.
 
-export type MomentKind = 'reply' | 'text_first' | 'diary' | 'thought';
+/** v13: 'dream' = a dream she remembers on waking (a fragment) — always shown AS a dream, never as an event. */
+export type MomentKind = 'reply' | 'text_first' | 'diary' | 'thought' | 'dream';
 
 /** Where a felt vector came from — exact state, Thea1's (circular) inheritance, or an estimate from text. */
 export type FeltSource = 'exact' | 'inherited' | 'estimated';
@@ -89,6 +90,17 @@ export interface Moment {
   shownOptions?: string[] | undefined;
   /** v9: what she did (tools) in this moment, beside what she said. */
   acts?: Act[] | undefined;
+  // ——— v13 dreams (plan docs/plans/v13-proposal-she-dreams.md §3.4) ———
+  /** On a remembered dream fragment: which night and cycle it came from. */
+  dream?: { nightId: string; cycle: 'early' | 'late' } | undefined;
+  /** How often this memory has been dreamt, and when (rumination guard: ≤2 of any 7 nights). */
+  dreamt?: number | undefined;
+  lastDreamtAt?: number | undefined;
+  dreamtAt?: number[] | undefined;
+  /** Memories a dream bound this one to (a new retrieval path, NEXTUP), ≤8, oldest dropped. */
+  assoc?: Array<{ id: string; at: number; via: string }> | undefined;
+  /** A remembered dream she talked about: it stops fading. */
+  told?: boolean | undefined;
 }
 
 export type ConcernKind = 'loop' | 'expectation' | 'care' | 'curiosity';
@@ -136,7 +148,7 @@ export interface Concern {
 }
 
 /** v12: where a question came from (§1.2). */
-export type QuestionSource = 'gap' | 'followup' | 'mind' | 'browse' | 'stale';
+export type QuestionSource = 'gap' | 'followup' | 'mind' | 'browse' | 'stale' | 'dream';
 
 /** v12: something she has come to be into — earned from learning progress, fading with neglect (§1.7). */
 export interface Interest {
@@ -160,6 +172,8 @@ export interface Thought {
   about: About;
   itemKey?: string | undefined;
   source: 'imported' | 'lived';
+  /** v13: a remembered dream fragment on her mind (rendered "(from a dream …)"). */
+  dream?: boolean | undefined;
 }
 
 /** One line of her self-narrative with the moments it stands on (uncited lines are dropped). */
@@ -196,6 +210,57 @@ export interface CuriosityState {
   explored?: Array<{ topic: string; at: number }> | undefined;
 }
 
+/**
+ * v13: the full record of one dream (var/mind/dreams.jsonl). The night's record — NO prompt path
+ * ever reads it; what she can recall of a dream exists only as a remembered fragment Moment.
+ */
+export interface DreamRecord {
+  id: string;
+  night: string;
+  cycle: 'early' | 'late';
+  ts: number;
+  arm: 'rescript' | 'preserve' | 'soften' | 'decorative';
+  pool: Array<{ id: string; role: string }>;
+  scenes: Array<{ text: string; uses: string[]; events: Array<{ tag: string; i: number }> }>;
+  endSig: number[];
+  intensity: number;
+  question?: { q: string; knowability: number; confidence: number } | undefined;
+  calls: number;
+  /** Appended at waking: was it remembered. */
+  woke?: { recalled: boolean; p: number; woken: boolean } | undefined;
+}
+
+/** v13: one dream of a night, as the wake step needs it. */
+export interface NightDream {
+  id: string;
+  cycle: 'early' | 'late';
+  endedAt: number;
+  /** Peak state deviation the dream reached (0–1). */
+  intensity: number;
+  /** The fragment she would remember (the final or the most intense scene). */
+  fragment: string;
+  /** Her exact state when the dream ended (stamped on a remembered fragment). */
+  endState: number[];
+  question?: { q: string; knowability: number; confidence: number } | undefined;
+  crossDomain: boolean;
+  decorative: boolean;
+  /** Decided at waking: remembered or not. */
+  recalled?: boolean | undefined;
+}
+
+export interface SleepState {
+  /** His-zone date of the night (the day she wakes into). */
+  night: string;
+  dreams: NightDream[];
+  /** Model calls spent tonight (hard cap). */
+  calls: number;
+  /** He wrote during the window: she's awake until this time. */
+  awakeUntil?: number | undefined;
+  wokeAt?: number | undefined;
+  /** When a dream last became a text to him (≤1 per 3 days). */
+  lastDreamTextAt?: number | undefined;
+}
+
 export interface MindState {
   turn: number;
   /** Her last private expectation and when she formed it. */
@@ -207,6 +272,8 @@ export interface MindState {
   wander: WanderState;
   /** v12 curiosity bookkeeping. */
   curiosity?: CuriosityState | undefined;
+  /** v13 the night: tonight's dreams, when she woke, the dream-text cap. */
+  sleep?: SleepState | undefined;
   lastSleepDay?: string | undefined;
   /** Epoch ms of her last sent message and his last message (for silence and gaps). */
   lastHerAt?: number | undefined;

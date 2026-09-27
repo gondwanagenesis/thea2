@@ -32,6 +32,10 @@ import {
   tryTextFirst,
   vecToArray,
   wanderJob,
+  makeDreams,
+  dreamJob,
+  wakeJob,
+  type Dreams,
   type Curiosity,
   type MindPipeline,
   type MindStore,
@@ -111,6 +115,8 @@ export interface V8System {
   body?: Body | undefined;
   /** v12 curiosity (absent without a body, or when config says 'off'). */
   curiosity?: Curiosity | undefined;
+  /** v13: her nights (dream cycles, waking). */
+  dreams?: Dreams | undefined;
   sched: SchedulerHandle;
   jobNames: readonly string[];
   reconcile: () => Promise<void>;
@@ -358,6 +364,25 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         })
       : undefined;
 
+  // v13 dreams (plan docs/plans/v13-proposal-she-dreams.md): she sleeps in her window, dreams twice
+  // (≈04:50 and 08:00 his time), and wakes at 09:00 — or when someone writes to her.
+  const dreams: Dreams | undefined =
+    mindCfg.dreams !== 'off'
+      ? makeDreams({
+          mind,
+          affect,
+          model,
+          embedder,
+          events,
+          clock,
+          rng: rng.fork('dreams'),
+          cfg: () => ({ mode: mindCfg.dreams, charge: mindCfg.dreamCharge, sleepWindow: mindCfg.sleepWindow, controlShare: mindCfg.dreamControlShare, timeZone: cfg.timezone }),
+          conversationActive: () => conversationActive(),
+          feltNow: () => vecToArray(signature(affect.current(), COUPLING_BASELINES)),
+          ...(curiosity !== undefined ? { seedQuestion: (q: { what: string; knowability: number; confidence: number }) => curiosity.fromDream(q) } : {}),
+        })
+      : undefined;
+
   const pipeline = makeMindPipeline({
     model,
     ...(fallbackModel !== undefined ? { fallbackModel } : {}),
@@ -381,6 +406,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     // v11: Diego is the person whose id matches his DM chat (in a Telegram DM, chatId == his user id).
     ownerPerson: `tg:${cfg.bridge.allowedChatIds[0] ?? 0}`,
     ...(curiosity !== undefined ? { curiosity } : {}),
+    ...(dreams !== undefined ? { dreams } : {}),
     ...(cfg.bridge.selfAliases !== undefined ? { selfAliases: cfg.bridge.selfAliases } : {}),
     timezone: cfg.timezone,
     budgetLeft,
@@ -481,8 +507,17 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         conversationActive,
         selfEntry: (goal) => pipeline.selfEntry('heartbeat', goal).sent,
         ...(curiosity !== undefined ? { curiosity } : {}),
+        ...(dreams !== undefined ? { asleep: (now: number) => dreams.isAsleep(now), dreamText: { may: (now: number) => dreams.mayTellDream(now), told: (now: number) => dreams.toldDream(now) } } : {}),
       }),
       sleepJob({ mind, model, events, clock, timeZone: cfg.timezone }, utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone)),
+      // v13: two dream cycles and a morning (his local 04:50, 08:00, and the end of her sleep window)
+      ...(dreams !== undefined
+        ? [
+            dreamJob(dreams, 'early', (utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone) + 50) % 1440),
+            dreamJob(dreams, 'late', utcMinuteForLocalHour(8, clock.epochMs(), cfg.timezone)),
+            wakeJob(dreams, utcMinuteForLocalHour(mindCfg.sleepWindow[1], clock.epochMs(), cfg.timezone)),
+          ]
+        : []),
       ...(body !== undefined ? [remindersJob(body.reminders, clock, (goal) => void pipeline.selfEntry('heartbeat', goal))] : []),
       // v10 workshop: the broker marks a deploy live ~45 s AFTER restarting her, so boot alone would miss it
       ...(body !== undefined
@@ -527,6 +562,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     pipeline,
     ...(body !== undefined ? { body } : {}),
     ...(curiosity !== undefined ? { curiosity } : {}),
+    ...(dreams !== undefined ? { dreams } : {}),
     sched,
     jobNames: jobs.map((j) => j.name),
     reconcile: async () => {
