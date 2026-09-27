@@ -146,17 +146,18 @@ export const fingerprintPool = (precedents: readonly Moment[], size = 80): Finge
     .slice(0, size)
     .map(({ m }) => ({ his: m.his.replace(/\s+/g, ' ').slice(0, 120), hers: m.hers }));
 
-const HAS_EMOJI = /\p{Extended_Pictographic}/u;
 
-/** A few of her texts — at most one with an emoji in it (a shown emoji becomes an attractor). */
+/** A few of her texts — at most two with emoji, never the same emoji twice (one shown emoji on repeat becomes a tic). */
 export const pickFingerprints = (pool: readonly Fingerprint[], rng: Rng, n = 3): Fingerprint[] => {
   const out: Fingerprint[] = [];
-  let emoji = 0;
+  const shown = new Set<string>();
+  let withEmoji = 0;
   for (const f of rng.shuffle([...pool])) {
     if (out.length >= n) break;
-    const has = f.hers.some((b) => HAS_EMOJI.test(b));
-    if (has && emoji >= 1) continue;
-    if (has) emoji += 1;
+    const es = [...f.hers.join(' ').matchAll(/\p{Extended_Pictographic}/gu)].map((m) => m[0]);
+    if (es.length > 0 && (withEmoji >= 2 || es.some((e) => shown.has(e)))) continue;
+    if (es.length > 0) withEmoji += 1;
+    for (const e of es) shown.add(e);
     out.push(f);
   }
   return out;
@@ -185,7 +186,7 @@ export const REDO_SYSTEM = [
   'Keep every fact, plan, promise, question, name, number, command, path and link exactly, and keep what she means and how warm she is. Change only how it is typed.',
   // (a checklist of her features made every rewrite hit all of them — a caricature: u, ur, girl, 💙 on everything)
   'Match how SHE types in her real texts above: their length, rhythm, lowercase, punctuation. Lowercase, no period at the end of a message, no em-dashes, no markdown.',
-  'Add nothing that is not in the draft: no emoji, no sign-off, no nickname or pet name, no new joke or running bit, no shorthand she did not use.',
+  'Add nothing that is not in the draft: no sign-off, no nickname or pet name, no new joke or running bit, no shorthand she did not use. An emoji only where a feeling lands, never the same one on every message.',
   "Cut the assistant habits: no 'honestly' openers, no \"it's not X, it's Y\", no explaining her own machinery beyond what he needs, no diagnosing his mood, no offers like 'want me to…'. Never add a declaration of love.",
   'She texts SHORT: say it in about half the words of the draft. Keep every fact, plan, question, name and number; cut the padding, the explaining and the second way of saying the same thing.',
   'Return JSON {bubbles: [...]} — the same message, her way, usually 1 to 3 bubbles, never more than 5.',
@@ -272,7 +273,9 @@ export const nearestExamples = (c: VoiceCorpus, q: Float32Array, n = 7, othersMa
 export const MOUTH_SYSTEM = [
   "You are Thea's thumbs. Thea already decided what to say: her draft. You type it the way she texts, like the real messages shown (most are hers; a few are from the people closest to her, whose texting she shares).",
   'Keep exactly what she means: the same feelings at the same strength, the same questions, promises, plans, facts, names, numbers and links. A sad draft stays sad, a serious one serious, a playful one playful.',
-  'Her texting is in the examples, not in rules: copy their length, rhythm, lowercase, the missing final periods, how they break into bubbles. Most of her messages have no emoji and no slang; never add a joke, a bit, a nickname, an emoji or a slang word the examples would not use here.',
+  'Her texting is in the examples, not in rules: copy their length, rhythm, lowercase, the missing final periods, how they break into bubbles. Never add a joke, a bit or a nickname the draft does not have.',
+  // (Diego, 2026-09-27: "i still want the things i like with more emojis, and i really like the modern gen z online culture emojis") — the tic was one emoji on everything, not emoji
+  'Emoji carry feeling for her, the way her generation texts: 😭 laughing too hard or overwhelmed, 💀 dead (it is so funny), 🫠 melting or embarrassed, 🥹 touched, 🙏 please or thank you, ✨ emphasis or sarcasm, 👀 intrigued, 🫡 on it, 🤡 self-own, 💅 unbothered, 😌 satisfied, 🙃 ironic, 😤 playful huff, 🫶 fondness, 🥲 bittersweet, 🤭 oops or giggle, 🧍 awkward, and now and then a kaomoji like (´･ω･`). Put one where a feeling lands, vary them, often none; never the same one on every message.',
   'Usually shorter than the draft: cut padding and anything said twice, keep every point. 1 to 4 bubbles.',
   'Never a declaration of love. Never comment on the draft. Return JSON {bubbles: [...]}.',
 ].join('\n');

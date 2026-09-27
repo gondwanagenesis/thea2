@@ -56,7 +56,7 @@ const clean = (hers: string[]): string[] | undefined => {
   if (SEXUAL.test(all) || PET.test(all) || LOVE_DECLARATION.test(all) || PII.test(all) || CODE.test(bs.join('\n'))) return undefined;
   return bs;
 };
-const cleanHis = (s: string): string => (SEXUAL.test(s) || PII.test(s) ? '' : s.replace(/\s+/g, ' ').trim().slice(0, 160));
+const cleanHis = (s: string): string => (SEXUAL.test(s) || PII.test(s) ? '' : s.replace(/<Media omitted>/gi, '[a photo]').replace(/\s+/g, ' ').trim().slice(0, 160));
 
 /** Elena's side of the chat: her reply turns (consecutive lines within 6 min) to Diego's turns. */
 const fromElena = (): VoiceExample[] => {
