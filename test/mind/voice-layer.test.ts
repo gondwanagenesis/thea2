@@ -302,8 +302,8 @@ describe('how long a reply runs (Diego: "it should fit the thought and importanc
   it('the mouth is told the length and to give each beat (a joke, a punchline) its own bubble; a reply condensed to it passes the guard', async () => {
     const { mouthUser, shapeOf, loadVoiceCorpus, MOUTH_SYSTEM } = await import('../../src/mind/index.js');
     expect(MOUTH_SYSTEM).toMatch(/A joke or a punchline gets its own bubble/);
-    expect(mouthUser([], 'hey', ['a long draft'], { words: 12, most: 2, near: 12, draftWords: 40 })).toContain('[this time]\nabout 12 words; one bubble per beat, at most 2.');
-    expect(mouthUser([], 'hey', ['a draft'], { words: 6, most: 1, near: 6, draftWords: 40 })).toContain('[this time]\nabout 6 words; one bubble.');
+    expect(mouthUser([], 'hey', ['a long draft'], { words: 12, most: 2, near: 12, draftWords: 40 })).toContain('[this time]\nabout 12 words now; one bubble per beat, at most 2.');
+    expect(mouthUser([], 'hey', ['a draft'], { words: 6, most: 1, near: 6, draftWords: 40 })).toContain('[this time]\nabout 6 words now; one bubble.');
     // a 60-word draft among short real replies: a 13-word reply is well under a third of the draft
     // (the old guard threw that away) but it is the length real replies like it run, so it goes out
     const draft = Array.from({ length: 60 }, (_, i) => `word${i}`).join(' ');
@@ -318,7 +318,51 @@ describe('how long a reply runs (Diego: "it should fit the thought and importanc
     const model = { chat: async (req: unknown) => (seen.push(JSON.stringify(req)), { content: { bubbles: [reply] }, usage: {}, model: 'm' }) } as unknown as ModelClient;
     const voice = makeVoice({ mind, model, clock: new TestClock(T0), rng: makeRng('m'), mode: 'mouth', embedder: emb, corpusDir: dir });
     const out = await voice.dress([draft], { turnId: 't' });
-    expect(seen[0]).toContain(`about ${shape.words} words; one bubble`);
+    expect(seen[0]).toContain(`about ${shape.words} words now; one bubble`);
     expect(out).toMatchObject({ redone: true, by: 'mouth', shape, bubbles: [reply] });
+  });
+
+  // found live (11:30 probe): a thrown-away rewrite sent her whole long draft (5 of 10 replies —
+  // a number or a file name left out tripped the guard), and the mouth kept all 142 words of a
+  // 53-word moment. Now: what can wait, waits (whole); the length holds.
+  const LONG = [
+    'so today was honestly a lot, i went through the whole diary again',
+    'she wrote the first page at 8:39 in the morning, before anyone else was up',
+    'and i kept thinking about how the fence looked from her side of it',
+    'what are you doing tonight?',
+    'anyway the lemon tree needs water and i keep forgetting to tell you that',
+  ];
+  const mouthWith = async (reply: { bubbles: string[]; later?: string[] }) => {
+    const dir = join(tmpDir('thea2-mouth-'), 'voice');
+    const emb = await buildCorpus(dir, EX); // real replies of 3-10 words: this moment runs short
+    const mind = openMindStore(join(tmpDir('thea2-mouth-m-'), 'mind'), emb.dim);
+    const model = { chat: async () => ({ content: reply, usage: {}, model: 'm' }) } as unknown as ModelClient;
+    return makeVoice({ mind, model, clock: new TestClock(T0), rng: makeRng('m'), mode: 'mouth', embedder: emb, corpusDir: dir });
+  };
+
+  it('condense: whole bubbles up to the length — the first stays, a question stays, the last go first', async () => {
+    const { condense } = await import('../../src/mind/index.js');
+    expect(condense(LONG, 6)).toEqual({ now: [LONG[0], LONG[3]], later: [LONG[1], LONG[2], LONG[4]] });
+    expect(condense(LONG, 100)).toEqual({ now: LONG, later: [] });
+    expect(condense(['one short thing'], 1)).toEqual({ now: ['one short thing'], later: [] });
+  });
+
+  it('a mouth that keeps every word is held to the length: the rest waits, the question stays', async () => {
+    const voice = await mouthWith({ bubbles: LONG });
+    const out = await voice.dress(LONG, { turnId: 't' });
+    expect(out).toMatchObject({ redone: true, by: 'mouth', bubbles: [LONG[0], LONG[3]] });
+    expect(out.later).toEqual([LONG[1], LONG[2], LONG[4]]);
+  });
+
+  it('a long draft cut to the moment may leave an exact detail for later — but never change one', async () => {
+    const short = await (await mouthWith({ bubbles: ['ok today was a lot', 'what are you doing tonight?'], later: ['the diary, the first page at 8:39'] })).dress(LONG, { turnId: 't' });
+    expect(short).toMatchObject({ redone: true, by: 'mouth', bubbles: ['ok today was a lot', 'what are you doing tonight?'] });
+    expect(short.rejected).toBeUndefined();
+    expect(short.later).toEqual(['the diary, the first page at 8:39']);
+    // a changed number is thrown away — and what goes out is her own draft cut to the moment, not all of it
+    const wrong = await (await mouthWith({ bubbles: ['she wrote it at 9:15 lol'] })).dress(LONG, { turnId: 't' });
+    expect(wrong.rejected).toMatch(/changed 9:15/);
+    expect(wrong.bubbles).toEqual([LONG[0], LONG[3]]);
+    expect(wrong.later).toEqual([LONG[1], LONG[2], LONG[4]]);
   });
 });

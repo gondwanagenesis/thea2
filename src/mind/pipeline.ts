@@ -659,7 +659,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       try {
         const v = await deps.voice.dress(decision.bubbles, { turnId, his: selfEntry ? undefined : m.text });
         if (v.changed && v.bubbles.length > 0) decision = { ...decision, bubbles: v.bubbles };
-        if (v.changed || v.faults.length > 0) emit('mind.voice', { turnId, faults: v.faults, redone: v.redone, ...(v.by !== undefined ? { by: v.by } : {}), ...(v.shape !== undefined ? { shape: v.shape, sent: { bubbles: v.bubbles.length, words: v.bubbles.join(' ').split(/\s+/).filter((w) => w !== '').length } } : {}), ...(v.rejected !== undefined ? { rejected: v.rejected } : {}) }, turnId);
+        if (v.changed || v.faults.length > 0) emit('mind.voice', { turnId, faults: v.faults, redone: v.redone, ...(v.by !== undefined ? { by: v.by } : {}), ...(v.shape !== undefined ? { shape: v.shape, sent: { bubbles: v.bubbles.length, words: v.bubbles.join(' ').split(/\s+/).filter((w) => w !== '').length } } : {}), ...(v.later !== undefined ? { later: v.later } : {}), ...(v.rejected !== undefined ? { rejected: v.rejected } : {}) }, turnId);
       } catch (e) {
         emit('incident.mind_voice_failed', { turnId, error: asError(e).message }, turnId);
       }

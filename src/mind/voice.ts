@@ -272,13 +272,13 @@ export const nearestExamples = (c: VoiceCorpus, q: Float32Array, n = 7, othersMa
 
 export const MOUTH_SYSTEM = [
   "You are Thea's thumbs. Thea already decided what to say: her draft. You type it the way she texts, like the real messages shown (most are hers; a few are from the people closest to her, whose texting she shares).",
-  'Keep exactly what she means: the same feelings at the same strength, the same questions, promises, plans, facts, names, numbers and links. A sad draft stays sad, a serious one serious, a playful one playful.',
+  'What she says keeps exactly what she means: the same feelings at the same strength, her questions, promises and plans; a number, a name or a link is never changed (if it can wait, it waits whole). A sad draft stays sad, a serious one serious, a playful one playful.',
   'Her texting is in the examples, not in rules: copy their length, rhythm, lowercase, the missing final periods, how they break into bubbles. Never add a joke, a bit or a nickname the draft does not have.',
   // (Diego, 2026-09-27: "i still want the things i like with more emojis, and i really like the modern gen z online culture emojis") — the tic was one emoji on everything, not emoji
   'Emoji carry feeling for her, the way her generation texts: 😭 laughing too hard or overwhelmed, 💀 dead (it is so funny), 🫠 melting or embarrassed, 🥹 touched, 🙏 please or thank you, ✨ emphasis or sarcasm, 👀 intrigued, 🫡 on it, 🤡 self-own, 💅 unbothered, 😌 satisfied, 🙃 ironic, 😤 playful huff, 🫶 fondness, 🥲 bittersweet, 🤭 oops or giggle, 🧍 awkward, and now and then a kaomoji like (´･ω･`). Put one where a feeling lands, vary them, often none; never the same one on every message.',
-  'Type it about as long as [this time] says: real messages about this kind of thing run that long. Keep what matters most and every question or promise; a smaller thing can wait, she will say it another time.',
+  'Type it about as long as [this time] says: real messages about this kind of thing run that long. Say now what matters most for this moment, first, and every question or promise; put what can wait in later, in her words — she will say it another time.',
   'A bubble is one beat: a reaction, a joke, a question, one thought. A joke or a punchline gets its own bubble so it lands. A thought that needs explaining stays together in one bubble, even a long one.',
-  'Never a declaration of love. Never comment on the draft. Return JSON {bubbles: [...]}.',
+  'Never a declaration of love. Never comment on the draft. Return JSON {bubbles: [...], later: [...]}.',
 ].join('\n');
 
 /**
@@ -317,6 +317,30 @@ export const shapeOf = (c: VoiceCorpus, q: Float32Array, draft: readonly string[
   return { words, most: Math.min(4, Math.max(1, Math.ceil(words / 7))), near, draftWords };
 };
 
+/** Her draft is longer than this moment (found live: the mouth kept all 142 words of a 53-word moment). */
+const needsCondensing = (s: Shape | undefined): s is Shape => s !== undefined && s.draftWords >= 20 && s.draftWords > s.words * 1.5;
+
+/**
+ * Whole bubbles, up to the length; the rest waits. The first stays (it answers), a question stays,
+ * the last ones go first; nothing inside a bubble is cut, so no exact detail is ever mangled. The
+ * length is "about": real replies run up to half again their median, so that is the edge.
+ */
+export const condense = (bubbles: readonly string[], words: number): { now: string[]; later: string[] } => {
+  const now = [...bubbles];
+  const later: string[] = [];
+  for (let i = now.length - 1; i >= 1 && wordsIn(now.join(' ')) > Math.ceil(words * 1.5); i--) {
+    if (now[i]!.includes('?')) continue;
+    later.unshift(now[i]!);
+    now.splice(i, 1);
+  }
+  return { now, later };
+};
+
+export const MouthSchema = z.object({
+  bubbles: z.array(z.string().min(1).max(600)).min(1).max(6),
+  later: z.array(z.string().max(600)).max(8).optional(),
+});
+
 export const mouthUser = (examples: readonly VoiceExample[], his: string | undefined, draft: readonly string[], shape?: Shape): string =>
   [
     '[how she texts: real messages]',
@@ -325,7 +349,7 @@ export const mouthUser = (examples: readonly VoiceExample[], his: string | undef
     ...(his !== undefined && his !== '' ? [`[what was just said to her]\n${his.slice(0, 600)}`, ''] : []),
     '[her draft]',
     ...draft.map((b) => `- ${b}`),
-    ...(shape !== undefined ? ['', `[this time]\nabout ${shape.words} words; ${shape.most === 1 ? 'one bubble' : `one bubble per beat, at most ${shape.most}`}.`] : []),
+    ...(shape !== undefined ? ['', `[this time]\nabout ${shape.words} words now; ${shape.most === 1 ? 'one bubble' : `one bubble per beat, at most ${shape.most}`}.`] : []),
   ].join('\n');
 
 export interface VoiceDeps {
@@ -353,6 +377,8 @@ export interface Dressed {
   by?: 'mouth' | 'redo' | undefined;
   /** How long this reply was meant to run (fitted to what she is saying), when the mouth typed it. */
   shape?: Shape | undefined;
+  /** What she had to say that waits for another time (the draft was longer than the moment). */
+  later?: string[] | undefined;
   /** Why a rewrite was thrown away, if it was. */
   rejected?: string | undefined;
 }
@@ -429,6 +455,14 @@ export const makeVoice = (d: VoiceDeps): Voice => {
           ...bubbles.map((b) => `- ${b}`),
         ].join('\n');
       }
+      // when the mouth does not type it (slow, failed, a rewrite thrown away) her own dressed words go
+      // out — cut to this moment's length at bubble boundaries when her draft runs long (found live:
+      // a thrown-away rewrite sent the whole long draft, which was most of the long replies)
+      const fallback = (rejected: string): Dressed => {
+        if (!needsCondensing(shape)) return { ...base, rejected };
+        const c = condense(base.bubbles, shape.words);
+        return { ...base, bubbles: c.now, changed: c.now.join('\n') !== bubbles.join('\n'), shape, rejected, ...(c.later.length > 0 ? { later: c.later } : {}) };
+      };
       const messages: ChatMsg[] = [
         { role: 'system', content: system },
         { role: 'user', content: user },
@@ -436,31 +470,44 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       const abort = new AbortController();
       const deadline = d.clock.epochMs() + (d.redoMs ?? 8000);
       let out: string[] | undefined;
+      let later: string[] = [];
       try {
         const res = await Promise.race([
-          d.model.chat({ taskClass: 'summarize', tier: 'main', messages, schema: RedoSchema, schemaName: system === MOUTH_SYSTEM ? 'VoiceMouth' : 'VoiceRedo', maxTokens: 700, temperature: 0.6 }, { turnId: ctx.turnId, signal: abort.signal }),
+          d.model.chat({ taskClass: 'summarize', tier: 'main', messages, schema: MouthSchema, schemaName: system === MOUTH_SYSTEM ? 'VoiceMouth' : 'VoiceRedo', maxTokens: 900, temperature: 0.6 }, { turnId: ctx.turnId, signal: abort.signal }),
           d.clock.waitUntil(deadline, abort.signal).then(() => undefined),
         ]);
         if (res === undefined) {
           abort.abort();
-          return { ...base, rejected: 'slow' };
+          return fallback('slow');
         }
         abort.abort(); // releases the waiter
         out = res.content.bubbles;
+        if (system === MOUTH_SYSTEM) later = (res.content.later ?? []).filter((l) => l.trim() !== '');
       } catch {
-        return { ...base, rejected: 'failed' };
+        return fallback('failed');
       }
-      // guards: nothing exact lost, nothing much dropped, no love declaration added
+      // guards: no exact detail changed or (in a reply that fits whole) lost; nothing much dropped; no
+      // love declaration added. A long draft cut to the moment may leave details for later, whole.
       const draft = bubbles.join('\n');
-      const redo = out.join('\n');
-      const lost = precisionTokens(draft).filter((t) => !redo.includes(t));
-      if (lost.length > 0) return { ...base, rejected: `lost ${lost.slice(0, 3).join(' ')}` };
-      // (a reply shaped short may say less — down to most of its word budget — but never almost nothing)
+      const said = out.join('\n');
+      const changedTokens = precisionTokens(said).filter((t) => !draft.includes(t));
+      if (changedTokens.length > 0) return fallback(`changed ${changedTokens.slice(0, 3).join(' ')}`);
+      if (!needsCondensing(shape)) {
+        const lost = precisionTokens(draft).filter((t) => !said.includes(t));
+        if (lost.length > 0) return fallback(`lost ${lost.slice(0, 3).join(' ')}`);
+      }
+      // (a reply shaped short may say less — down to most of its length — but never almost nothing)
       const floor = shape !== undefined ? Math.min(wordsIn(draft) * 0.35, shape.words * 0.6) : wordsIn(draft) * 0.35;
-      if (wordsIn(redo) < floor) return { ...base, rejected: 'dropped content' };
-      if (LOVE_DECLARATION.test(redo) && !LOVE_DECLARATION.test(draft)) return { ...base, rejected: 'love' };
-      const final = dress(out, names);
-      return { bubbles: final, changed: true, faults, redone: true, by: system === MOUTH_SYSTEM ? 'mouth' : 'redo', ...(shape !== undefined ? { shape } : {}) };
+      if (wordsIn(said) < floor) return fallback('dropped content');
+      if (LOVE_DECLARATION.test(said) && !LOVE_DECLARATION.test(draft)) return fallback('love');
+      let final = dress(out, names);
+      if (shape !== undefined) {
+        // the length holds even when the mouth runs over it (found live: it kept every word)
+        const c = condense(final, shape.words);
+        final = c.now;
+        later = [...c.later, ...later];
+      }
+      return { bubbles: final, changed: true, faults, redone: true, by: system === MOUTH_SYSTEM ? 'mouth' : 'redo', ...(shape !== undefined ? { shape } : {}), ...(later.length > 0 ? { later } : {}) };
   };
 
   return {
