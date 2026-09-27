@@ -16,6 +16,8 @@
 
 import type { LoopPacket } from '../loop/index.js';
 import type { Concern, Moment, SelfLine, Thought } from './types.js';
+import { familyOf, type Family } from './readout.js';
+import { normWord, yourWordFor } from './lexicon.js';
 
 export interface Segment {
   kind: 'frame' | 'quote';
@@ -111,6 +113,8 @@ export interface ComposeInput {
   nowFacts?: readonly string[] | undefined;
   /** v9: her own note on how she does the thing this moment is about (learned from practice) — her words. */
   howTo?: { name: string; note: string } | undefined;
+  /** v13 H3b: her verified words (her lexicon) — a memory near one's place is narrated in her language. */
+  lexicon?: LexWords | undefined;
 }
 
 /**
@@ -123,12 +127,19 @@ export const feedbackArm = (id: string): 'A' | 'B' => {
   return (h & 1) === 1 ? 'B' : 'A';
 };
 
-const renderMoment = (m: Moment, tz: string): Segment[] => {
+type LexWords = ReadonlyArray<{ word: string; centroid: readonly number[]; family?: Family | undefined }>;
+
+const renderMoment = (m: Moment, tz: string, words: LexWords = []): Segment[] => {
   const segs: Segment[] = [];
   const when = `${dateLabel(m.ts, tz)}, ${dayPart(hourIn(m.ts, tz))}`;
   // v13 H1: an honest past — a feeling a reader of her texts guessed is marked as a guess
   const guessed = m.felt.source !== 'exact';
   segs.push({ kind: 'frame', text: m.felt.word !== undefined ? `${when}. you were ${m.felt.word}${guessed ? ', going by what you wrote' : ''}` : when });
+  // v13 H3b: a memory that sits where a verified word of hers lives is narrated in her language
+  if (words.length > 0) {
+    const mine = yourWordFor(words, [...m.felt.sig, ...(m.felt.full ?? [])], familyOf(m.felt.word ?? ''));
+    if (mine !== undefined && mine !== m.felt.word && mine !== normWord(m.called ?? '')) segs.push({ kind: 'quote', text: `(your word for times like this: "${mine}")` });
+  }
   // v13 H2/H3: what she privately called it then (her words), beside what was moving in her (material)
   if (m.called !== undefined) {
     segs.push({ kind: 'quote', text: `you called it "${clip(m.called, 60)}"` });
@@ -182,7 +193,7 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
     head.push({ kind: 'frame', text: 'from your own texts, times a lot like this one. they happened; they show how you are, not lines to reuse.' });
     for (const m of i.options) {
       blank();
-      head.push(...renderMoment(m, i.timeZone));
+      head.push(...renderMoment(m, i.timeZone, i.lexicon));
     }
     blank();
     head.push({ kind: 'frame', text: 'this one is its own moment. go with one of these, mix them, or do something new.' });

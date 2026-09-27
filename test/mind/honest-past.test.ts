@@ -18,6 +18,7 @@ import {
   fullVector,
   isGrounded,
   momentIntensity,
+  readLexicon,
   readReports,
   TELLING_PATTERNS,
   tagSignature,
@@ -79,6 +80,12 @@ describe('H2 — private naming (asks, never tells; before the words; never sent
     const lived = h.sys.mind.moments().find((m) => m.source === 'lived' && m.kind === 'reply')!;
     expect(lived.called).toBe('a bit lonely');
     expect(lived.calledSure).toBe(0.6);
+    // H4 cites moments: the report knows which memory it became; H3b keeps her word with where she was
+    expect(fl?.momentId).toBe(lived.id);
+    const lex = readLexicon(h.sys.mind.dir);
+    expect(lex['a bit lonely']).toMatchObject({ count: 1, verified: false });
+    expect(lex['a bit lonely']?.uses[0]).toMatchObject({ momentId: lived.id });
+    expect(lex['a bit lonely']?.uses[0]?.vec).toHaveLength(23);
   });
 
   it('never in a group turn from someone else; at most N a day, spaced', async () => {

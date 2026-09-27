@@ -30,6 +30,8 @@ export interface Report {
   /** reply: what her words said; felt_line: her private word when asked (H2, the thesis channel); thought: monitored. */
   channel: 'reply' | 'thought' | 'felt_line';
   turnId?: string | undefined;
+  /** v13 H4: the memory this report's turn became (the look-back cites moments). */
+  momentId?: string | undefined;
   claims: Claim[];
   /** What she said / thought, in full. */
   text: string;

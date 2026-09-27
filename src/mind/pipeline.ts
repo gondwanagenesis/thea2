@@ -35,6 +35,7 @@ import type { Dreams } from './dream.js';
 import { engineStamp, familyOf, fullVector, movingNow, readout, readoutWord, type Family } from './readout.js';
 import { scoreClaim } from './sincerity.js';
 import { appendReport } from './ledger.js';
+import { readLexicon, recordUse, verifiedWords, writeLexicon } from './lexicon.js';
 import type { MindStore } from './store.js';
 import type { Concern, Line } from './types.js';
 
@@ -516,6 +517,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       selfEntry,
       nowFacts: [...(deps.body?.nowFacts?.() ?? []), ...(deps.curiosity?.nowLines(now) ?? [])],
       howTo,
+      // v13 H3b: her verified words — her past narrated in her own language
+      lexicon: verifiedWords(readLexicon(deps.mind.dir)),
     });
     const hits = packet.lint();
     if (hits.length > 0) emit('incident.mind_told', { turnId, hits }, turnId);
@@ -711,6 +714,10 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     const fullAtEncoding = fullVector(encState);
     const wordAtEncoding = readoutWord(readout(encState, deps.baselines));
     emit('affect.at', { turnId, stage: 'spoken', ...spokenStamp, weight: decision.weight, reluctance: decision.reluctance }, turnId);
+    const hers = sent.map((s) => s.text);
+    const now = deps.clock.epochMs();
+    // the memory this turn becomes (v13 H4: reports carry it, so the look-back can cite the moment)
+    const momentId = hers.length > 0 ? `m_${now}_${newId(deps.clock, deps.rng).slice(-6)}` : undefined;
     // v13 H2: her private word for how she was (a sampled turn) — filed for scoring (the felt-line
     // channel is the thesis number), never shown to her as a score
     if (decision.felt !== undefined && sent.length > 0) {
@@ -722,6 +729,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         ts: nowMs,
         channel: 'felt_line',
         turnId,
+        ...(momentId !== undefined ? { momentId } : {}),
         claims: [claim],
         text: decision.felt,
         stamp: spokenStamp,
@@ -730,15 +738,27 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         feltRecently,
       });
       emit('mind.self_report', { turnId, channel: 'felt_line', felt: decision.felt, sure: decision.felt_sure ?? null, ...scoreClaim(claim, spokenStamp, new Set(feltRecently)), dissociation: spokenStamp.dissociation }, turnId);
+      // v13 H3b: her word, kept with where her engine was — a word used right often enough becomes hers
+      try {
+        const lx = recordUse(readLexicon(deps.mind.dir), decision.felt, {
+          ts: nowMs,
+          top3: spokenStamp.families.slice(0, 3).map((f) => f.family),
+          vec: [...spokenStamp.sig, ...fullAtEncoding],
+          ...(momentId !== undefined ? { momentId } : {}),
+        });
+        if (lx.word !== undefined) {
+          await writeLexicon(deps.mind.dir, lx.lex);
+          if (lx.newlyVerified) emit('mind.lexicon_verified', { turnId, word: lx.word, count: lx.lex[lx.word]?.count, hit: lx.lex[lx.word]?.hit, family: lx.lex[lx.word]?.family }, turnId);
+        }
+      } catch (e) {
+        emit('incident.mind_lexicon_failed', { turnId, error: asError(e).message }, turnId);
+      }
     }
-    const hers = sent.map((s) => s.text);
-    const now = deps.clock.epochMs();
 
     // What came BEFORE this turn — the afterturn grades against it — captured
     // now, then the bookkeeping for THIS turn lands synchronously, so a quick
     // next message from him already sees her newest expectation and reply.
     const prevState = deps.mind.state();
-    const momentId = hers.length > 0 ? `m_${now}_${newId(deps.clock, deps.rng).slice(-6)}` : undefined;
     const sync: Parameters<MindStore['setState']>[0] = { turn: prevState.turn + 1 };
     if (!selfEntry) sync.lastHisAt = m.ts;
     if (momentId !== undefined) {
@@ -793,6 +813,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
             id: `rp_${turnId}`,
             ts: nowMs,
             channel: 'reply',
+            ...(momentId !== undefined ? { momentId } : {}),
             turnId,
             claims,
             text: hers.join(' / '),
