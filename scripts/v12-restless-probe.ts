@@ -8,7 +8,7 @@
 // untouched (a copy; her open loops are closed IN THE COPY so restlessness is the only item).
 //
 //   set -a; . /etc/thea2/keys.env; set +a
-//   npx tsx scripts/v12-restless-probe.ts --var /opt/thea2/var [--n 10]
+//   npx tsx scripts/v12-restless-probe.ts --var /opt/thea2/var [--n 10] [--at-hour 11]
 
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -16,11 +16,11 @@ import * as path from 'node:path';
 import { loadConfig, type ResolvedDoor } from '../src/app/config.js';
 import { composeV8 } from '../src/app/compose-v8.js';
 import { chatCore, createModelClient, makeRouter, zaiTransport, type ModelClient } from '../src/model/index.js';
-import { makeRng, SystemClock } from '../src/kernel/index.js';
+import { makeRng, SystemClock, type Clock } from '../src/kernel/index.js';
 import { FakeChannel } from '../src/bridge/index.js';
 import { openEventLog } from '../src/events/index.js';
 import { makeEmbedder } from '../src/app/embedder.js';
-import { wanderOnce, type CuriositySeam } from '../src/mind/index.js';
+import { hourIn, wanderOnce, type CuriositySeam } from '../src/mind/index.js';
 
 const argv = process.argv.slice(2);
 const arg = (n: string, d?: string): string | undefined => {
@@ -34,9 +34,27 @@ const out = (s: string): void => {
   process.stdout.write(`${s}\n`);
 };
 
+/** --at-hour H: run as if it were H o'clock in his zone today (the night itself brakes her: "not at 3 am"). */
+const shiftedClock = (tz: string, atHour: number | undefined): Clock => {
+  const base = new SystemClock();
+  if (atHour === undefined) return base;
+  const nowHour = hourIn(base.epochMs(), tz);
+  const off = (((atHour - nowHour) % 24) + 24) % 24 * 3600_000;
+  return {
+    epochMs: () => base.epochMs() + off,
+    now: () => {
+      const d = base.now();
+      d.setTime(d.getTime() + off);
+      return d;
+    },
+    waitUntil: (t, signal) => base.waitUntil(t - off, signal),
+  };
+};
+
 const main = async (): Promise<void> => {
   const cfg = loadConfig(CONFIG, process.env);
-  const clock = new SystemClock();
+  const atHour = arg('at-hour');
+  const clock = shiftedClock(cfg.timezone, atHour === undefined ? undefined : Number(atHour));
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'thea2-restless-probe-'));
   fs.cpSync(SRC_VAR, path.join(base, 'var'), { recursive: true });
   fs.rmSync(path.join(base, 'var', 'thead.lock'), { force: true });
@@ -102,7 +120,8 @@ const main = async (): Promise<void> => {
       events: sys.events,
       clock,
       rng: rng.fork(`run${i}`),
-      cfg: () => ({ thoughtsPerDay: 40, textFirstPerDay: 3, quietHours: cfg.affect.quietHours, timeZone: cfg.timezone, patienceMin: 60 }),
+      // patience of a day: "he has been quiet since…" cannot compete, so restlessness is what wins
+      cfg: () => ({ thoughtsPerDay: 40, textFirstPerDay: 3, quietHours: cfg.affect.quietHours, timeZone: cfg.timezone, patienceMin: 24 * 60 }),
       conversationActive: () => false,
       selfEntry: async () => {
         texted = true;
@@ -120,7 +139,7 @@ const main = async (): Promise<void> => {
     for await (const e of sys.events.replay()) if (e.kind === 'mind.wander' && e.ts >= now0) wants = (e.payload as { wantsToText?: boolean }).wantsToText === true;
     const kind = pursued.length > before ? 'look_into' : wants || texted ? 'text_him' : 'none';
     tally[kind] += 1;
-    out(`${i + 1}. [${kind}] ${last.text}`);
+    out(`${i + 1}. [${kind}] (${res.item ?? '?'}) ${last.text}`);
   }
   out(`\nN=${N}: look_into ${tally.look_into} Â· text_him ${tally.text_him} Â· none ${tally.none} Â· idle ${tally.idle}`);
   out('done. her live var was not touched.');
