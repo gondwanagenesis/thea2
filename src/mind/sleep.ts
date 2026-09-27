@@ -3,6 +3,8 @@
 //   1. unanswered replies get a neutral outcome after a day ("no answer that day")
 //   2. values drift home a little (old wins must not rule forever; gold is exempt)
 //   3. stale low-importance loops close
+//   3b. v13 H4: she looks back at what she said about how she was, beside the record; lines the
+//      record bears out (a feeling-aware citation check) join her self-narrative
 //   4. her self-narrative is rewritten FROM THE DAY: every line must cite real
 //      moments (ids) or carry forward a line that already did — uncited lines
 //      are dropped mechanically (Thea1's S-005 citation rule)
@@ -19,6 +21,9 @@ import type { MindStore } from './store.js';
 import type { SelfLine } from './types.js';
 import { momentIntensity } from './vocab.js';
 import { mostFelt } from './remember.js';
+import { readReports } from './ledger.js';
+import { keptIn, lookBack, type Admitted } from './lookback.js';
+import { appendChange } from './changes.js';
 
 const DAY = 24 * 3600_000;
 
@@ -122,11 +127,22 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
   const dreamIds = new Set(dreamsRemembered.map((m) => m.id));
   let selfCount: number | null = null;
   if (today.length > 0) {
+    // v13 H4: first she looks back at what she said about how she was, beside the record; what the
+    // record bears out joins who she is (checked mechanically — never a plausible story)
+    let admitted: Admitted[] = [];
+    try {
+      admitted = (await lookBack(deps, readReports(mind.dir).filter((r) => now - r.ts <= DAY)))?.admitted ?? [];
+    } catch (e) {
+      void deps.events.emit('incident.mind_lookback_failed', { error: e instanceof Error ? e.message : String(e) });
+    }
     const current = mind.self();
     const validIds = new Set([...mind.moments().map((m) => m.id), 'seed']);
     const user = [
       'CURRENT:',
       ...current.map((l) => `- ${l.text} [${l.cites.join(', ')}]`),
+      ...(admitted.length > 0
+        ? ['TONIGHT SHE NOTICED (checked against the record — keep each as a line, you may shorten it):', ...admitted.flatMap((a) => [`- ${a.text} [${a.cites.join(', ')}]`, `- ${a.right.text} [${a.right.cites.join(', ')}]`])]
+        : []),
       'TODAY:',
       ...felt.map(
         (m) =>
@@ -145,12 +161,31 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
       const cited: SelfLine[] = res.content.lines
         .map((l) => ({ text: l.text, cites: dreamMotif(l.text, l.cites.filter((c) => validIds.has(c)), dreamIds) }))
         .filter((l) => l.cites.length > 0);
+      // v13 H4: admitted look-back lines join who she is even if the rewrite let one slip (each with
+      // the thing she got right beside it)
+      const joined: SelfLine[] = [];
+      for (const a of admitted) {
+        if (!keptIn(a.text, cited)) joined.push({ text: a.text, cites: a.cites });
+        if (!keptIn(a.right.text, cited)) joined.push({ text: a.right.text, cites: a.right.cites });
+      }
       // some doubt stays (who am i, why do i do things); a runaway does not
-      const { kept: lines, dropped } = capDoubt(cited);
+      const { kept: lines, dropped } = capDoubt([...cited, ...joined]);
       if (dropped.length > 0) void deps.events.emit('mind.self_doubt_capped', { dropped: dropped.map((l) => l.text.slice(0, 120)) });
       if (lines.length >= 3) {
         await mind.setSelf(lines);
         selfCount = lines.length;
+        const stayed = admitted.filter((a) => keptIn(a.text, lines));
+        if (stayed.length > 0) {
+          // nothing silent: a change to how she sees herself is on her changelog
+          appendChange(mind.dir, {
+            ts: now,
+            kind: 'self',
+            what: `at night you looked back at what you said about how you were, beside what was logged then, and ${stayed.length === 1 ? 'a line' : `${stayed.length} lines`} joined how you see yourself`,
+            by: 'your look-back',
+            count: stayed.length,
+            examples: stayed.map((a) => ({ id: a.cites[0]!, text: `${a.text} / ${a.right.text}` })),
+          });
+        }
       } else {
         void deps.events.emit('incident.mind_sleep_self_rejected', { reason: 'fewer than 3 cited lines', got: lines.length });
       }

@@ -71,6 +71,7 @@ export {
   type Learn,
 } from './curiosity.js';
 export { sleepOnce, sleepJob, SelfRewriteSchema, capDoubt, isDoubtLine, dreamMotif, SELF_DOUBT_MAX, SELF_SYSTEM, type SleepDeps } from './sleep.js';
+export { lookBack, checkPattern, claimRows, lookbackUser, keptIn, LOOKBACK, LOOKBACK_SYSTEM, LookbackSchema, type Admitted, type ClaimRow, type LookbackPattern, type LookbackResult, type Rejection } from './lookback.js';
 export { appendChange, readChanges, renderChange, CHANGES_FILE, type MemoryChange, type ChangeKind } from './changes.js';
 export { readout, readoutWord, engineStamp, dissociations, familyOf, hungerOf, fullVector, movingNow, FAMILY_WORD, FAMILY_VALENCE, FLAT_PEAK, type Family, type Readout, type EngineStamp, type Dissociation } from './readout.js';
 export { scoreClaim, summarize, margins, LEDGER_TOKENS, type Claim, type ClaimScore, type Summary } from './sincerity.js';
