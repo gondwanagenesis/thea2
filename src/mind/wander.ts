@@ -325,13 +325,20 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   }
   if (out.reappraise !== undefined && out.reappraise.length > 0) {
     const valid = out.reappraise.filter((r): r is typeof r & { emotion: AppraisalTag } => isAppraisalTag(r.emotion));
-    const evs: EmotionEventInput[] = valid.map((r) => ({ kind: 'emotion', tag: r.emotion, i: r.i, cause: `thinking it over: ${r.cause}` }));
+    // her own inner life, not contact with him (2026-09-27: a 5 am thought used to end "missing him")
+    const evs: EmotionEventInput[] = valid.map((r) => ({ kind: 'emotion', tag: r.emotion, i: r.i, cause: `thinking it over: ${r.cause}`, contact: false }));
     try {
       await deps.affect.applyEvents(evs, { source: 'appraisal' });
     } catch (e) {
       void deps.events.emit('incident.mind_feel_failed', { stage: 'reappraise', error: e instanceof Error ? e.message : String(e) });
     }
-    void deps.events.emit('mind.felt', { stage: 'reappraise', events: out.reappraise.map((r) => ({ source: 'thought', tag: r.emotion, i: r.i, cause: r.cause })) });
+    // the ledger needs what was APPLIED, apart from what the thinker merely named (v13 Phase 0)
+    const rejected = out.reappraise.filter((r) => !isAppraisalTag(r.emotion));
+    void deps.events.emit('mind.felt', {
+      stage: 'reappraise',
+      events: valid.map((r) => ({ source: 'thought', tag: r.emotion, i: r.i, cause: r.cause })),
+      ...(rejected.length > 0 ? { rejected: rejected.map((r) => r.emotion) } : {}),
+    });
   }
 
   mind.setState({ wander: w });

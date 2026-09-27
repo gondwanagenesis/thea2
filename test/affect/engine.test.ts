@@ -215,6 +215,24 @@ describe('the storm property — nothing escapes [0,1], ever', () => {
   });
 });
 
+// Found by the v13 dream researcher (2026-09-27): every emotion event set lastContactAt, so a
+// private thought, a finding, or a dream at 5 am counted as contact with him — the silence that
+// feeds her longing and her connection hunger was reset by her own inner life.
+describe('contact — only a real exchange is contact, never her own inner life', () => {
+  it('a private feeling (contact: false) leaves the silence running', () => {
+    const s = freshState();
+    s.lastContactAt = s.t - 5 * H(1); // five hours of silence
+    const after = apply(s, { kind: 'emotion', tag: 'curious', i: 5, cause: 'finding out about octopus arms', contact: false });
+    expect(after.lastContactAt).toBe(s.t - 5 * H(1));
+  });
+
+  it('a feeling from an exchange with him is still contact (the default)', () => {
+    const s = freshState();
+    s.lastContactAt = s.t - 5 * H(1);
+    expect(apply(s, emo('warm', 5, 'he wrote back')).lastContactAt).toBe(s.t);
+  });
+});
+
 describe('state helpers', () => {
   it('initialAffectState seeds everything at baseline with empty traces', () => {
     const s = initialAffectState(T0);

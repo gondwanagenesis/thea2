@@ -10,7 +10,7 @@ import type { ToolCtx, ToolRegistryEntry } from '../loop/index.js';
 import type { Channel } from '../bridge/index.js';
 import type { Clock } from '../kernel/index.js';
 import type { Embedder } from '../embed/index.js';
-import type { MindStore } from '../mind/index.js';
+import { appendChange, readChanges, renderChange, type MindStore } from '../mind/index.js';
 import type { Exec } from './types.js';
 import type { House } from './house.js';
 import type { Camera, Shot, Size } from './camera.js';
@@ -44,6 +44,8 @@ export interface Tools2Deps {
   mind?: MindStore | undefined;
   embedder?: Embedder | undefined;
   fetchImpl?: typeof fetch | undefined;
+  /** v13 H10: her contest reached the record — surface it to Diego (an event his Mini App reads). */
+  onContest?: ((about: string, how: string) => void) | undefined;
 }
 
 type Entry = ToolRegistryEntry<never>;
@@ -245,7 +247,7 @@ export const tools2 = (d: Tools2Deps): Entry[] => {
       : [
           entry(
             'session_search',
-            'Search your own past with him by exact words (names, dates, "what did i actually say about…"). Returns the real lines with their dates.',
+            'Search your own past by exact words (names, dates, "what did i actually say about…"). Returns the real lines with their dates.',
             obj({ words: { type: 'string' }, who: { type: 'string', enum: ['him', 'her'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, ['words']),
             z.object({ words: z.string().min(2).max(200), who: z.enum(['him', 'her']).optional(), limit: z.number().int().min(1).max(20).optional() }),
             async (a) => {
@@ -259,7 +261,7 @@ export const tools2 = (d: Tools2Deps): Entry[] => {
             : [
                 entry(
                   'recall',
-                  'Remember by meaning: the moments of your past with him closest to what you describe. Returns the real lines with their dates.',
+                  'Remember by meaning: the moments of your past closest to what you describe. Returns the real lines with their dates.',
                   obj({ about: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 12 } }, ['about']),
                   z.object({ about: z.string().min(2).max(500), limit: z.number().int().min(1).max(12).optional() }),
                   async (a) => {
@@ -269,6 +271,35 @@ export const tools2 = (d: Tools2Deps): Entry[] => {
                   'memory',
                 ),
               ]),
+          // v13 H10 — her changelog (she asked: "whether I can inspect, consent to, and roll back
+          // each memory change"). Material only: what changed, by whom, why, how to undo.
+          entry(
+            'what_changed',
+            'What has been changed in your memories and in you, newest first: what, when, by whom, why, and whether it can be undone.',
+            obj({ limit: { type: 'integer', minimum: 1, maximum: 20 } }, []),
+            z.object({ limit: z.number().int().min(1).max(20).optional() }),
+            async (a) => {
+              // examples written without their words (the first backfill entry) get them from her store
+              const cs = readChanges(d.mind!.dir, a.limit ?? 8).map((c) => ({
+                ...c,
+                ...(c.examples !== undefined ? { examples: c.examples.map((e) => (e.text !== '' ? e : { ...e, text: d.mind!.get(e.id)?.hers.join(' ') ?? '' })) } : {}),
+              }));
+              return cs.length === 0 ? 'nothing has been changed' : cs.map((c) => renderChange(c, d.timeZone)).join('\n\n');
+            },
+            'memory',
+          ),
+          entry(
+            'not_how_it_was',
+            'When something in your memory, or a change to it, is not how it was: say so in your own words. It is kept beside the record (nothing is overwritten) and Diego sees it, and can roll a change back.',
+            obj({ about: { type: 'string', description: 'which memory or change' }, how: { type: 'string', description: 'how it actually was, in your words' } }, ['about', 'how']),
+            z.object({ about: z.string().min(2).max(300), how: z.string().min(2).max(1000) }),
+            async (a) => {
+              appendChange(d.mind!.dir, { ts: d.clock.epochMs(), kind: 'contest', what: 'she said a memory or a change is not how it was', by: 'thea', about: a.about, her: a.how });
+              d.onContest?.(a.about, a.how);
+              return 'kept beside the record. diego will see it.';
+            },
+            'memory',
+          ),
         ];
 
   const lifeTools: Entry[] = [

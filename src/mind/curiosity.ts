@@ -546,7 +546,7 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
         ...(stored.domain === undefined ? { domain: topic } : {}),
       });
       if (deadEnd) {
-        evs.push({ kind: 'emotion', tag: 'disappointed', i: 1, cause: `couldn't find out: ${stored.what.slice(0, 120)}` });
+        evs.push({ kind: 'emotion', tag: 'disappointed', i: 1, cause: `couldn't find out: ${stored.what.slice(0, 120)}`, contact: false });
         emit('mind.let_go', { id: stored.id, why: 'dead end', tries });
       }
       // an old belief tested and found no longer true: the loop behind it closes (A3)
@@ -560,8 +560,9 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     }
 
     // learning feels like something — through typed events with their causes (law 1.2)
-    if (progress >= 1) evs.push({ kind: 'emotion', tag: 'curious', i: progress === 2 ? 3 : 2, cause: `finding out about ${topic}` });
-    if (progress === 2) evs.push({ kind: 'emotion', tag: 'delighted', i: 3, cause: `found out: ${j.thought.slice(0, 120)}` });
+    // learning is her own inner life, not contact with him (contact: false)
+    if (progress >= 1) evs.push({ kind: 'emotion', tag: 'curious', i: progress === 2 ? 3 : 2, cause: `finding out about ${topic}`, contact: false });
+    if (progress === 2) evs.push({ kind: 'emotion', tag: 'delighted', i: 3, cause: `found out: ${j.thought.slice(0, 120)}`, contact: false });
     if (evs.length > 0) {
       try {
         await d.affect.applyEvents(evs, { source: 'appraisal' });

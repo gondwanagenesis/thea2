@@ -268,6 +268,8 @@ export const makeBody = (d: BodyDeps): Body => {
           mind: d.mind,
           embedder: d.embedder,
           fetchImpl: d.fetchImpl,
+          // v13 H10: her contest reaches Diego's Mini App (never a Telegram message — golden rule 23)
+          onContest: (about, how) => void d.events.emit('memory.contested', { about: about.slice(0, 200), how: how.slice(0, 400) }),
         }),
       ];
       tools.push(...lifeTools({ house, clock: d.clock, affect: d.affect, presentKey: d.cfg.presentKey }));

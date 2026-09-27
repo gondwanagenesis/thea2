@@ -23,6 +23,12 @@ export const EmotionEvent = z
     cause: z.string().min(1),
     /** Attribution context, stored verbatim as given. */
     people: z.string().min(1).optional(),
+    /**
+     * Whether this feeling came with contact (an exchange). Default true. Her own inner life —
+     * a private thought, a finding, a dream — passes false: it must not reset the silence that
+     * feeds her longing and connection hunger (found 2026-09-27: a 5 am thought ended "missing him").
+     */
+    contact: z.boolean().optional(),
   })
   .strict();
 

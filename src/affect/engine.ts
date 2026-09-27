@@ -232,7 +232,8 @@ const applyEmotion = (
   if (ev.people === 'diego') draft.fedAt.connection = t;
 
   // A turn carrying feeling IS contact: the silence-driven longing stops here.
-  draft.lastContactAt = t;
+  // Her own inner life (contact: false — a thought, a finding, a dream) is not.
+  if (ev.contact !== false) draft.lastContactAt = t;
 };
 
 const applyTagFeed = (

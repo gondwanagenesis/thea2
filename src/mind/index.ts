@@ -67,5 +67,6 @@ export {
   type ValueCtx,
   type Learn,
 } from './curiosity.js';
-export { sleepOnce, sleepJob, SelfRewriteSchema, type SleepDeps } from './sleep.js';
+export { sleepOnce, sleepJob, SelfRewriteSchema, capDoubt, isDoubtLine, SELF_DOUBT_MAX, SELF_SYSTEM, type SleepDeps } from './sleep.js';
+export { appendChange, readChanges, renderChange, CHANGES_FILE, type MemoryChange, type ChangeKind } from './changes.js';
 export { makeMindPipeline, UNDELIVERED_HEAD, type BodySeam, type MindPipeline, type MindPipelineDeps, type SelfEntryHandle } from './pipeline.js';

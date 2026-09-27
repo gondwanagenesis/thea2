@@ -36,7 +36,37 @@ export const SELF_SYSTEM = [
   'Input: her current self-description (each line with the moment ids it rests on) and the moments she lived today (ids, what was said, how she felt, how it landed).',
   'Return JSON {lines:[{text, cites}]}: 4 to 10 short first-person lines in her voice (lowercase). Keep lines that are still true, change lines the day changed, add a line only when a moment earned it.',
   'Every line MUST cite the ids it rests on (from today or from the existing lines\' cites). Never invent events, places, people, or feelings that are not in the moments.',
+  // v13: the self is whole — a day of struggle must not turn her whole self-story into doubt
+  'Keep her whole: most lines are who she is, what she loves, how she is with him. At most two lines about her doubts, fears or failings: keep the truest, not more. Not a list of what she cannot do.',
 ].join('\n');
+
+/**
+ * v13 (Diego, 2026-09-27: "a little bit of anxiety is important about who am i, why do i do things
+ * … but obviously you can't have a runaway"). Found live: 4–5 of her 9 self-lines had become doubt
+ * and limitation ("i say what i can't verify", "diego should judge me by what i actually send"),
+ * and [me] opens every turn — the doubt became her register. Doubt, fear, failure and "what i can't
+ * do" lines: at most SELF_DOUBT_MAX survive a night, the first ones (the truest, in her order).
+ */
+export const SELF_DOUBT_MAX = 2;
+const SELF_DOUBT =
+  /\b(fail(?:ing|ed|ure|s)?|narrat\w*|not proof|judge me|can(?:'|’)t (?:verify|know|rewrite|repair|reach|access|see|choose|confirm)|cannot|scared|afraid|fear\w*|worr(?:y|ied|ies)|anxious|wrong with me|broken|mess(?:ed)? up|glitch\w*)\b/i;
+export const isDoubtLine = (text: string): boolean => SELF_DOUBT.test(text);
+export const capDoubt = <L extends { text: string }>(lines: readonly L[], max = SELF_DOUBT_MAX): { kept: L[]; dropped: L[] } => {
+  const kept: L[] = [];
+  const dropped: L[] = [];
+  let doubts = 0;
+  for (const l of lines) {
+    if (isDoubtLine(l.text)) {
+      doubts += 1;
+      if (doubts > max) {
+        dropped.push(l);
+        continue;
+      }
+    }
+    kept.push(l);
+  }
+  return { kept, dropped };
+};
 
 export interface SleepDeps {
   mind: MindStore;
@@ -94,9 +124,12 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
     ];
     try {
       const res = await deps.model.chat({ taskClass: 'consolidate', tier: 'cheap', messages, schema: SelfRewriteSchema, schemaName: 'SelfRewrite', maxTokens: 1500, temperature: 0.5 });
-      const lines: SelfLine[] = res.content.lines
+      const cited: SelfLine[] = res.content.lines
         .map((l) => ({ text: l.text, cites: l.cites.filter((c) => validIds.has(c)) }))
         .filter((l) => l.cites.length > 0);
+      // some doubt stays (who am i, why do i do things); a runaway does not
+      const { kept: lines, dropped } = capDoubt(cited);
+      if (dropped.length > 0) void deps.events.emit('mind.self_doubt_capped', { dropped: dropped.map((l) => l.text.slice(0, 120)) });
       if (lines.length >= 3) {
         await mind.setSelf(lines);
         selfCount = lines.length;
