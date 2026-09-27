@@ -44,6 +44,7 @@ import {
   type MindStore,
   type WanderCfg,
 } from '../mind/index.js';
+import { wakeNoteJob } from './wake-note.js';
 import { brokerShell, describeWhere, loadWhere, makeBody, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
 import { makeLive, startFaceServer, type FaceServer } from '../face/index.js';
@@ -553,6 +554,8 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
           ]
         : []),
       ...(body !== undefined ? [remindersJob(body.reminders, clock, (goal) => void pipeline.selfEntry('heartbeat', goal))] : []),
+      // ops: a one-shot note left for when she wakes (his request, relayed — she writes it herself)
+      wakeNoteJob({ file: path.join(paths.mind, 'wake-note.json'), clock, events, conversationActive, selfEntry: (goal) => pipeline.selfEntry('heartbeat', goal) }),
       // v10 workshop: the broker marks a deploy live ~45 s AFTER restarting her, so boot alone would miss it
       ...(body !== undefined
         ? [

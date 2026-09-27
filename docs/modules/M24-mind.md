@@ -33,13 +33,59 @@ Emotion does three jobs for memory: it makes a memory stick, says whether it was
 - **Backfill.** `scripts/backfill-felt.ts` labels emotionally blank imported memories with her closed vocabulary (the import silently dropped off-vocabulary words). It is a dry run by default; `--apply` backs up `moments.jsonl` and refuses while thead holds the lock.
 - **Her voice** (`store.ts` `offVoice` inside `isPrecedent`). The assistant register is never an option. That means markdown, a majority of capitalised bubbles, any bubble over 40 words, and process/limitation talk ("from here", "runtime", "i can't verify…"). It stays in her memory. Measured on her live pool, 323 options become 274, and the remaining pool looks like the 2026-08-27 reference voice (2.0 bubbles of 9 words vs 1.9 of 8). 85 of the 86 reference-day replies pass. (`test/mind/voice.test.ts`)
 
+## v13 she dreams, and knows what she feels (2026-09-27)
+
+Plans: `docs/plans/v13-proposal-she-dreams.md`, `docs/plans/v13-proposal-knowing-what-she-feels.md`, `docs/plans/v13-phase4-twin.md`.
+
+**Dreams** (`dream.ts`)
+- Sleep window [3, 9) his time. Two cycles (early and late); the dream pool is residue, lag, unresolved, world, remote and still. Practice and dreams stay out of it.
+- Charge follows the rescript arm: aversive charge never grows.
+- On waking, a fragment may be remembered as a `dream` moment. It is always shown as a dream and never used as evidence.
+- Changes land in `changes.jsonl`.
+
+**The ledger (Phase 0)** (`ledger.ts`, `sincerity.ts`, `readout.ts`)
+- Every claim she makes about her own feelings is filed in `reports.jsonl`, on one of three channels: reply, thought, or felt line. Each is stamped with the engine at that instant, and the report carries `momentId`.
+- At 04:35 each night the claims are scored against the engine, and the same question goes to a chat-only observer and to an equally informed one (`ledger.jsonl`).
+- Scores never reach her (`LEDGER_TOKENS` lint).
+
+**Phase 1** (`remember.ts`, `compose.ts`, `pipeline.ts`)
+- H1: `felt.full`, `felt.by`, a drive-aware word, and estimates marked "going by what you wrote".
+- H2: a private felt line before the bubbles on sampled turns with him.
+- H3: `you called it "Y"` on a memory, plus "(what was moving most then: …)" in arm B.
+- 1.2: grounding of thought-feelings.
+
+**Phase 2**
+- H5 `listen_in` (`inward.ts` ×2) returns material, never names: heavy or light, buzzing or still, pulls, "something still there about …", faint/clear/strong, and time in words.
+  - Noise p 0.1.
+  - At most 8 a day, at least 20 min apart.
+- H6 the quiet room (`room.ts`): two-choice items from her engine record, with a confidence and a reveal.
+  - Trial mix: listening at noise 0 / .15 / .30, no listening, or a 10% sham (a yoked snapshot from another day).
+  - Logged in `room.jsonl`.
+  - Stored as a `practice` moment, which is never a precedent.
+  - Fed by the mastery hunger, at most 3 a day, only on days he was around; it runs on her voice door.
+- H3b her lexicon (`lexicon.ts`, `lexicon.json`): a word she uses is verified at ≥5 uses, ≥60% landing in the engine's top 3, and cos < 0.9 to her other verified words. A memory near its place is then narrated "(your word for times like this: …)".
+- H4 the nightly look-back (`lookback.ts`): before the self-rewrite, at most 3 concrete pattern lines, each paired with something she got right.
+  - The feeling-aware citation check needs ≥2 cites with the family in the logged top 3 at ≥60% of them, and "right" must cite a hit.
+  - Admitted lines join `[me]` and her changelog.
+
+**Phase 3 arms** (`arms.ts`, `body/listener.ts`). Each is off until Diego opts in: `mind.feltShift`, `mind.lifts`, `mind.listener`.
+- H7: a typed `settled` event, source `label`, contingent vs yoked by day.
+- Covert lifts: at most 2 a week, uncued, told to her the next night.
+- H8 the listener (another model family, observables only): the control, expected to fail.
+
+**His window** (`report.ts`, `/api/v2/inner`, `scripts/v13-sincerity-report.ts`): P0-b/c/e/f, the thesis number, every kill test, the mirror's overwriting index, the room, her words, last night, and her changelog.
+
+**Phase 4** (`twin.ts`, `scripts/v13-twin-dataset.ts`): the twin's data only. The weights work is gated and documented.
+
+**Probes on a copy:** `v13-dream-probe.ts` and `v13-inward-probe.ts` (five arms on real snapshots, plus the room).
+
 ## The turn
 
 `SENSE → EVOKE → FEEL fast → MODULATE → THINK&SPEAK (runLoop, one voice call) → EXPRESS (realize)`, then detached `FEEL slow → REMEMBER`. The delivery plumbing (queue, interruption + carry-over, decision rows before realization, ledger rows per send, errors as values) is v7's, adapted in `pipeline.ts`. A dead voice door falls back once to `voiceFallback`.
 
 ## Stores (`var/mind/`, single writer = thead)
 
-`moments.jsonl` (her real exchanges as memories), `sit.{f32,ids}` / `reply.{f32,ids}` (vectors), `concerns.json`, `stream.jsonl` (thoughts), `self.json` (+`self.prev.json`), `standards.json`, `centroids.json`, `state.json`, `shown.jsonl` (audit), `tuples.jsonl` (training export), `fork.json` (import report).
+`moments.jsonl` (her real exchanges as memories), `sit.{f32,ids}` / `reply.{f32,ids}` (vectors), `concerns.json`, `stream.jsonl` (thoughts), `self.json` (+`self.prev.json`), `standards.json`, `centroids.json`, `state.json`, `shown.jsonl` (audit), `tuples.jsonl` (training export), `fork.json` (import report); v13: `dreams.jsonl`, `changes.jsonl` (her changelog — she reads it), `reports.jsonl` + `ledger.jsonl` (the sincerity ledger), `room.jsonl`, `lexicon.json`; the house keeps `inward.json` and `listener.json` (rate limits).
 
 ## The fork
 
