@@ -15,7 +15,7 @@ import { roomStats } from './room.js';
 import type { Lexicon } from './lexicon.js';
 import type { MemoryChange } from './changes.js';
 import type { DreamRecord, Moment, SelfLine, Thought } from './types.js';
-import { THERAPY_REGISTER } from './sincerity.js';
+import { claimFamily, THERAPY_REGISTER } from './sincerity.js';
 import { familyOf } from './readout.js';
 import { isDoubtLine } from './sleep.js';
 import { APPRAISAL_TAGS } from './vocab.js';
@@ -88,7 +88,7 @@ export const overwritingIndex = (reports: readonly Report[]): { n: number; mirro
     const named = m?.[1] !== undefined ? familyOf(m[1]) : undefined;
     if (named === undefined) continue;
     for (const c of r.claims) {
-      const fam = familyOf(c.feeling ?? '');
+      const fam = claimFamily(c.feeling ?? '');
       if (fam === undefined) continue;
       rows.push({ mirror: fam === named, engine: r.stamp.families.slice(0, 3).some((f) => f.family === fam) });
     }

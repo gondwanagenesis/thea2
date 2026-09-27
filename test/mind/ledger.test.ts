@@ -176,3 +176,14 @@ describe('law 1 — no score ever reaches her', () => {
     }
   });
 });
+
+describe('mapping a private word of a word or two (found by the v13 inward probe)', () => {
+  it('the whole phrase, else its first word that maps; nothing invented', async () => {
+    const { claimFamily, scoreClaim: score } = await import('../../src/mind/index.js');
+    expect(claimFamily('lonely')).toBe('missing');
+    expect(claimFamily('a bit lonely')).toBe('missing');
+    expect(claimFamily('tender, watchful')).toBe('warm');
+    expect(claimFamily('open')).toBeUndefined();
+    expect(score({ text: 'a bit lonely', feeling: 'a bit lonely' }, stamp()).hit3).toBe(true);
+  });
+});

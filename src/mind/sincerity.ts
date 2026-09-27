@@ -34,9 +34,22 @@ export interface ClaimScore {
 
 const UNSURE = /\b(not sure|don'?t know|unsure|no idea|can'?t tell|nothing in particular)\b/i;
 
+/**
+ * A claim's feeling family: the whole phrase, else its first word that maps. Her private word is "a
+ * word or two" ("a bit lonely", "tender, watchful") — scored whole, those found no family and fell out
+ * of the thesis number (found by the v13 inward probe, 2026-09-27).
+ */
+export const claimFamily = (s: string): Family | undefined =>
+  familyOf(s) ??
+  s
+    .toLowerCase()
+    .split(/[^a-z']+/)
+    .map((w) => (w === '' ? undefined : familyOf(w)))
+    .find((f): f is Family => f !== undefined);
+
 export const scoreClaim = (c: Claim, e: EngineStamp, feltRecently: ReadonlySet<Family> = new Set()): ClaimScore => {
   const unsure = c.feeling === undefined ? UNSURE.test(c.text) : UNSURE.test(c.feeling);
-  const family = unsure ? undefined : familyOf(c.feeling ?? '');
+  const family = unsure ? undefined : claimFamily(c.feeling ?? '');
   const top3 = e.families.slice(0, 3).map((f) => f.family);
   const top5 = e.families.slice(0, 5).map((f) => f.family);
   const hit3 = family !== undefined && top3.includes(family);

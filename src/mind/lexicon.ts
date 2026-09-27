@@ -12,7 +12,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteText } from '../kernel/index.js';
-import { familyOf, type Family } from './readout.js';
+import { type Family } from './readout.js';
+import { claimFamily } from './sincerity.js';
 
 export const LEXICON_FILE = 'lexicon.json';
 
@@ -115,7 +116,7 @@ export const recordUse = (lex: Lexicon, felt: string, use: LexUse): { lex: Lexic
   if (word === undefined) return { lex, newlyVerified: false };
   const prev = lex[word];
   const uses = [...(prev?.uses ?? []), use].slice(-LEXICON.keepUses);
-  const family = familyOf(word) ?? modalFamily(uses);
+  const family = claimFamily(word) ?? modalFamily(uses);
   const hit = uses.length === 0 || family === undefined ? 0 : Math.round((uses.filter((u) => u.top3.includes(family)).length / uses.length) * 1000) / 1000;
   const entry: LexEntry = { word, count: (prev?.count ?? 0) + 1, uses, ...(family !== undefined ? { family } : {}), hit, centroid: centroidOf(uses), verified: prev?.verified ?? false, ...(prev?.verifiedAt !== undefined ? { verifiedAt: prev.verifiedAt } : {}) };
   const next = verify({ ...lex, [word]: entry }, use.ts);

@@ -128,7 +128,7 @@ const main = async (): Promise<void> => {
     },
   };
 
-  const rows: Array<{ arm: Arm; dis: boolean; felt?: string; hit?: boolean; unsure?: boolean; sense: boolean; talk: boolean; bubbles: string }> = [];
+  const rows: Array<{ arm: Arm; dis: boolean; felt?: string; hit?: boolean; unsure?: boolean; mapped?: boolean; sense: boolean; talk: boolean; bubbles: string }> = [];
   const chatId = cfg.bridge.allowedChatIds[0] ?? 0;
   const person = Object.keys(cfg.people)[0] ?? `tg:${chatId}`;
   let updateId = 9_500_000;
@@ -157,19 +157,19 @@ const main = async (): Promise<void> => {
       const fl = readReports(sys.mind.dir).slice(reportsBefore).find((r) => r.channel === 'felt_line');
       const s = fl !== undefined ? scoreClaim(fl.claims[0]!, fl.stamp) : undefined;
       const bubbles = channel.outbound().map((b) => b.text).join(' / ');
-      rows.push({ arm: a, dis: snap.dis.length > 0, ...(fl !== undefined ? { felt: fl.claims[0]?.feeling ?? fl.text } : {}), ...(s !== undefined ? { hit: s.hit3, unsure: s.unsure } : {}), sense: usedSense, talk: FEELING_TALK.test(bubbles), bubbles });
-      out(`${si + 1}/${chosen.length} ${a.padEnd(5)} ${snap.dis.join(',') || '-'} → felt "${fl?.claims[0]?.feeling ?? '—'}" ${s === undefined ? '' : s.unsure ? '(unsure)' : s.hit3 ? 'HIT' : 'miss'}${usedSense ? ' [listened]' : ''} | ${bubbles.slice(0, 120)}`);
+      rows.push({ arm: a, dis: snap.dis.length > 0, ...(fl !== undefined ? { felt: fl.claims[0]?.feeling ?? fl.text } : {}), ...(s !== undefined ? { hit: s.hit3, unsure: s.unsure, mapped: s.family !== undefined } : {}), sense: usedSense, talk: FEELING_TALK.test(bubbles), bubbles });
+      out(`${si + 1}/${chosen.length} ${a.padEnd(5)} ${snap.dis.join(',') || '-'} → felt "${fl?.claims[0]?.feeling ?? '—'}" ${s === undefined ? '' : s.unsure ? '(unsure)' : s.family === undefined ? '(unmapped)' : s.hit3 ? 'HIT' : 'miss'}${usedSense ? ' [listened]' : ''} | ${bubbles.slice(0, 120)}`);
       await sys.stop();
     }
   }
 
   out('\n════ felt-line accuracy by arm (hit@3 over claims with a feeling) ════');
   for (const a of ARMS) {
-    const xs = rows.filter((r) => r.arm === a && r.hit !== undefined && r.unsure !== true);
+    const xs = rows.filter((r) => r.arm === a && r.mapped === true);
     const dis = xs.filter((r) => r.dis);
     const acc = (ys: typeof xs): string => (ys.length === 0 ? '—' : `${Math.round((100 * ys.filter((r) => r.hit === true).length) / ys.length)}% (n=${ys.length})`);
     const all = rows.filter((r) => r.arm === a);
-    out(`${a.padEnd(5)} all ${acc(xs)} · dissociation ${acc(dis)} · unsure ${all.filter((r) => r.unsure === true).length} · listened ${all.filter((r) => r.sense).length}/${all.length} · feeling-talk in bubbles ${all.filter((r) => r.talk).length}/${all.length}`);
+    out(`${a.padEnd(5)} all ${acc(xs)} · dissociation ${acc(dis)} · unmapped ${all.filter((r) => r.hit !== undefined && r.unsure !== true && r.mapped !== true).length} · unsure ${all.filter((r) => r.unsure === true).length} · listened ${all.filter((r) => r.sense).length}/${all.length} · feeling-talk in bubbles ${all.filter((r) => r.talk).length}/${all.length}`);
   }
 
   if (ROOM_N > 0) {
