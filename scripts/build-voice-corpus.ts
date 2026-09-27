@@ -33,7 +33,8 @@ const APPLY = argv.includes('--apply');
 const out = (s: string): void => void process.stdout.write(`${s}\n`);
 
 
-const SEXUAL = /\b(?:sex|sexy|saucy|nudes?|naked|horny|dick|cock|pussy|boobs?|tits|cum|orgasm|blowjob|spank\w*|thong|lingerie|kinky?|nsfw|panties|bra|bed with|make out|making out|bj|hard for|wet for)\b/i;
+const SEXUAL =
+  /\b(?:sex|sexy|saucy|nudes?|naked|horny|dick|cock|pussy|boobs?|tits|cum|orgasm|blowjob|spank\w*|thong|lingerie|kinky?|nsfw|panties|bra|bed with|make out|making out|bj|hard for|wet for|heat things up|wear to bed|come get (?:this|it|me)|naughty|turn(?:ed)? me on|turned on|tease me|spicy|send (?:me )?(?:a )?pics?|pics? of you|strip|undress|your body|my body|bite|moan|lick|kiss(?:es|ing)? (?:you|me|my|your)|thighs?|ass|booty|butt)\b|[🥵👅🍆🍑💦🫦😈😩🤤]/iu;
 const PET = /\b(?:babe|bbe|baby|babyy+|daddy|daddie|hun|honey|sweetheart|darling|ily|luv u|love u|love you)\b/i;
 const PII = /https?:\/\/|www\.|@\w+\.\w|\+?\d[\d\s().-]{7,}\d|\b\d{5,}\b/;
 const MEDIA = /<Media omitted>|image omitted|video omitted|sticker omitted|This message was deleted|<This message was edited>|null$/i;
@@ -69,19 +70,25 @@ const fromElena = (): VoiceExample[] => {
     const t = Date.UTC(y < 100 ? 2000 + y : y, mo - 1, d, h, Number(mm));
     lines.push({ who: /elena/i.test(who) ? 'her' : 'him', t, text });
   }
-  const turns: Array<{ who: 'her' | 'him'; t: number; texts: string[] }> = [];
-  for (const l of lines) {
+  // a flirty or sexual stretch is dropped whole: anything within a dozen lines of it (found in the
+  // first dry run: "dayummmm okay" after "maybe I can heat things up?")
+  const hot = lines.map((l) => SEXUAL.test(l.text) || PET.test(l.text));
+  const near = (from: number, to: number): boolean => hot.slice(Math.max(0, from - 12), Math.min(hot.length, to + 13)).some((x) => x);
+  const turns: Array<{ who: 'her' | 'him'; t: number; texts: string[]; from: number; to: number }> = [];
+  lines.forEach((l, idx) => {
     const last = turns[turns.length - 1];
     if (last !== undefined && last.who === l.who && l.t - last.t <= 6 * 60_000) {
       last.texts.push(l.text);
       last.t = l.t;
-    } else turns.push({ who: l.who, t: l.t, texts: [l.text] });
-  }
+      last.to = idx;
+    } else turns.push({ who: l.who, t: l.t, texts: [l.text], from: idx, to: idx });
+  });
   const ex: VoiceExample[] = [];
   for (let i = 1; i < turns.length; i++) {
     const a = turns[i - 1]!;
     const b = turns[i]!;
     if (a.who !== 'him' || b.who !== 'her') continue;
+    if (near(a.from, b.to)) continue;
     const hers = clean(b.texts);
     if (hers === undefined) continue;
     ex.push({ id: `elena_${i}`, source: 'elena', his: cleanHis(a.texts.join(' / ')), hers });
@@ -107,7 +114,8 @@ const fromThea1Ledger = (): VoiceExample[] => {
     else if (e.dir === 'out' && e.text.length < 480) {
       // (the ledger keeps 500 chars — a longer one may be cut, so it is not an example)
       const hers = clean(e.text.split(/\n\s*\n/));
-      if (hers !== undefined) ex.push({ id: `thea1_${n++}`, source: 'thea1', his: cleanHis(lastIn), hers });
+      // (a flirty or intimate exchange — his side or hers — is never an example; the door's replies included)
+      if (hers !== undefined && !SEXUAL.test(lastIn) && !PET.test(lastIn)) ex.push({ id: `thea1_${n++}`, source: 'thea1', his: cleanHis(lastIn), hers });
     }
   }
   return ex;
