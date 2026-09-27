@@ -208,8 +208,33 @@ As built: `src/mind/curiosity.ts` (the economy), `wander.ts` (seam, agency weigh
 (twin dedupe on concern ops, new-mind/heard-from hooks, `selfEntry` into a chat, `nowLines`),
 `body/index.ts` (`investigate` seam, WONDER classes web/memory/code/hands), compose + config.
 The learning judge reuses task class `appraisal` (the class union is closed; it *is* an
-appraisal). Tests: `test/mind/curiosity.test.ts` (28), `test/body/curiosity.e2e.test.ts` (4),
+appraisal). Tests: `test/mind/curiosity.test.ts` (29), `test/body/curiosity.e2e.test.ts` (4),
 `test/body/group-authority.test.ts` (2).
+
+**Calibrated against a probe of her real mind** (`scripts/v12-curiosity-probe.ts`, run on a
+copy of `/var/lib/thea2` before going live). What the probe showed and what changed:
+1. *No stale belief was ever born.* "Waiting a day" was measured from `touched`, but the
+   beliefs that go stale are the ones she keeps talking about ("I still need Diego to route the
+   group feed", touched an hour ago, open for days). Now measured from `created`, and the
+   waits-on pattern also catches "I still need…", "route", "access", "feed".
+2. *Restlessness never cleared the bar.* At her live hunger (0.52) the old curve gave 0.24,
+   under the 0.35 attention bar. Now anchored at the drive's own set point (0.25): zero at or
+   below it, 0.43 at 0.52.
+3. *Browsing turned inward.* Offered "the world or your own past", the fork went to his codex
+   and learned nothing (progress 0, no interest). The brief now points out into the world and
+   names what she has already looked into (top interests plus the last 14 days of explored
+   topics, kept even when a look-in taught her nothing), so she looks past it.
+
+**A flaky hang that was the harness, not her.** Two group tests (two bots; a stale re-run
+keeps its authority) hung ~1 run in 4 under CPU load. Reproduced with CPU-hog workers: every
+run did exactly one stale re-run and sent 3 messages — no livelock — but simulated time keeps
+moving while a turn waits on real file I/O, so the scene needed 115–200 s simulated instead of
+75–95 s and ran past `runToQuiescent`'s 120 s cap; the clock stopped mid re-run and `drain()`
+waited forever. The cap is now 900 s (the test timeout is the real bound on a runaway).
+
+Not v12, found by its gate and filed separately: `test/assemble/score.test.ts` hangs `npm test`
+(`rankNormalize` loops forever on NaN; one expectation is arithmetically wrong), and
+`test/siblings/routing.test.ts` never learned the v9 `cast` task class.
 
 **Three bugs in the v11 group path, found while wiring v12 (all fixed, all tested):**
 1. *Burst-gathering ignored the speaker* — consecutive same-chat messages merged into one

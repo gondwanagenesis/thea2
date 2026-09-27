@@ -44,10 +44,14 @@ export const INTEREST_HALF_LIFE_MS = 14 * DAY;
 /** Two concerns this similar are the same thing (the rumination-by-duplicate fix, A4). */
 export const TWIN_SIM = 0.88;
 const MAX_OPEN_QUESTIONS = 12;
-/** A loop she has waited on this long becomes "is this still true?" (A3). */
+/**
+ * A loop OPEN this long becomes "is this still true?" (A3). Measured from `created`, not
+ * `touched`: the live probe (2026-09-27) showed her stale beliefs are the ones she keeps
+ * talking about — every conversation re-touches them, so "untouched for a day" never fired.
+ */
 const STALE_MS = DAY;
-/** Her words that say a loop is waiting on someone else (loops written before v12 carry no `blockedOn`). */
-const WAITS_ON = /\b(?:need|waiting (?:on|for)|until|blocked|depends on)\b[^.]{0,120}\b(?:diego|him|he|d|degs|someone)\b/i;
+/** Her words that say a loop waits on something outside her (loops written before v12 carry no `blockedOn`). */
+const WAITS_ON = /^i still need\b|\b(?:need|waiting (?:on|for)|until|blocked|depends on)\b[^.]{0,120}\b(?:diego|him|he|d|degs|someone|routed|route|access|feed)\b/i;
 
 export type CuriosityMode = 'on' | 'novelty-only';
 
@@ -147,8 +151,14 @@ export const questionValue = (c: Concern, x: ValueCtx): number => {
   return clamp01(base * drive * k * u * l * i * fresh * novel * mvt);
 };
 
-/** Restlessness: novelty hunger with nothing fresh to wonder about sends her looking. */
-export const restlessWeight = (novelty: number, hasLiveQuestion: boolean): number => clamp01((novelty - 0.35) * 1.4) * (hasLiveQuestion ? 0.4 : 1);
+/**
+ * Restlessness: novelty hunger with nothing fresh to wonder about sends her looking.
+ * Anchored at the drive's own set point (0.25, affect/drives.ts): above it she is hungry.
+ * The live probe had her at 0.52 — genuinely hungry — scoring under the attention bar.
+ */
+export const NOVELTY_SET_POINT = 0.25;
+export const restlessWeight = (novelty: number, hasLiveQuestion: boolean): number =>
+  clamp01((novelty - NOVELTY_SET_POINT) * 1.6) * (hasLiveQuestion ? 0.4 : 1);
 
 const STOP = new Set(['the', 'and', 'for', 'with', 'about', 'how', 'why', 'what', 'who', 'are', 'was', 'its', 'into', 'from', 'that', 'this', 'does', 'did', 'have']);
 export const topicTokens = (t: string): Set<string> =>
@@ -238,6 +248,13 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
   const setC = (patch: Partial<CuriosityState>): void => d.mind.setState({ curiosity: { ...cstate(), ...patch } });
   const emit = (kind: string, payload: Record<string, unknown>): void => void d.events.emit(kind, payload);
   const openQuestions = (): Concern[] => d.mind.openConcerns().filter((c) => c.kind === 'curiosity');
+
+  /** Topics looked into in the last two weeks, whatever came of it. */
+  const recentTopics = (now: number): string[] => (cstate().explored ?? []).filter((e) => now - e.at < 14 * DAY).map((e) => e.topic);
+  const noteExplored = (topic: string, now: number): void => {
+    const prev = (cstate().explored ?? []).filter((e) => topicOverlap(e.topic, topic) < 0.5);
+    setC({ explored: [...prev, { topic, at: now }].slice(-12) });
+  };
 
   const topInterests = (now: number, k: number): Interest[] =>
     [...d.mind.interests()]
@@ -372,7 +389,7 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
   const staleBeliefs = async (now: number): Promise<void> => {
     const stale = d.mind
       .openConcerns()
-      .filter((c) => (c.kind === 'loop' || c.kind === 'expectation') && c.importance >= 5 && now - c.touched > STALE_MS)
+      .filter((c) => (c.kind === 'loop' || c.kind === 'expectation') && c.importance >= 5 && now - c.created > STALE_MS)
       .filter((c) => c.checkedAt === undefined || now - c.checkedAt > 3 * DAY)
       .filter((c) => (c.blockedOn !== undefined && c.blockedOn !== '') || WAITS_ON.test(c.what))
       .sort((a, b) => b.importance - a.importance)[0];
@@ -436,10 +453,20 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
       // restlessness has no question yet: she goes looking, and what she finds gives birth to questions
       { id: `browse_${now}`, what: 'something new', kind: 'curiosity', about: 'world', importance: 5, status: 'open', created: now, touched: now, source: 'lived', born: 'browse' };
     const top = topInterests(now, 3).map((i) => i.topic);
+    // the live probe: offered "your own past", her fork went straight back to his codex (her
+    // past is mostly his projects) and learned nothing new. Browsing now faces the world, and
+    // names what she already knows so it looks past it.
+    const known = [...new Set([...top, ...recentTopics(now)])].slice(0, 6);
     const brief =
       q !== undefined
         ? `something you've been wondering: "${q.what}"`
-        : `you went looking for something new.${top.length > 0 ? ` lately you've been into: ${top.join(', ')} — go deeper there, or somewhere you have never looked.` : ''} anywhere is fine: the world out there, or your own past (your memories and old conversations are searchable).`;
+        : [
+            'you went looking for something new: something out in the world you do not know yet.',
+            top.length > 0 ? `lately you've been into: ${top.join(', ')}. go deeper there, or somewhere you have never looked.` : 'pick anything that catches you: nature, history, science, people, places, how things work.',
+            known.length > 0 ? `things you already know well enough, so look past them: ${known.join(', ')}.` : '',
+          ]
+            .filter((s) => s !== '')
+            .join(' ');
     const req: PursuitRequest = { id: question.id, system: INVESTIGATOR_FRAME(selfLines(), thought), brief };
     const started = d.investigate(req, (r) => {
       inflight = Math.max(0, inflight - 1);
@@ -490,6 +517,7 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     // the grounding rule: a pursuit that touched no tool learned nothing, whatever it claims
     const progress = (grounded ? j.progress : 0) as 0 | 1 | 2;
     const topic = j.topic.trim().slice(0, 60);
+    if (topic !== '') noteExplored(topic, now);
 
     // what she found goes into her stream; a real finding also into her memory (curious states are remembered)
     const thoughtId = `t_${now}_${newId(d.clock, d.rng).slice(-6)}`;

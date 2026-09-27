@@ -135,7 +135,12 @@ export const bootV8 = async (
 
 export const settle = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-export const runToQuiescent = async (h: V8Harness, maxMs = 120_000): Promise<void> => {
+// The cap is simulated time, and simulated time keeps moving while a turn waits on real
+// file I/O — so under CPU load a short scene burns far more of it. Found in v12: the
+// two-bots scene needs 75–95 s idle but 115–200 s loaded; at the old 120 s cap the
+// clock stopped mid re-run and drain() waited forever. The test's own timeout is the
+// real bound on a runaway; this only has to be generous.
+export const runToQuiescent = async (h: V8Harness, maxMs = 900_000): Promise<void> => {
   for (let i = 0; i < 200; i++) {
     if (h.sys.pipeline.isBusy()) break;
     await settle(2);

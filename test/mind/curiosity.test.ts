@@ -146,10 +146,15 @@ describe('v12 value (§1.4) — what she can learn, not what is merely new', () 
     expect(questionValue(q({ tries: 1, lp: 0 }), ctx({ mode: 'novelty-only' }))).toBeCloseTo(questionValue(q({ tries: 1, lp: 2 }), ctx({ mode: 'novelty-only' })), 6);
   });
 
-  it('restlessness: only when hungry, softer when she already has something to wonder about', () => {
-    expect(restlessWeight(0.3, false)).toBe(0);
+  it('restlessness: only above the drive set point, softer when she already has something to wonder about', () => {
+    expect(restlessWeight(0.25, false)).toBe(0);
+    expect(restlessWeight(0.2, false)).toBe(0);
     expect(restlessWeight(0.75, false)).toBeGreaterThan(0.5);
     expect(restlessWeight(0.75, true)).toBeLessThan(restlessWeight(0.75, false));
+  });
+
+  it('found live (probe 2026-09-27): at her real hunger (0.52) restlessness clears the attention bar', () => {
+    expect(restlessWeight(0.52, false)).toBeGreaterThan(0.35);
   });
 });
 
@@ -164,10 +169,11 @@ describe('v12 generators (§1.2) and dedupe (A4)', () => {
     expect(qs[0]!.what).toContain('A1');
   });
 
-  it('a loop she has waited on someone for, for a day, becomes "is this still true?" — once (A3)', async () => {
+  it('a loop she has been waiting on for over a day becomes "is this still true?" — once, even while she keeps talking about it (A3)', async () => {
     const r = rig();
-    r.mind.upsertConcern(concern({ id: 'feed', kind: 'loop', about: 'diego', importance: 8, what: 'I still need Diego to route the group feed so I can answer A1.', touched: T0 - 30 * H }));
-    r.mind.upsertConcern(concern({ id: 'fresh', kind: 'loop', about: 'diego', importance: 8, what: 'I still need him to send the file.', touched: T0 - 2 * H }));
+    // found live: her stale beliefs are the ones she keeps talking about — touched an hour ago, open for a day
+    r.mind.upsertConcern(concern({ id: 'feed', kind: 'loop', about: 'diego', importance: 8, what: 'I still need Diego to route the group feed so I can answer A1.', created: T0 - 30 * H, touched: T0 - H }));
+    r.mind.upsertConcern(concern({ id: 'fresh', kind: 'loop', about: 'diego', importance: 8, what: 'I still need him to send the file.', created: T0 - 2 * H, touched: T0 - 2 * H }));
     await r.cur.tick(T0);
     await r.cur.tick(T0);
     const stale = r.mind.openConcerns().filter((c) => c.born === 'stale');
@@ -221,11 +227,19 @@ describe('v12 pursuit (§1.5) — her own hands, or asking', () => {
     expect(await r.cur.pursue({ key: 'concern:b', kind: 'wonder', about: 'world', text: 'x', weight: 0.6, concernId: 'b' }, '')).toBe('capped');
   });
 
-  it('restlessness goes looking with nothing in hand — anywhere, the world or her own past', async () => {
-    const r = rig();
+  it('restlessness goes looking with nothing in hand — out in the world, past what she already knows', async () => {
+    const r = rig({ judge: { topic: 'the codex and continuity', progress: 0, answered: false, followups: [] } });
     expect(await r.cur.pursue({ key: 'restless', kind: 'restless', about: 'world', text: 'nothing new', weight: 0.6 }, 'i want to read about something weird')).toBe('investigating');
-    expect(r.pursuits[0]!.brief).toMatch(/you went looking for something new/);
-    expect(r.pursuits[0]!.brief).toMatch(/your own past/);
+    expect(r.pursuits[0]!.brief).toMatch(/^you went looking for something new: something out in the world you do not know yet/);
+    // found live: offered "your own past", her fork went straight back to his codex — the brief no longer invites it
+    expect(r.pursuits[0]!.brief).not.toMatch(/your own past/);
+    expect(lint(r.pursuits[0]!.brief)).toEqual([]);
+    // what she looked into (even when she learned nothing) is named next time, so she looks past it
+    r.finish({ text: 'the codex again', tools: ['read_file'] });
+    for (let i = 0; i < 50 && r.events.every((e) => e.kind !== 'mind.learned'); i++) await new Promise((res) => setImmediate(res));
+    r.mind.setState({ wander: { ...r.mind.state().wander, pursuits: 0 } });
+    expect(await r.cur.pursue({ key: 'restless', kind: 'restless', about: 'world', text: 'nothing new', weight: 0.6 }, '')).toBe('investigating');
+    expect(r.pursuits[1]!.brief).toContain('look past them: the codex and continuity');
   });
 
   it('a question about another mind is pursued by asking them, in the chat where they are — capped, never in quiet hours', async () => {
@@ -302,7 +316,7 @@ describe('v12 reward (§1.6–1.7) — learning progress, not novelty', () => {
 
   it('a stale belief tested and found no longer true closes the loop behind it (K3)', async () => {
     const r = rig({ judge: { progress: 1, answered: true, parent_resolved: true, followups: [], thought: 'oh. i am in the group already — i spoke there an hour ago', topic: 'my own setup' } });
-    r.mind.upsertConcern(concern({ id: 'feed', kind: 'loop', importance: 8, what: 'I still need Diego to route the group feed so I can answer A1.', touched: T0 - 30 * H }));
+    r.mind.upsertConcern(concern({ id: 'feed', kind: 'loop', importance: 8, what: 'I still need Diego to route the group feed so I can answer A1.', created: T0 - 30 * H }));
     await r.cur.tick(T0);
     const stale = r.mind.openConcerns().find((c) => c.born === 'stale')!;
     await r.cur.learned(stale, { text: 'session_search: you replied in House of Tiktaalik at 23:14', tools: ['session_search'] });

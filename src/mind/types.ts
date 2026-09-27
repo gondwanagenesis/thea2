@@ -192,6 +192,8 @@ export interface CuriosityState {
   lastNewAt?: number | undefined;
   /** Duplicate concerns have been merged once (the v12 boot pass). */
   merged?: boolean | undefined;
+  /** Topics she has looked into lately, whatever she learned — browsing looks past them. */
+  explored?: Array<{ topic: string; at: number }> | undefined;
 }
 
 export interface MindState {
