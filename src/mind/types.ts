@@ -7,8 +7,9 @@
 // are memories of what happened. Nothing here is fiction: imported moments are
 // Thea's real texts, lived moments are Thea2's own.
 
-/** v13: 'dream' = a dream she remembers on waking (a fragment) — always shown AS a dream, never as an event. */
-export type MomentKind = 'reply' | 'text_first' | 'diary' | 'thought' | 'dream';
+/** v13: 'dream' = a dream she remembers on waking (a fragment) — always shown AS a dream, never as an event.
+ *  'practice' = a session in the quiet room (H6) — may be remembered, never a way to reply. */
+export type MomentKind = 'reply' | 'text_first' | 'diary' | 'thought' | 'dream' | 'practice';
 
 /** Where a felt vector came from — exact state, Thea1's (circular) inheritance, or an estimate from text. */
 export type FeltSource = 'exact' | 'inherited' | 'estimated';
@@ -293,6 +294,8 @@ export interface MindState {
   naming?: { day: string; count: number; lastAt?: number | undefined } | undefined;
   /** v13 1.2: how many of her thought-feelings had nothing behind them (the grounding measure). */
   grounding?: { since: number; total: number; ungrounded: number; enforce?: boolean | undefined } | undefined;
+  /** v13 H6: today's sessions in the quiet room. */
+  room?: { day: string; sessions: number } | undefined;
   lastSleepDay?: string | undefined;
   /** Epoch ms of her last sent message and his last message (for silence and gaps). */
   lastHerAt?: number | undefined;

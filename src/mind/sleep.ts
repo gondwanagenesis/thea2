@@ -95,7 +95,7 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
   let closed = 0;
 
   for (const m of mind.moments()) {
-    if (m.source === 'lived' && m.outcome === undefined && m.kind !== 'diary' && m.kind !== 'thought' && m.kind !== 'dream' && now - m.ts > DAY) {
+    if (m.source === 'lived' && m.outcome === undefined && m.kind !== 'diary' && m.kind !== 'thought' && m.kind !== 'dream' && m.kind !== 'practice' && now - m.ts > DAY) {
       mind.update(m.id, { outcome: { landed: 0, why: 'no answer that day', at: now } });
       swept += 1;
     }

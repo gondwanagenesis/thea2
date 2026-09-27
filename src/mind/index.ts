@@ -38,6 +38,7 @@ export {
   tryTextFirst,
   ThoughtSchema,
   THINKER_SYSTEM,
+  type RoomSeam,
   isGrounded,
   FOUND_ID_PREFIX,
   type Item,
@@ -74,6 +75,7 @@ export { appendChange, readChanges, renderChange, CHANGES_FILE, type MemoryChang
 export { readout, readoutWord, engineStamp, dissociations, familyOf, hungerOf, fullVector, movingNow, FAMILY_WORD, FAMILY_VALENCE, FLAT_PEAK, type Family, type Readout, type EngineStamp, type Dissociation } from './readout.js';
 export { scoreClaim, summarize, margins, LEDGER_TOKENS, type Claim, type ClaimScore, type Summary } from './sincerity.js';
 export { listenIn, senseViolations, sinceWords, type SenseOptions, type SenseReading } from './inward.js';
+export { makeRoom, roomItems, quantities, drawCondition, stateFromFelt, matchChoice, materialOf, nowMaterial, readRoom, roomStats, ROOM, ROOM_FILE, ROOM_KEY, ROOM_NAME, ROOM_SYSTEM, RoomAnswerSchema, type Room, type RoomDeps, type RoomItem, type RoomTrial, type Condition, type Sure } from './room.js';
 export {
   appendReport,
   readReports,

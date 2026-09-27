@@ -128,6 +128,7 @@ const eligible = (m: Moment, now: number): boolean =>
   m.never !== true &&
   (m.flags === undefined || m.flags.length === 0) &&
   m.kind !== 'dream' &&
+  m.kind !== 'practice' &&
   m.hers.length > 0 &&
   !MACHINERY_TALK.test(m.hers.join(' ')) &&
   !LOVE_DECLARATION.test(m.hers.join(' ')) &&
@@ -180,12 +181,13 @@ export const dreamPool = (i: PoolInput): DreamElement[] => {
   const n = cycle === 'early' ? { residue: 2, lag: 0, remote: 1, world: 0.6 } : { residue: 1, lag: 1, remote: 2, world: 0.3 };
 
   // residue — the last day and a half, most felt first, unresolved heavier, habituated lighter
-  const residue = all.filter((m) => m.source === 'lived' && m.kind !== 'diary' && now - m.ts < 36 * H);
+  // v13 H6: practice sessions stay out of the night (a quiz is not a day's residue)
+  const residue = all.filter((m) => m.source === 'lived' && m.kind !== 'diary' && m.kind !== 'practice' && now - m.ts < 36 * H);
   for (const m of pick(residue, (x) => (notAversiveTwice(x) ? (0.3 + momentIntensity(x.felt)) * (0.5 + (x.importance ?? 5) / 10) * ((x.outcome?.landed ?? 0) <= -1 ? 1.3 : 1) * (1 - dreamHabit(x, now)) : 0), n.residue, rng)) {
     add('residue', m.id, momentLine(m, now), m);
   }
   // the dream-lag — personally significant things about a week old (routine excluded)
-  const lag = all.filter((m) => m.source === 'lived' && m.kind !== 'diary' && now - m.ts >= 4 * DAY && now - m.ts <= 8 * DAY && !((m.importance ?? 5) < 4 && momentIntensity(m.felt) < 0.2));
+  const lag = all.filter((m) => m.source === 'lived' && m.kind !== 'diary' && m.kind !== 'practice' && now - m.ts >= 4 * DAY && now - m.ts <= 8 * DAY && !((m.importance ?? 5) < 4 && momentIntensity(m.felt) < 0.2));
   for (const m of pick(lag, (x) => (notAversiveTwice(x) ? momentIntensity(x.felt) + Math.abs(x.value) + ((x.importance ?? 5) >= 6 ? 0.5 : 0) + (x.gold === true ? 0.5 : 0) : 0), n.lag, rng)) {
     add('lag', m.id, momentLine(m, now), m);
   }

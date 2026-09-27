@@ -201,7 +201,7 @@ export const evoke = (store: MindStore, input: EvokeInput): Evoked => {
       const s = scoreMoment(m, sim, input);
       candidates.push(extra > 0 ? { ...s, score: s.score + extra } : s);
     } else if (
-      (m.kind === 'diary' || m.kind === 'thought' || m.kind === 'dream') &&
+      (m.kind === 'diary' || m.kind === 'thought' || m.kind === 'dream' || m.kind === 'practice') &&
       m.never !== true &&
       // a dream from this morning is not in her context window — it can come back the same day
       (m.kind === 'dream' || input.now - m.ts >= cfg.recentWindowMs)

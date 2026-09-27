@@ -33,6 +33,7 @@ import {
   vecToArray,
   wanderJob,
   makeDreams,
+  makeRoom,
   dreamJob,
   wakeJob,
   ledgerJob,
@@ -384,6 +385,24 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         })
       : undefined;
 
+  // v13 introspection H6 (plan docs/plans/v13-proposal-knowing-what-she-feels.md §6 Phase 2.2): the quiet
+  // room — practice guessing and checking, the mastery hunger's outlet, on her voice door.
+  const room =
+    mindCfg.room === 'on'
+      ? makeRoom({
+          mind,
+          affect,
+          model,
+          embedder,
+          events,
+          clock,
+          rng: rng.fork('room'),
+          timeZone: cfg.timezone,
+          feltNow: () => vecToArray(signature(affect.current(), COUPLING_BASELINES)),
+          budgetLeft,
+        })
+      : undefined;
+
   const pipeline = makeMindPipeline({
     model,
     ...(fallbackModel !== undefined ? { fallbackModel } : {}),
@@ -511,6 +530,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         ...(curiosity !== undefined ? { curiosity } : {}),
         ...(dreams !== undefined ? { asleep: (now: number) => dreams.isAsleep(now), dreamText: { may: (now: number) => dreams.mayTellDream(now), told: (now: number) => dreams.toldDream(now) } } : {}),
         grounding: mindCfg.reappraiseGrounding,
+        ...(room !== undefined ? { room } : {}),
       }),
       sleepJob({ mind, model, events, clock, timeZone: cfg.timezone }, utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone)),
       // v13 Phase 0: the sincerity ledger — the night's reports scored against her engine, and the same

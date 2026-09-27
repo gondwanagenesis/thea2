@@ -130,6 +130,8 @@ export interface MindConfig {
   namingGapMin: number;
   /** v13 introspection 1.2: thought-feelings with nothing behind them — measured, or enforced. */
   reappraiseGrounding: 'auto' | 'measure' | 'enforce';
+  /** v13 introspection H6: the quiet room (practice, fed by the mastery hunger). */
+  room: 'on' | 'off';
 }
 
 export interface ConfigIssue {
@@ -368,6 +370,7 @@ const configSchema = z.strictObject({
       namingPerDay: z.number().int().min(0).max(12).default(6),
       namingGapMin: z.number().int().min(10).max(600).default(90),
       reappraiseGrounding: z.enum(['auto', 'measure', 'enforce']).default('auto'),
+      room: z.enum(['on', 'off']).default('on'),
     })
     .optional(),
   /** v9 body (plan thea2-v9-parity.md). Present ⇒ senses + tools are wired. */

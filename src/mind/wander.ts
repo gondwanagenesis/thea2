@@ -39,8 +39,9 @@ export const FOUND_ID_PREFIX = 'm_found_';
 
 export interface Item {
   key: string;
-  /** v12: 'wonder' = one of her questions; 'restless' = nothing new has come her way (the novelty hunger's outlet). */
-  kind: 'concern' | 'feeling' | 'missing' | 'wonder' | 'restless';
+  /** v12: 'wonder' = one of her questions; 'restless' = nothing new has come her way (the novelty hunger's outlet).
+   *  v13 H6: 'practice' = the quiet room (the mastery hunger's outlet). */
+  kind: 'concern' | 'feeling' | 'missing' | 'wonder' | 'restless' | 'practice';
   about: About;
   /** Her words (or the cause, verbatim) — what the thought is about. */
   text: string;
@@ -59,6 +60,12 @@ export interface CuriositySeam {
   candidates(state: AffectState, now: number): Item[];
   /** After her thought on a wonder/restless item: pursue it (detached). */
   pursue(item: Item, thought: string): Promise<'investigating' | 'asked' | 'capped' | 'busy' | 'quiet' | 'none'>;
+}
+
+/** v13 H6 (plan docs/plans/v13-proposal-knowing-what-she-feels.md §6 Phase 2.2): the quiet room, offered by the mastery hunger. */
+export interface RoomSeam {
+  candidate(state: AffectState, now: number): Item | undefined;
+  practise(now: number): Promise<{ right: number; of: number } | undefined>;
 }
 
 export interface WanderCfg {
@@ -228,6 +235,8 @@ export interface WanderDeps {
   dreamText?: { may(now: number): boolean; told(now: number): void } | undefined;
   /** v13 1.2: thought-feelings with nothing behind them — measured, or enforced (auto: when the measure says). */
   grounding?: 'auto' | 'measure' | 'enforce' | undefined;
+  /** v13 H6: the quiet room — a session there takes the place of a thought. Absent ⇒ no room. */
+  room?: RoomSeam | undefined;
 }
 
 const selfLines = (mind: MindStore): string => mind.self().slice(0, 6).map((l) => l.text).join('\n');
@@ -251,7 +260,7 @@ export const isGrounded = (tag: string, s: AffectState, recentFamilies: Readonly
 const DREAM_CAUSED = /^(?:the dream:|something in the night)/;
 
 /** One wander tick. Returns what happened, for the event log and tests. */
-export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | 'capped' | 'thought' | 'asleep'; item?: string; texted?: boolean }> => {
+export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | 'capped' | 'thought' | 'asleep' | 'practice'; item?: string; texted?: boolean }> => {
   const { mind, clock } = deps;
   const cfg = deps.cfg();
   const now = clock.epochMs();
@@ -276,6 +285,10 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   const items = [
     ...candidates(mind.openConcerns(), state, { now, lastHisAt: st.lastHisAt, lastHerAt: st.lastHerAt, patienceMin: cfg.patienceMin, skipCuriosity: deps.curiosity !== undefined }),
     ...(deps.curiosity?.candidates(state, now) ?? []),
+    ...((): Item[] => {
+      const r = deps.room?.candidate(state, now);
+      return r === undefined ? [] : [r];
+    })(),
   ];
   const threshold = 0.35 + 0.3 * (w.thoughts / Math.max(1, cfg.thoughtsPerDay));
   const item = pickItem(items, w, now, threshold);
@@ -284,6 +297,22 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
     await mind.flush();
     void deps.events.emit('mind.wander', { result: 'idle', candidates: items.length });
     return { result: 'idle' };
+  }
+
+  // v13 H6: the quiet room won — she goes and sits there instead of thinking something over
+  if (item.kind === 'practice' && deps.room !== undefined) {
+    w.thoughts += 1;
+    w.habit = { ...w.habit, [item.key]: now };
+    mind.setState({ wander: w });
+    let res: { right: number; of: number } | undefined;
+    try {
+      res = await deps.room.practise(now);
+    } catch (e) {
+      void deps.events.emit('incident.mind_room_failed', { error: e instanceof Error ? e.message : String(e) });
+    }
+    await mind.flush();
+    void deps.events.emit('mind.wander', { result: 'practice', item: item.key, kind: item.kind, ...(res !== undefined ? { right: res.right, of: res.of } : {}) });
+    return { result: 'practice', item: item.key };
   }
 
   // Two memories the item calls up — context for the thought, never its seed.
