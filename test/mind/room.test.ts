@@ -31,7 +31,7 @@ import {
   TELLING_PATTERNS,
   type RoomTrial,
 } from '../../src/mind/index.js';
-import { addMoments, moment, T0, tmpDir } from './helpers.js';
+import { addMoments, moment, settle, T0, tmpDir } from './helpers.js';
 
 const H = 3600_000;
 const NOW = T0 + 12 * H; // a Madrid morning-ish local day
@@ -239,5 +239,32 @@ describe('H6 — a session', () => {
     const trials = readRoom(r.mind.dir);
     expect(trials[0]!.right).toBeUndefined();
     expect(trials.slice(1).every((t) => t.choice === undefined && t.right === undefined)).toBe(true);
+  });
+});
+
+describe('H6 — through the REAL event log (found crashing the inward probe: an undefined "then" in the payload)', () => {
+  it('a session with no memory 2–6 h ago, and a session with nothing askable, both log cleanly', async () => {
+    const { openEventLog } = await import('../../src/events/index.js');
+    const clock = new TestClock(NOW);
+    const emb = makeHashEmbedder();
+    const dir = tmpDir('thea2-room-real-');
+    const mind = openMindStore(join(dir, 'mind'), emb.dim);
+    mind.setState({ lastHisAt: NOW - H });
+    const state = initialAffectState(NOW);
+    state.drives.connection = 0.9;
+    state.drives.novelty = 0.3;
+    const affect = { current: () => state, applyEvents: async () => undefined } as unknown as AffectStore;
+    const events = openEventLog(join(dir, 'events'), { clock });
+    const model = new MockModel({ clock });
+    model.onTask('heartbeat-thought', () => ({ toolCalls: [{ name: 'emit', args: { answers: [{ n: 1, choice: 'him', sure: 'fairly' }] } }] }));
+    const room = makeRoom({ mind, affect, model, embedder: emb, events, clock, rng: makeRng('real'), timeZone: 'Europe/Madrid', feltNow: () => vecToArray(signature(state, COUPLING_BASELINES)) });
+    await expect(room.practise(NOW)).resolves.toBeDefined();
+    const flat = initialAffectState(NOW);
+    const flatRoom = makeRoom({ mind, affect: { current: () => flat, applyEvents: async () => undefined } as unknown as AffectStore, model, embedder: emb, events, clock, rng: makeRng('flat'), timeZone: 'Europe/Madrid', feltNow: () => vecToArray(signature(flat, COUPLING_BASELINES)) });
+    await expect(flatRoom.practise(NOW + 1)).resolves.toBeUndefined();
+    await settle(50); // the room emits without awaiting (a log write must never hold her up)
+    const kinds: string[] = [];
+    for await (const e of events.replay()) kinds.push(`${e.kind}:${String((e.payload as { result?: string }).result)}`);
+    expect(kinds).toEqual(expect.arrayContaining(['mind.room:practised', 'mind.room:nothing']));
   });
 });

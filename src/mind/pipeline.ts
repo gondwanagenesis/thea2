@@ -787,7 +787,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         });
         if (lx.word !== undefined) {
           await writeLexicon(deps.mind.dir, lx.lex);
-          if (lx.newlyVerified) emit('mind.lexicon_verified', { turnId, word: lx.word, count: lx.lex[lx.word]?.count, hit: lx.lex[lx.word]?.hit, family: lx.lex[lx.word]?.family }, turnId);
+          if (lx.newlyVerified) emit('mind.lexicon_verified', { turnId, word: lx.word, count: lx.lex[lx.word]?.count ?? null, hit: lx.lex[lx.word]?.hit ?? null, family: lx.lex[lx.word]?.family ?? null }, turnId);
         }
       } catch (e) {
         emit('incident.mind_lexicon_failed', { turnId, error: asError(e).message }, turnId);

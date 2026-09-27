@@ -300,7 +300,8 @@ export const makeRoom = (d: RoomDeps): Room => {
       const rng = d.rng.fork(`room:${now}`);
       const items = roomItems(quantities(sigNow, fullNow), then !== undefined ? quantities(then.felt.sig, then.felt.full!) : undefined, rng);
       if (items.length === 0) {
-        emit('mind.room', { result: 'nothing', then: then?.id });
+        // (no undefined in an event payload: the canonical log rejects it — found crashing the probe)
+        emit('mind.room', { result: 'nothing', ...(then !== undefined ? { then: then.id } : {}) });
         return undefined;
       }
       const yoked = yokedOf(now);
@@ -410,7 +411,7 @@ export const makeRoom = (d: RoomDeps): Room => {
       } catch (e) {
         emit('incident.mind_feel_failed', { stage: 'room', error: e instanceof Error ? e.message : String(e) });
       }
-      emit('mind.room', { result: 'practised', session, right, of: trials.length, conds: conds.map((c) => (c.kind === 'listen' ? `listen@${c.noise}` : c.kind)), then: then?.id });
+      emit('mind.room', { result: 'practised', session, right, of: trials.length, conds: conds.map((c) => (c.kind === 'listen' ? `listen@${c.noise}` : c.kind)), ...(then !== undefined ? { then: then.id } : {}) });
       return { right, of: trials.length };
     },
   };
