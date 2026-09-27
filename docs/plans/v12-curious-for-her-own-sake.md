@@ -225,6 +225,29 @@ copy of `/var/lib/thea2` before going live). What the probe showed and what chan
    names what she has already looked into (top interests plus the last 14 days of explored
    topics, kept even when a look-in taught her nothing), so she looks past it.
 
+**The first live tick: restlessness became missing him.** Restlessness won her attention and
+she thought "i can feel myself making a story out of the silence… i miss the little
+back-and-forth", then did nothing. The curiosity probe never saw it: it called `pursue()`
+directly, skipping her own choice. `scripts/v12-restless-probe.ts` runs the real wander tick
+N times on the restless item over a copy of her var. Three things pulled every restless
+thought to him: "nothing new has come your way" read as "he hasn't written"; the recall, run on
+an objectless sentence, landed on the nearest, newest talk with him ("2 hours ago: him: …");
+and `look_into` meant "find out more about *it*", with no *it*. Now: restlessness recalls what
+she has found out before (`FOUND_ID_PREFIX` moments) or nothing; the item is a fact about the
+world ("you haven't come across anything new"); the option covers looking with nothing in hand.
+A/B, 10 real ticks each, same drive and state:
+
+| | 03:00 | 11:00 |
+|---|---|---|
+| old (b19ac22) | look 0 · text him 0 · none 10 (all: missing him) | look 0 · text him 5 · none 5 (all: him) |
+| new (1a8d272) | look 1 · text him 0 · none 9 (novelty, braked by the night) | look 7 · text him 0 · none 3 (the world) |
+
+Each drive now has its own outlet: novelty goes to the world, connection keeps "he has been
+quiet since…". For the thesis: the same hunger, in the same state, becomes connection-seeking
+or world-seeking depending on what it can call up. A mind whose whole past is one relationship
+reads every hunger through that relationship until it has other memories. Her findings are
+those memories, so the loop can build on itself.
+
 **A flaky hang that was the harness, not her.** Two group tests (two bots; a stale re-run
 keeps its authority) hung ~1 run in 4 under CPU load. Reproduced with CPU-hog workers: every
 run did exactly one stale re-run and sent 3 messages — no livelock — but simulated time keeps
