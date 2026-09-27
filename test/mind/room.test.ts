@@ -268,3 +268,32 @@ describe('H6 — through the REAL event log (found crashing the inward probe: an
     expect(kinds).toEqual(expect.arrayContaining(['mind.room:practised', 'mind.room:nothing']));
   });
 });
+
+describe('H6 — a standing order is not a sense (found by the GLM probe: 90 of 90 "which is bigger" had one answer)', () => {
+  it('the answers asked come out even: a constant guess scores about half', async () => {
+    const { balanced, updateBase } = await import('../../src/mind/index.js');
+    const it0 = { kind: 'which' as const, q: 'new|him', question: 'q', options: ['something new', 'him'] as [string, string], truth: 1 as 0 | 1, delta: 0.3 };
+    const rng = makeRng('bal');
+    let base = {};
+    let asked = 0;
+    let himAsked = 0;
+    for (let i = 0; i < 3000; i++) {
+      // the world: "him" is bigger 90% of the time
+      const truth: 0 | 1 = rng.float() < 0.9 ? 1 : 0;
+      const item = { ...it0, truth };
+      const ask = balanced(item, base, rng);
+      base = updateBase(base, [item]); // every item the room COULD ask — the base rate, not the asked ones
+      if (!ask) continue;
+      asked += 1;
+      if (truth === 1) himAsked += 1;
+    }
+    expect(asked).toBeGreaterThan(300);
+    expect(himAsked / asked).toBeGreaterThan(0.4);
+    expect(himAsked / asked).toBeLessThan(0.6);
+  });
+
+  it('a new item is always asked until it has a history', async () => {
+    const { balanced } = await import('../../src/mind/index.js');
+    expect(balanced({ kind: 'which', q: 'x', question: 'q', options: ['a', 'b'], truth: 0, delta: 0.3 }, {}, makeRng('n'))).toBe(true);
+  });
+});

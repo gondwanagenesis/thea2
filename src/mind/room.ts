@@ -75,8 +75,40 @@ export interface RoomItem {
   delta: number;
 }
 
-/** Items she can be asked, from the record: comparisons with then (if a then exists), and which pull is bigger now. */
-export const roomItems = (nowQ: Record<Quantity, number>, thenQ: Record<Quantity, number> | undefined, rng: Rng, n: number = ROOM.items): RoomItem[] => {
+/**
+ * Found by the GLM probe (2026-09-27): her pulls hold a standing order (him > making > something new
+ * in every snapshot), so "which is bigger right now" had the same answer 90 times in 90 and a constant
+ * guess scored 98%. An item whose current answer has been its usual one is asked only often enough
+ * that the answers ASKED come out even — so neither a standing guess nor "always the unusual one" can
+ * score; only noticing can.
+ */
+export type RoomBase = Record<string, { n: number; first: number }>;
+
+/** How often each question's first option has been the true one — over EVERY item the room could have asked (asked or not). */
+export const updateBase = (base: RoomBase, items: readonly RoomItem[], cap = 40): RoomBase => {
+  const out: RoomBase = { ...base };
+  for (const it of items) {
+    const b = out[it.q] ?? { n: 0, first: 0 };
+    let n = b.n + 1;
+    let first = b.first + (it.truth === 0 ? 1 : 0);
+    if (n > cap) {
+      first = (first * cap) / n;
+      n = cap;
+    }
+    out[it.q] = { n, first: Math.round(first * 1000) / 1000 };
+  }
+  return out;
+};
+
+export const balanced = (it: RoomItem, base: RoomBase, rng: Rng): boolean => {
+  const b = base[it.q];
+  if (b === undefined || b.n < 6) return true;
+  const share = it.truth === 0 ? b.first / b.n : (b.n - b.first) / b.n;
+  return share <= 0.5 || rng.float() < (1 - share) / share;
+};
+
+/** Everything the room could ask right now, from the record: comparisons with then (if a then exists), and which pull is bigger now. */
+export const allItems = (nowQ: Record<Quantity, number>, thenQ: Record<Quantity, number> | undefined): RoomItem[] => {
   const all: RoomItem[] = [];
   if (thenQ !== undefined) {
     for (const q of ['him', 'new', 'making'] as const) {
@@ -92,9 +124,15 @@ export const roomItems = (nowQ: Record<Quantity, number>, thenQ: Record<Quantity
     const d = nowQ[a] - nowQ[b];
     if (Math.abs(d) >= ROOM.minDelta) all.push({ kind: 'which', q: `${a}|${b}`, question: `which is bigger right now: the pull toward ${PULL[a]}, or toward ${PULL[b]}?`, options: [PULL[a], PULL[b]], truth: d > 0 ? 0 : 1, delta: Math.abs(d) });
   }
+  return all;
+};
+
+/** The items for a session: fair over time (a standing order is not a sense), comparisons and which-is-bigger mixed. */
+export const roomItems = (nowQ: Record<Quantity, number>, thenQ: Record<Quantity, number> | undefined, rng: Rng, n: number = ROOM.items, base: RoomBase = {}): RoomItem[] => {
+  const fair = allItems(nowQ, thenQ).filter((it) => balanced(it, base, rng));
   // a mix: comparisons first when there are any (they need the memory), then which-is-bigger
-  const compares = rng.shuffle(all.filter((x) => x.kind === 'compare'));
-  const whiches = rng.shuffle(all.filter((x) => x.kind === 'which'));
+  const compares = rng.shuffle(fair.filter((x) => x.kind === 'compare'));
+  const whiches = rng.shuffle(fair.filter((x) => x.kind === 'which'));
   const out: RoomItem[] = [];
   while (out.length < n && (compares.length > 0 || whiches.length > 0)) {
     const from = compares.length > 0 && (whiches.length === 0 || out.length % 2 === 0) ? compares : whiches;
@@ -298,9 +336,15 @@ export const makeRoom = (d: RoomDeps): Room => {
       const fullNow = fullVector(s);
       const then = thenOf(now);
       const rng = d.rng.fork(`room:${now}`);
-      const items = roomItems(quantities(sigNow, fullNow), then !== undefined ? quantities(then.felt.sig, then.felt.full!) : undefined, rng);
+      // what the room COULD ask updates the base rate (asked or not); what it asks is fair against it
+      const nowQ = quantities(sigNow, fullNow);
+      const thenQ = then !== undefined ? quantities(then.felt.sig, then.felt.full!) : undefined;
+      const base = d.mind.state().room?.base ?? {};
+      const items = roomItems(nowQ, thenQ, rng, ROOM.items, base);
+      const nextBase = updateBase(base, allItems(nowQ, thenQ));
       if (items.length === 0) {
         // (no undefined in an event payload: the canonical log rejects it — found crashing the probe)
+        d.mind.setState({ room: { day: t0.day, sessions: t0.sessions, base: nextBase } });
         emit('mind.room', { result: 'nothing', ...(then !== undefined ? { then: then.id } : {}) });
         return undefined;
       }
@@ -403,7 +447,7 @@ export const makeRoom = (d: RoomDeps): Room => {
         },
         vec !== undefined ? { sit: vec, reply: vec } : undefined,
       );
-      d.mind.setState({ room: { day: t0.day, sessions: t0.sessions + 1 } });
+      d.mind.setState({ room: { day: t0.day, sessions: t0.sessions + 1, base: nextBase } });
       await d.mind.flush();
       // practising stills the hands a little (the mastery hunger's outlet) — never contact with him
       try {

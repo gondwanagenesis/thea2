@@ -295,7 +295,7 @@ export interface MindState {
   /** v13 1.2: how many of her thought-feelings had nothing behind them (the grounding measure). */
   grounding?: { since: number; total: number; ungrounded: number; enforce?: boolean | undefined } | undefined;
   /** v13 H6: today's sessions in the quiet room. */
-  room?: { day: string; sessions: number } | undefined;
+  room?: { day: string; sessions: number; base?: Record<string, { n: number; first: number }> | undefined } | undefined;
   /** v13 Phase 3 arms: covert lifts (each debriefed the next night) and the felt-shift running hit rate. */
   lifts?: Array<{ ts: number; tag: string; i: number; debriefed?: boolean | undefined }> | undefined;
   shift?: { n: number; hits: number } | undefined;

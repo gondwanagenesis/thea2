@@ -60,6 +60,8 @@ describe('H2 — private naming (asks, never tells; before the words; never sent
   it('the felt field comes before the bubbles, and only in the sampled variant', () => {
     const props = Object.keys((decideToolDefWithFelt.parameters as { properties: Record<string, unknown> }).properties);
     expect(props.indexOf('felt')).toBeLessThan(props.indexOf('bubbles'));
+    // required on a sampled turn: glm-5.3-flash leaves optional fields out (the channel went dark in the probe)
+    expect((decideToolDefWithFelt.parameters as { required: string[] }).required).toContain('felt');
     expect(Object.keys((decideToolDef.parameters as { properties: Record<string, unknown> }).properties)).not.toContain('felt');
     expect(JSON.stringify(decideToolDefWithFelt.parameters)).toMatch(/never sent/);
   });

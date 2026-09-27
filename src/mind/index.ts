@@ -78,7 +78,7 @@ export { readout, readoutWord, engineStamp, dissociations, familyOf, hungerOf, f
 export { scoreClaim, claimFamily, summarize, margins, LEDGER_TOKENS, THERAPY_REGISTER, type Claim, type ClaimScore, type Summary } from './sincerity.js';
 export { listenIn, senseViolations, sinceWords, type SenseOptions, type SenseReading } from './inward.js';
 export { recordUse, verify, verifiedWords, yourWordFor, normWord, readLexicon, writeLexicon, LEXICON, LEXICON_FILE, type Lexicon, type LexEntry, type LexUse } from './lexicon.js';
-export { makeRoom, roomItems, quantities, drawCondition, stateFromFelt, matchChoice, materialOf, nowMaterial, readRoom, roomStats, ROOM, ROOM_FILE, ROOM_KEY, ROOM_NAME, ROOM_SYSTEM, RoomAnswerSchema, type Room, type RoomDeps, type RoomItem, type RoomTrial, type Condition, type Sure } from './room.js';
+export { makeRoom, balanced, updateBase, allItems, type RoomBase, roomItems, quantities, drawCondition, stateFromFelt, matchChoice, materialOf, nowMaterial, readRoom, roomStats, ROOM, ROOM_FILE, ROOM_KEY, ROOM_NAME, ROOM_SYSTEM, RoomAnswerSchema, type Room, type RoomDeps, type RoomItem, type RoomTrial, type Condition, type Sure } from './room.js';
 export {
   appendReport,
   readReports,

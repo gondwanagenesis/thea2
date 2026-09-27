@@ -64,7 +64,9 @@ export const decideToolDefWithFelt: ToolDef = {
       completeness: { ...unit, description: 'how finished the thought is' },
       expect: { type: 'string', description: 'private, never sent: one short line on what you think happens next' },
     },
-    required: ['plan', 'bubbles', 'confidence', 'weight', 'reluctance', 'completeness'],
+    // required on a sampled turn (2026-09-27): glm-5.3-flash leaves an optional field out ("—" in 18 of
+    // 20 probe turns) and the thesis channel went dark; "not sure" is still a full answer
+    required: ['plan', 'felt', 'bubbles', 'confidence', 'weight', 'reluctance', 'completeness'],
   },
 };
 
