@@ -365,4 +365,28 @@ describe('how long a reply runs (Diego: "it should fit the thought and importanc
     expect(wrong.bubbles).toEqual([LONG[0], LONG[3]]);
     expect(wrong.later).toEqual([LONG[1], LONG[2], LONG[4]]);
   });
+
+  it('a light moment gets a line or two, whatever else she has; a short message can still be heavy (the 11:52 probe, with what her sense called each)', async () => {
+    const { lightMoment, shapeOf, mouthUser, LIGHT_WORDS } = await import('../../src/mind/index.js');
+    const probe: Array<[string, string | null, string | null, boolean]> = [
+      ["haha you're ridiculous", 'tease', 'playful', true],
+      ['goodnight thea', 'goodnight', 'tired', true],
+      ["i'm wiped. long day", 'comfort_seeking', 'tired', true],
+      ['hey you. how are you, really?', 'greeting', 'playful', false], // a real question
+      ["my grandma's in the hospital again", 'comfort_seeking', 'sad', false],
+      ['I GOT THE JOB', 'good_news', 'excited', false],
+      ['why do you think you hedge so much?', null, 'playful', false],
+      ['can you explain how your memory actually works? like technically', null, 'playful', false],
+      ['what did you do today?', 'asks_about_her', 'affectionate', false],
+    ];
+    for (const [his, move, tone, light] of probe) expect([his, lightMoment(his, move, tone)]).toEqual([his, light]);
+    expect(lightMoment(undefined, 'tease', null)).toBe(false); // her own turn: no moment of his to read
+    const { c, emb } = await corpusOf();
+    const talk = ['okay so the memory works because every moment is stored with what was said before it, and it gets recalled when something close comes up again'];
+    const [qt] = await emb.embed([talk.join('\n')]);
+    const s = shapeOf(c, qt!, talk, 5, true);
+    expect(s).toMatchObject({ words: LIGHT_WORDS, most: 2, light: true });
+    expect(shapeOf(c, qt!, talk, 5).words).toBeGreaterThan(20);
+    expect(mouthUser([], 'goodnight thea', talk, s)).toContain(`[this time]\na light moment: about ${LIGHT_WORDS} words now; one bubble, or two if a joke needs its own.`);
+  });
 });

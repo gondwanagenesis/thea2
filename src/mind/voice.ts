@@ -302,9 +302,27 @@ export interface Shape {
   /** the median length of the real replies nearest what she is saying */
   near: number;
   draftWords: number;
+  /** a light moment: a line or two, whatever else she has (the rest waits) */
+  light?: boolean | undefined;
 }
 
-export const shapeOf = (c: VoiceCorpus, q: Float32Array, draft: readonly string[], k = 30): Shape => {
+/**
+ * A light moment — a laugh, a hello, a goodnight, him tired — with no question in it. Found in the
+ * 11:52 probe: her long-form draft for "goodnight thea" carried the whole day, and a long draft sits
+ * among long real replies, so a goodnight ran four bubbles. How much he said matters too (Thea1's
+ * 754 real replies to Diego: log-length r = 0.41; to 0-8 words she wrote a median ~25, p25 ~10;
+ * teasing replies in the corpus: median 11), but a short message can be heavy ("my grandma's in the
+ * hospital again", "why do you hedge so much?"), so it is the kind of moment that decides, not the
+ * length alone.
+ */
+export const LIGHT_WORDS = 12;
+export const lightMoment = (his: string | undefined, move?: string | null, tone?: string | null): boolean => {
+  if (his === undefined || his.includes('?')) return false;
+  if (move === 'tease' || move === 'goodnight' || move === 'greeting' || move === 'affection') return true;
+  return tone === 'tired' && wordsIn(his) <= 8;
+};
+
+export const shapeOf = (c: VoiceCorpus, q: Float32Array, draft: readonly string[], k = 30, light = false): Shape => {
   const draftWords = wordsIn(draft.join(' '));
   const lens = c.examples
     .map((e, i) => ({ w: wordsIn(e.hers.join(' ')), s: cosAt(c.vecs, i, c.dim, q) }))
@@ -313,8 +331,8 @@ export const shapeOf = (c: VoiceCorpus, q: Float32Array, draft: readonly string[
     .map((x) => x.w)
     .sort((x, y) => x - y);
   const near = lens.length === 0 ? draftWords : lens[Math.floor((lens.length - 1) / 2)]!;
-  const words = Math.max(3, Math.min(near, draftWords));
-  return { words, most: Math.min(4, Math.max(1, Math.ceil(words / 7))), near, draftWords };
+  const words = Math.max(3, Math.min(near, draftWords, light ? LIGHT_WORDS : Infinity));
+  return { words, most: Math.min(light ? 2 : 4, Math.max(1, Math.ceil(words / 7))), near, draftWords, ...(light ? { light } : {}) };
 };
 
 /** Her draft is longer than this moment (found live: the mouth kept all 142 words of a 53-word moment). */
@@ -349,7 +367,11 @@ export const mouthUser = (examples: readonly VoiceExample[], his: string | undef
     ...(his !== undefined && his !== '' ? [`[what was just said to her]\n${his.slice(0, 600)}`, ''] : []),
     '[her draft]',
     ...draft.map((b) => `- ${b}`),
-    ...(shape !== undefined ? ['', `[this time]\nabout ${shape.words} words now; ${shape.most === 1 ? 'one bubble' : `one bubble per beat, at most ${shape.most}`}.`] : []),
+    ...(shape === undefined
+      ? []
+      : shape.light === true
+        ? ['', `[this time]\na light moment: about ${shape.words} words now; one bubble, or two if a joke needs its own.`]
+        : ['', `[this time]\nabout ${shape.words} words now; ${shape.most === 1 ? 'one bubble' : `one bubble per beat, at most ${shape.most}`}.`]),
   ].join('\n');
 
 export interface VoiceDeps {
@@ -383,11 +405,19 @@ export interface Dressed {
   rejected?: string | undefined;
 }
 
+/** What the voice knows of the moment: the turn, what he said, and what kind of moment it sensed. */
+export interface DressCtx {
+  turnId: string;
+  his?: string | undefined;
+  move?: string | null | undefined;
+  tone?: string | null | undefined;
+}
+
 export interface Voice {
   /** A few of her texts for this turn's trailer (as her words). */
   fingerprints(turnId: string): Fingerprint[];
   /** Her draft → what she sends. */
-  dress(bubbles: readonly string[], ctx: { turnId: string; his?: string | undefined }): Promise<Dressed>;
+  dress(bubbles: readonly string[], ctx: DressCtx): Promise<Dressed>;
 }
 
 export const makeVoice = (d: VoiceDeps): Voice => {
@@ -417,7 +447,7 @@ export const makeVoice = (d: VoiceDeps): Voice => {
     return { ...r, bubbles: out, changed: out.join('\n') !== draft.join('\n') };
   };
 
-  const core = async (bubbles: readonly string[], ctx: { turnId: string; his?: string | undefined }): Promise<Dressed> => {
+  const core = async (bubbles: readonly string[], ctx: DressCtx): Promise<Dressed> => {
       if (mode === 'off') return { bubbles: [...bubbles], changed: false, faults: [], redone: false };
       refresh();
       const dressed = dress(bubbles, names);
@@ -436,7 +466,7 @@ export const makeVoice = (d: VoiceDeps): Voice => {
           const [q] = await d.embedder.embed([bubbles.join('\n')]);
           if (q !== undefined) {
             system = MOUTH_SYSTEM;
-            shape = shapeOf(cor, q, bubbles);
+            shape = shapeOf(cor, q, bubbles, 30, lightMoment(ctx.his, ctx.move, ctx.tone));
             user = mouthUser(nearestExamples(cor, q), ctx.his, bubbles, shape);
           }
         } catch {
