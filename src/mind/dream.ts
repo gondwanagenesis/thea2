@@ -231,7 +231,7 @@ export const dreamPool = (i: PoolInput): DreamElement[] => {
   // still with her — a feeling she's carrying, by its cause (never a dream's own cause)
   if (rng.float() < 0.5) {
     const causes = Object.entries(i.affect.causes)
-      .filter(([, c]) => c !== undefined && now - c.t < DAY && !/^(the dream:|something in the night)/.test(c.text))
+      .filter(([, c]) => c !== undefined && c.text.trim() !== '' && now - c.t < DAY && !/^(the dream:|something in the night)/.test(c.text))
       .sort((a, b) => (b[1]?.i ?? 0) - (a[1]?.i ?? 0));
     const top = causes[0];
     if (top !== undefined && top[1] !== undefined) add('still', `cause:${top[0]}`, `something still with you: ${clipText(top[1].text, 140)}`);

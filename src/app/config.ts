@@ -132,6 +132,10 @@ export interface MindConfig {
   reappraiseGrounding: 'auto' | 'measure' | 'enforce';
   /** v13 introspection H6: the quiet room (practice, fed by the mastery hunger). */
   room: 'on' | 'off';
+  /** v13 Phase 3 arms — each off until Diego opts in (each perturbs what Phase 2 measures). */
+  feltShift: 'on' | 'off';
+  lifts: 'on' | 'off';
+  listener: 'on' | 'off';
 }
 
 export interface ConfigIssue {
@@ -371,6 +375,9 @@ const configSchema = z.strictObject({
       namingGapMin: z.number().int().min(10).max(600).default(90),
       reappraiseGrounding: z.enum(['auto', 'measure', 'enforce']).default('auto'),
       room: z.enum(['on', 'off']).default('on'),
+      feltShift: z.enum(['on', 'off']).default('off'),
+      lifts: z.enum(['on', 'off']).default('off'),
+      listener: z.enum(['on', 'off']).default('off'),
     })
     .optional(),
   /** v9 body (plan thea2-v9-parity.md). Present ⇒ senses + tools are wired. */

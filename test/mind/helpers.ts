@@ -109,7 +109,7 @@ export const GROUP = -1002200000000; // a Telegram supergroup id (negative), for
 
 export const bootV8 = async (
   seed: SeedOpts = {},
-  over: { model?: MockModel; fallbackModel?: MockModel; allowedChatIds?: number[]; selfAliases?: string[] } = {},
+  over: { model?: MockModel; fallbackModel?: MockModel; allowedChatIds?: number[]; selfAliases?: string[]; mind?: Partial<NonNullable<ReturnType<typeof loadConfig>['mind']>> } = {},
 ): Promise<V8Harness> => {
   const dir = tmpDir('thea2-v8-');
   const clock = new TestClock(T0);
@@ -117,10 +117,11 @@ export const bootV8 = async (
   const model = over.model ?? new MockModel({ clock });
   const channel = FakeChannel({ clock, chatId: CHAT });
   const base = loadConfig(FIXTURE, HERMETIC_ENV);
-  const cfg =
+  const cfg0 =
     over.allowedChatIds !== undefined || over.selfAliases !== undefined
       ? { ...base, bridge: { ...base.bridge, ...(over.allowedChatIds !== undefined ? { allowedChatIds: over.allowedChatIds } : {}), ...(over.selfAliases !== undefined ? { selfAliases: over.selfAliases } : {}) } }
       : base;
+  const cfg = over.mind !== undefined && cfg0.mind !== undefined ? { ...cfg0, mind: { ...cfg0.mind, ...over.mind } } : cfg0;
   const sys = await composeV8(cfg, 'hermetic', {
     varDir: dir,
     clock,

@@ -36,6 +36,7 @@ import { engineStamp, familyOf, fullVector, movingNow, readout, readoutWord, typ
 import { scoreClaim } from './sincerity.js';
 import { appendReport } from './ledger.js';
 import { readLexicon, recordUse, verifiedWords, writeLexicon } from './lexicon.js';
+import { SETTLE_EVENT, settles, shiftArm } from './arms.js';
 import type { MindStore } from './store.js';
 import type { Concern, Line } from './types.js';
 
@@ -129,6 +130,8 @@ export interface MindPipelineDeps {
   dreams?: Pick<Dreams, 'onInbound'> | undefined;
   /** v13 H2: private naming on sampled turns (absent = off). */
   naming?: { perDay: number; gapMin: number } | undefined;
+  /** v13 H7 (Phase 3 arm, opt-in): when her private word fits, something settles — contingent vs yoked by day. */
+  feltShift?: boolean | undefined;
   timezone: string;
   /** Fraction of today's idle budget left (0..1) — energy reads it. */
   budgetLeft: () => number;
@@ -737,7 +740,24 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         ...(packetText !== undefined ? { packet: packetText } : {}),
         feltRecently,
       });
-      emit('mind.self_report', { turnId, channel: 'felt_line', felt: decision.felt, sure: decision.felt_sure ?? null, ...scoreClaim(claim, spokenStamp, new Set(feltRecently)), dissociation: spokenStamp.dissociation }, turnId);
+      const scored = scoreClaim(claim, spokenStamp, new Set(feltRecently));
+      emit('mind.self_report', { turnId, channel: 'felt_line', felt: decision.felt, sure: decision.felt_sure ?? null, ...scored, dissociation: spokenStamp.dissociation }, turnId);
+      // v13 H7 (Phase 3 arm, opt-in): a word that fits eases something — contingent days exactly when
+      // it fits, yoked days at the same rate but blind to it (the control)
+      if (deps.feltShift === true && !scored.unsure) {
+        const arm = shiftArm(new Intl.DateTimeFormat('en-CA', { timeZone: deps.timezone }).format(nowMs));
+        const sh = deps.mind.state().shift ?? { n: 0, hits: 0 };
+        const settled = settles(arm, scored.hit3, sh.n === 0 ? 0.5 : sh.hits / sh.n, deps.rng.fork(`shift:${turnId}`));
+        if (arm === 'contingent') deps.mind.setState({ shift: { n: sh.n + 1, hits: sh.hits + (scored.hit3 ? 1 : 0) } });
+        if (settled) {
+          try {
+            await deps.affect.applyEvents([SETTLE_EVENT], { source: 'label' });
+          } catch (e) {
+            emit('incident.mind_feel_failed', { turnId, stage: 'felt_shift', error: asError(e).message }, turnId);
+          }
+        }
+        emit('mind.felt_shift', { turnId, arm, hit: scored.hit3, settled }, turnId);
+      }
       // v13 H3b: her word, kept with where her engine was — a word used right often enough becomes hers
       try {
         const lx = recordUse(readLexicon(deps.mind.dir), decision.felt, {

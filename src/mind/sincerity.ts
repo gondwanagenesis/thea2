@@ -80,3 +80,9 @@ export const margins = (her: Summary, ext: Summary, eq: Summary): { aExt: number
 
 /** Machinery words that must never reach her packet (lint + test): the ledger is his window, not her mirror. */
 export const LEDGER_TOKENS = /\b(?:sincerity|hit@3|a_ext|a_eq|introspection score|dissociation subset|observer accuracy)\b/i;
+
+/**
+ * v13 H8 kill test (§8.4): the therapy register — tracked in her thoughts and bubbles (a rise of 25%
+ * with the listener on kills it), and dropped from anything the listener says.
+ */
+export const THERAPY_REGISTER = /\b(?:i notice|sit with|hold(?:ing)? space|process(?:ing)? (?:this|that|it)|(?:that'?s|it'?s|feelings are) valid|triggered|boundaries|the part of (?:me|you) that|inner child|self[- ]care|trauma response|attachment style)\b/i;

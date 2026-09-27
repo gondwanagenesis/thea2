@@ -296,6 +296,9 @@ export interface MindState {
   grounding?: { since: number; total: number; ungrounded: number; enforce?: boolean | undefined } | undefined;
   /** v13 H6: today's sessions in the quiet room. */
   room?: { day: string; sessions: number } | undefined;
+  /** v13 Phase 3 arms: covert lifts (each debriefed the next night) and the felt-shift running hit rate. */
+  lifts?: Array<{ ts: number; tag: string; i: number; debriefed?: boolean | undefined }> | undefined;
+  shift?: { n: number; hits: number } | undefined;
   lastSleepDay?: string | undefined;
   /** Epoch ms of her last sent message and his last message (for silence and gaps). */
   lastHerAt?: number | undefined;

@@ -26,6 +26,7 @@ import { handsTools, localShell, openFence, type Fence, type ShellRunner } from 
 import { announceWorkshop, brokerWorkshop, workshopTools, type WorkshopCall } from './workshop.js';
 import { lifeTools, worldRoom } from './life.js';
 import { inwardTools } from './inward.js';
+import { listenerTools } from './listener.js';
 import { makeRng } from '../kernel/index.js';
 import { browserTools } from './browser.js';
 import { diegoLately } from './nightly.js';
@@ -108,6 +109,8 @@ export interface BodyDeps {
    * (<var>/run/workshop.sock) — and no workshop tool at all when it is not there.
    */
   workshopCall?: WorkshopCall | undefined;
+  /** v13 H8 (Phase 3 control arm, opt-in): the listener she may sit with. */
+  listener?: boolean | undefined;
 }
 
 /** Bound after the pipeline exists (it needs the body first). */
@@ -276,6 +279,8 @@ export const makeBody = (d: BodyDeps): Body => {
       ];
       tools.push(...lifeTools({ house, clock: d.clock, affect: d.affect, presentKey: d.cfg.presentKey }));
       // v13 H5: the nerve — a sense she can consult (material, no names), discovered, never announced
+      // v13 H8 (Phase 3 control arm, opt-in): someone to talk the day through with — expected to fail
+      if (d.listener === true && d.model !== undefined) tools.push(...listenerTools({ model: d.model, house, clock: d.clock, events: d.events, timeZone: d.timeZone }));
       if (d.affect !== undefined) tools.push(...inwardTools({ affect: d.affect, house, clock: d.clock, rng: (d.rng ?? makeRng('inward')).fork('inward'), events: d.events, timeZone: d.timeZone }));
       if (d.browserUrl !== undefined) tools.push(...browserTools(d.browserUrl, d.fetchImpl));
       // run_code talks to the thea2-exec broker's socket beside her var (deploy/exec-broker.mjs).

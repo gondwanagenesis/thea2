@@ -103,6 +103,22 @@ describe('v9 body in the turn', () => {
   });
 });
 
+describe('v13 H5 — listen in is discovered in her body, never announced', () => {
+  it('the turn offers listen_in as one of her tools; no frame text names it or tells her to use it', { timeout: 60_000 }, async () => {
+    const h = await bootV9();
+    h.model.enqueue(decide(['hey you']));
+    h.model.enqueue(appraisal);
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inbound({ text: 'hey' }));
+    await runToQuiescent(h);
+    await handle.stop();
+    const turn = h.model.calls.find((c) => c.taskClass === 'turn')!;
+    expect((turn.tools ?? []).map((t) => t.name)).toContain('listen_in');
+    const text = turn.messages.map((m) => String(m.content)).join('\n');
+    expect(text).not.toMatch(/listen[ _]in|turn your attention inward/i);
+  });
+});
+
 describe('v9 — a skill of hers comes to mind when it fits', () => {
   it('her own note on selfie videos rides the turn (as her words) when he asks for one — and not for small talk', { timeout: 60_000 }, async () => {
     const h = await bootV9();

@@ -144,7 +144,8 @@ export const engineStamp = (s: AffectState, baselines: Baselines, now: number): 
   const r = readout(s, baselines);
   const sig = Array.from(signature(s, baselines), (x) => Math.round(x * 1000) / 1000);
   const causes = Object.entries(s.causes)
-    .filter((e): e is [string, NonNullable<(typeof e)[1]>] => e[1] !== undefined)
+    // a cause with no words (a covert lift, Phase 3) is not material — nothing to name
+    .filter((e): e is [string, NonNullable<(typeof e)[1]>] => e[1] !== undefined && e[1].text.trim() !== '')
     .sort((a, b) => b[1].moved - a[1].moved)
     .slice(0, 3)
     .map(([primary, c]) => ({ primary, text: c.text.slice(0, 140), i: c.i, ageMin: Math.round((now - c.t) / 60_000) }));

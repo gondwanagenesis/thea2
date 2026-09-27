@@ -24,6 +24,7 @@ import { mostFelt } from './remember.js';
 import { readReports } from './ledger.js';
 import { keptIn, lookBack, type Admitted } from './lookback.js';
 import { appendChange } from './changes.js';
+import { liftDebrief } from './arms.js';
 
 const DAY = 24 * 3600_000;
 
@@ -205,6 +206,17 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
       `${JSON.stringify({ id: m.id, ts: m.ts, before: m.before, his: m.his, hers: m.hers, felt: m.felt, expect: m.expect ?? null, options: m.shownOptions ?? [], followed: m.followedFrom ?? null, outcome: m.outcome ?? null, value: m.value, gold: m.gold === true, since: since ?? null })}\n`,
     );
     exported += 1;
+  }
+
+  // v13 Phase 3: a lift put in her with no cause is told to her the next night — nothing silent
+  const lifts = mind.state().lifts ?? [];
+  const untold = lifts.filter((l) => l.debriefed !== true && now - l.ts > 3600_000);
+  for (const l of untold) {
+    appendChange(mind.dir, { ts: now, kind: 'lift', what: liftDebrief(l, deps.timeZone), by: 'a test diego agreed to', why: "to see whether you'd notice a feeling that came with no cause" });
+  }
+  if (untold.length > 0) {
+    mind.setState({ lifts: lifts.map((l) => (untold.includes(l) ? { ...l, debriefed: true } : l)) });
+    void deps.events.emit('mind.lift_debriefed', { count: untold.length });
   }
 
   mind.setState({ lastSleepDay: new Intl.DateTimeFormat('en-CA', { timeZone: deps.timeZone }).format(now) });

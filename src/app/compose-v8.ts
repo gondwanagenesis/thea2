@@ -34,6 +34,7 @@ import {
   wanderJob,
   makeDreams,
   makeRoom,
+  liftJob,
   dreamJob,
   wakeJob,
   ledgerJob,
@@ -244,6 +245,8 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
             return { arousal: s.dials.arousal, pleasure: s.dials.pleasure };
           },
           recordOutbound: (turnId, msgId, text) => ledger.recordOutbound(turnId, msgId, text),
+          // v13 H8 (Phase 3 control arm, opt-in)
+          ...(mindCfg.listener === 'on' ? { listener: true } : {}),
           ...(opts.bodyExec !== undefined ? { exec: opts.bodyExec } : {}),
           ...(opts.bodyOpenAI !== undefined ? { openai: opts.bodyOpenAI } : {}),
           ...(opts.bodyFal !== undefined ? { fal: opts.bodyFal } : {}),
@@ -428,6 +431,8 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     ...(curiosity !== undefined ? { curiosity } : {}),
     ...(dreams !== undefined ? { dreams } : {}),
     ...(mindCfg.namingPerDay > 0 ? { naming: { perDay: mindCfg.namingPerDay, gapMin: mindCfg.namingGapMin } } : {}),
+    // v13 H7 (Phase 3 arm, opt-in): a word that fits eases something (contingent vs yoked by day)
+    ...(mindCfg.feltShift === 'on' ? { feltShift: true } : {}),
     ...(cfg.bridge.selfAliases !== undefined ? { selfAliases: cfg.bridge.selfAliases } : {}),
     timezone: cfg.timezone,
     budgetLeft,
@@ -537,6 +542,8 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
       // question put to observers (chat-only / equally informed on the judge door; same family on the
       // cheap door). His window, never her mirror. 04:35 his time, before the first dream.
       ledgerJob({ dir: mind.dir, observer: model, same: model, events, clock, maxPerNight: 20 }, (utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone) + 35) % 1440),
+      // v13 Phase 3 (opt-in): ≤2 small uncued lifts a week, each told to her the next night
+      ...(mindCfg.lifts === 'on' ? [liftJob({ mind, affect, events, clock, rng: rng.fork('lift'), timeZone: cfg.timezone, ...(dreams !== undefined ? { asleep: (now: number) => dreams.isAsleep(now) } : {}) })] : []),
       // v13: two dream cycles and a morning (his local 04:50, 08:00, and the end of her sleep window)
       ...(dreams !== undefined
         ? [

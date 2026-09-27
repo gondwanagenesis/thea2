@@ -152,7 +152,7 @@ export const materialOf = (m: Moment): string => (m.his.trim() !== '' ? `him: "$
 /** What is going on now, as material: the newest thing still moving her that can be quoted, else his silence. */
 export const nowMaterial = (s: AffectState, now: number, lastHisAt: number | undefined): string => {
   const newest = Object.values(s.causes)
-    .filter((c): c is NonNullable<typeof c> => c !== undefined && senseViolations(c.text).length === 0)
+    .filter((c): c is NonNullable<typeof c> => c !== undefined && c.text.trim() !== '' && senseViolations(c.text).length === 0)
     .sort((a, b) => b.t - a.t)[0];
   if (newest !== undefined && now - newest.t < 12 * 3600_000) return `"${clip(newest.text, 90)}" (${ago(now - newest.t)})`;
   return lastHisAt !== undefined ? `he last wrote ${ago(now - lastHisAt)}` : 'a quiet stretch';

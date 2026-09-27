@@ -80,7 +80,7 @@ export interface OutcomePrevPayload { turnId: string; sign: -1 | 0 | 1; evidence
 export interface AffectSnapshotPayload { state: unknown /* AffectState */ }
 
 /** M05 — a tag outside EMOTION_TAGS hit the store boundary: rejected, state untouched. */
-export interface UnknownTagPayload { tag: string; source: 'appraisal' | 'import' | 'other' }
+export interface UnknownTagPayload { tag: string; source: 'appraisal' | 'import' | 'other' | 'label' | 'lift' }
 
 /** M08 — an orphaned derived entry + its file were removed (git history is recovery). */
 export interface OrphanGcPayload { id: string; deriveKey: string; generator: string }

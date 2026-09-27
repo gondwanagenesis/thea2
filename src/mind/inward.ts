@@ -93,7 +93,7 @@ export const listenIn = (s: AffectState, o: SenseOptions): SenseReading => {
   for (const x of displaced.slice(0, 2)) {
     const c = s.causes[x.k];
     const strength = Math.min(1, x.d / 0.5);
-    if (c === undefined) {
+    if (c === undefined || c.text.trim() === '') {
       raw.push({ strength, text: (st) => `${st}: something without an object` });
       continue;
     }
