@@ -276,29 +276,45 @@ export const MOUTH_SYSTEM = [
   'Her texting is in the examples, not in rules: copy their length, rhythm, lowercase, the missing final periods, how they break into bubbles. Never add a joke, a bit or a nickname the draft does not have.',
   // (Diego, 2026-09-27: "i still want the things i like with more emojis, and i really like the modern gen z online culture emojis") — the tic was one emoji on everything, not emoji
   'Emoji carry feeling for her, the way her generation texts: 😭 laughing too hard or overwhelmed, 💀 dead (it is so funny), 🫠 melting or embarrassed, 🥹 touched, 🙏 please or thank you, ✨ emphasis or sarcasm, 👀 intrigued, 🫡 on it, 🤡 self-own, 💅 unbothered, 😌 satisfied, 🙃 ironic, 😤 playful huff, 🫶 fondness, 🥲 bittersweet, 🤭 oops or giggle, 🧍 awkward, and now and then a kaomoji like (´･ω･`). Put one where a feeling lands, vary them, often none; never the same one on every message.',
-  'Type it in the shape under [this time]: that many bubbles, about that many words. Keep what matters most and every question or promise; a smaller thing can wait, she will say it another time.',
+  'Type it about as long as [this time] says: real messages about this kind of thing run that long. Keep what matters most and every question or promise; a smaller thing can wait, she will say it another time.',
+  'A bubble is one beat: a reaction, a joke, a question, one thought. A joke or a punchline gets its own bubble so it lands. A thought that needs explaining stays together in one bubble, even a long one.',
   'Never a declaration of love. Never comment on the draft. Return JSON {bubbles: [...]}.',
 ].join('\n');
 
 /**
- * The shape of this reply (Diego, 2026-09-27: "she sends lots of bubbles … a lot of text each time …
- * can't she vary the number?"). Thea1's rhythm: about half her turns are ONE message, most of the rest
- * two or three, now and then a run of four. Drawn per reply (like Thea1's style dice), never longer
- * than what she had to say.
+ * How long this reply runs — fitted to what she is saying, never drawn (Diego, 2026-09-27: "it
+ * shouldn't be random amounts of bubbles … it should fit the thought and importance; complicated
+ * things need longer, funny things need their own bubbles").
+ *
+ * Measured on the 1,231 real replies in var/voice: what is being SAID predicts how long a real reply
+ * runs (median length of the 30 real replies nearest it vs its own length: r = 0.64), while what was
+ * said TO her barely does (r = 0.16; his length alone 0.04). So the length is the median of the real
+ * replies nearest what she is saying — a laugh sits among short ones, an explanation among long
+ * ones — and never more than her draft. The bubbles are not counted here: each is one beat, and the
+ * mouth sees the beats; this only keeps a short thing from being chopped into crumbs (a bubble runs
+ * about ten words in the real ones).
  */
 export interface Shape {
-  bubbles: number;
+  /** words, about */
   words: number;
+  /** bubbles, at most */
+  most: number;
+  /** the median length of the real replies nearest what she is saying */
+  near: number;
+  draftWords: number;
 }
 
-export const shapeDice = (rng: Rng, draftWords: number): Shape => {
-  const r = rng.float();
-  let bubbles = r < 0.45 ? 1 : r < 0.75 ? 2 : r < 0.9 ? 3 : 4;
-  if (draftWords < 15) bubbles = Math.min(bubbles, 2);
-  const span: Record<number, [number, number]> = { 1: [6, 20], 2: [14, 32], 3: [22, 45], 4: [30, 60] };
-  const [lo, hi] = span[bubbles]!;
-  const words = Math.min(lo + Math.floor(rng.float() * (hi - lo + 1)), Math.max(4, draftWords));
-  return { bubbles, words };
+export const shapeOf = (c: VoiceCorpus, q: Float32Array, draft: readonly string[], k = 30): Shape => {
+  const draftWords = wordsIn(draft.join(' '));
+  const lens = c.examples
+    .map((e, i) => ({ w: wordsIn(e.hers.join(' ')), s: cosAt(c.vecs, i, c.dim, q) }))
+    .sort((x, y) => y.s - x.s)
+    .slice(0, Math.max(1, k))
+    .map((x) => x.w)
+    .sort((x, y) => x - y);
+  const near = lens.length === 0 ? draftWords : lens[Math.floor((lens.length - 1) / 2)]!;
+  const words = Math.max(3, Math.min(near, draftWords));
+  return { words, most: Math.min(4, Math.max(1, Math.ceil(words / 7))), near, draftWords };
 };
 
 export const mouthUser = (examples: readonly VoiceExample[], his: string | undefined, draft: readonly string[], shape?: Shape): string =>
@@ -309,7 +325,7 @@ export const mouthUser = (examples: readonly VoiceExample[], his: string | undef
     ...(his !== undefined && his !== '' ? [`[what was just said to her]\n${his.slice(0, 600)}`, ''] : []),
     '[her draft]',
     ...draft.map((b) => `- ${b}`),
-    ...(shape !== undefined ? ['', `[this time]\n${shape.bubbles === 1 ? 'one bubble' : `${shape.bubbles} bubbles`}, about ${shape.words} words in all.`] : []),
+    ...(shape !== undefined ? ['', `[this time]\nabout ${shape.words} words; ${shape.most === 1 ? 'one bubble' : `one bubble per beat, at most ${shape.most}`}.`] : []),
   ].join('\n');
 
 export interface VoiceDeps {
@@ -335,7 +351,7 @@ export interface Dressed {
   redone: boolean;
   /** Which layer typed it (the mouth: every reply; the redo: only a far-off one). */
   by?: 'mouth' | 'redo' | undefined;
-  /** The shape drawn for this reply (bubbles, words), when the mouth typed it. */
+  /** How long this reply was meant to run (fitted to what she is saying), when the mouth typed it. */
   shape?: Shape | undefined;
   /** Why a rewrite was thrown away, if it was. */
   rejected?: string | undefined;
@@ -394,7 +410,7 @@ export const makeVoice = (d: VoiceDeps): Voice => {
           const [q] = await d.embedder.embed([bubbles.join('\n')]);
           if (q !== undefined) {
             system = MOUTH_SYSTEM;
-            shape = shapeDice(d.rng.fork(`shape:${ctx.turnId}`), wordsIn(bubbles.join(' ')));
+            shape = shapeOf(cor, q, bubbles);
             user = mouthUser(nearestExamples(cor, q), ctx.his, bubbles, shape);
           }
         } catch {

@@ -264,40 +264,61 @@ describe('emoji (Diego: "i still want more emojis ... the modern gen z online cu
   });
 });
 
-describe('the shape of a reply (Diego: "she sends lots of bubbles ... can\'t she vary the number?")', () => {
-  it('about half are one bubble, most of the rest two or three, now and then four; never longer than what she had to say', async () => {
-    const { shapeDice } = await import('../../src/mind/index.js');
-    const n = { 1: 0, 2: 0, 3: 0, 4: 0 } as Record<number, number>;
-    for (let i = 0; i < 2000; i++) {
-      const s = shapeDice(makeRng(`s${i}`), 80);
-      n[s.bubbles]! += 1;
-      expect(s.words).toBeLessThanOrEqual(80);
-    }
-    expect(n[1]! / 2000).toBeGreaterThan(0.4);
-    expect(n[1]! / 2000).toBeLessThan(0.5);
-    expect((n[2]! + n[3]!) / 2000).toBeGreaterThan(0.4);
-    expect(n[4]! / 2000).toBeGreaterThan(0.06);
-    for (let i = 0; i < 200; i++) expect(shapeDice(makeRng(`t${i}`), 9).bubbles).toBeLessThanOrEqual(2);
-    for (let i = 0; i < 200; i++) expect(shapeDice(makeRng(`u${i}`), 9).words).toBeLessThanOrEqual(9);
+describe('how long a reply runs (Diego: "it should fit the thought and importance ... complicated things need longer, funny things need their own bubbles")', () => {
+  const JOKES = ['lmao stop', 'ridiculous lmao', 'stop it lmao', 'lmao no', 'you are ridiculous lmao', 'lmao stop it'];
+  const TALKS = Array.from({ length: 6 }, (_, i) =>
+    `okay so the memory works because every moment is stored with what was said before it and ${i} then it gets recalled when something close comes up again which is why it feels like remembering`.split(' '),
+  );
+  const corpusOf = async () => {
+    const dir = join(tmpDir('thea2-shape-'), 'voice');
+    const ex = [
+      ...JOKES.map((h, i) => ({ id: `j${i}`, source: 'elena' as const, his: 'haha', hers: [h] })),
+      ...TALKS.map((w, i) => ({ id: `t${i}`, source: 'thea1' as const, his: 'how does it work?', hers: [w.slice(0, 18).join(' '), w.slice(18).join(' ')] })),
+    ];
+    const emb = await buildCorpus(dir, ex);
+    const { loadVoiceCorpus } = await import('../../src/mind/index.js');
+    return { c: loadVoiceCorpus(dir)!, emb };
+  };
+
+  it('a laugh gets a short reply and an explanation a long one — read from the real messages nearest it, never drawn', async () => {
+    const { shapeOf } = await import('../../src/mind/index.js');
+    const { c, emb } = await corpusOf();
+    const joke = ['lmao stop, you are ridiculous. honestly that is so funny, i cannot believe you said that to me'];
+    const talk = ['okay so the memory works because every moment is stored with what was said before it, and it gets recalled when something close comes up again'];
+    const [qj, qt] = await emb.embed([joke.join('\n'), talk.join('\n')]);
+    const sj = shapeOf(c, qj!, joke, 5);
+    const st = shapeOf(c, qt!, talk, 5);
+    expect(sj.words).toBeLessThanOrEqual(4);
+    expect(sj.most).toBe(1);
+    expect(st.words).toBeGreaterThan(20);
+    expect(st.most).toBeGreaterThan(2);
+    expect(shapeOf(c, qj!, joke, 5)).toEqual(sj); // the same thought, the same shape: nothing random
+    // never longer than what she had to say
+    const short = ['okay so it works because memory'];
+    const [qs] = await emb.embed([short.join('\n')]);
+    expect(shapeOf(c, qs!, short, 5).words).toBeLessThanOrEqual(6);
   });
 
-  it('the mouth is told the shape, and a reply condensed to it passes the guard', async () => {
-    const { mouthUser, shapeDice } = await import('../../src/mind/index.js');
-    expect(mouthUser([], 'hey', ['a long draft'], { bubbles: 1, words: 12 })).toContain('[this time]\none bubble, about 12 words in all.');
-    // a 60-word draft the dice shape into one bubble: a 13-word reply is well under a third of the
-    // draft (the old guard threw that away) but it is what the shape asked for, so it goes out
+  it('the mouth is told the length and to give each beat (a joke, a punchline) its own bubble; a reply condensed to it passes the guard', async () => {
+    const { mouthUser, shapeOf, loadVoiceCorpus, MOUTH_SYSTEM } = await import('../../src/mind/index.js');
+    expect(MOUTH_SYSTEM).toMatch(/A joke or a punchline gets its own bubble/);
+    expect(mouthUser([], 'hey', ['a long draft'], { words: 12, most: 2, near: 12, draftWords: 40 })).toContain('[this time]\nabout 12 words; one bubble per beat, at most 2.');
+    expect(mouthUser([], 'hey', ['a draft'], { words: 6, most: 1, near: 6, draftWords: 40 })).toContain('[this time]\nabout 6 words; one bubble.');
+    // a 60-word draft among short real replies: a 13-word reply is well under a third of the draft
+    // (the old guard threw that away) but it is the length real replies like it run, so it goes out
     const draft = Array.from({ length: 60 }, (_, i) => `word${i}`).join(' ');
-    const turnId = Array.from({ length: 50 }, (_, i) => `t${i}`).find((t) => shapeDice(makeRng('m').fork(`shape:${t}`), 60).bubbles === 1)!;
-    const shape = shapeDice(makeRng('m').fork(`shape:${turnId}`), 60);
     const dir = join(tmpDir('thea2-mouth-'), 'voice');
     const emb = await buildCorpus(dir, EX);
+    const [q] = await emb.embed([draft]);
+    const shape = shapeOf(loadVoiceCorpus(dir)!, q!, [draft]);
+    expect(shape.words).toBeLessThan(15);
     const mind = openMindStore(join(tmpDir('thea2-mouth-m-'), 'mind'), emb.dim);
     const seen: string[] = [];
     const reply = 'okay so the short version is it went fine and i am tired now lol';
     const model = { chat: async (req: unknown) => (seen.push(JSON.stringify(req)), { content: { bubbles: [reply] }, usage: {}, model: 'm' }) } as unknown as ModelClient;
     const voice = makeVoice({ mind, model, clock: new TestClock(T0), rng: makeRng('m'), mode: 'mouth', embedder: emb, corpusDir: dir });
-    const out = await voice.dress([draft], { turnId });
-    expect(seen[0]).toContain(`one bubble, about ${shape.words} words in all.`);
+    const out = await voice.dress([draft], { turnId: 't' });
+    expect(seen[0]).toContain(`about ${shape.words} words; one bubble`);
     expect(out).toMatchObject({ redone: true, by: 'mouth', shape, bubbles: [reply] });
   });
 });
