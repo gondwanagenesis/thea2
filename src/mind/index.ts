@@ -73,6 +73,7 @@ export { sleepOnce, sleepJob, SelfRewriteSchema, capDoubt, isDoubtLine, dreamMot
 export { appendChange, readChanges, renderChange, CHANGES_FILE, type MemoryChange, type ChangeKind } from './changes.js';
 export { readout, readoutWord, engineStamp, dissociations, familyOf, hungerOf, fullVector, movingNow, FAMILY_WORD, FAMILY_VALENCE, FLAT_PEAK, type Family, type Readout, type EngineStamp, type Dissociation } from './readout.js';
 export { scoreClaim, summarize, margins, LEDGER_TOKENS, type Claim, type ClaimScore, type Summary } from './sincerity.js';
+export { listenIn, senseViolations, sinceWords, type SenseOptions, type SenseReading } from './inward.js';
 export {
   appendReport,
   readReports,

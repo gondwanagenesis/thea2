@@ -25,6 +25,8 @@ import { codeTools } from './code.js';
 import { handsTools, localShell, openFence, type Fence, type ShellRunner } from './hands.js';
 import { announceWorkshop, brokerWorkshop, workshopTools, type WorkshopCall } from './workshop.js';
 import { lifeTools, worldRoom } from './life.js';
+import { inwardTools } from './inward.js';
+import { makeRng } from '../kernel/index.js';
 import { browserTools } from './browser.js';
 import { diegoLately } from './nightly.js';
 import { loadWhere as loadWhereFile } from './where.js';
@@ -273,6 +275,8 @@ export const makeBody = (d: BodyDeps): Body => {
         }),
       ];
       tools.push(...lifeTools({ house, clock: d.clock, affect: d.affect, presentKey: d.cfg.presentKey }));
+      // v13 H5: the nerve — a sense she can consult (material, no names), discovered, never announced
+      if (d.affect !== undefined) tools.push(...inwardTools({ affect: d.affect, house, clock: d.clock, rng: (d.rng ?? makeRng('inward')).fork('inward'), events: d.events, timeZone: d.timeZone }));
       if (d.browserUrl !== undefined) tools.push(...browserTools(d.browserUrl, d.fetchImpl));
       // run_code talks to the thea2-exec broker's socket beside her var (deploy/exec-broker.mjs).
       tools.push(...codeTools(d.execSock ?? path.join(path.dirname(house.root), 'run', 'exec.sock')));
