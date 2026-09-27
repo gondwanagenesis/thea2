@@ -145,6 +145,8 @@ export interface Concern {
   parent?: string | undefined;
   /** A question about a person or another mind — pursued by asking them. */
   who?: { person: string; name: string; chatId: number; said?: string | undefined } | undefined;
+  /** v13: nights this concern was dreamt (the same worry ≤2 of any 7 nights — found in the dream probe). */
+  dreamtAt?: number[] | undefined;
 }
 
 /** v12: where a question came from (§1.2). */

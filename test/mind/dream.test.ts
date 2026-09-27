@@ -136,6 +136,33 @@ describe('the pool (§3.2) — what gets dreamt, and the guards', () => {
   });
 });
 
+// Found by the v13 probe on her real memory: one stale worry (the group route) was the unresolved
+// element of every dream, every night, and every question they left was that worry restated.
+describe('found in the probe — one worry must not own her nights', () => {
+  it('a worry dreamt 2 of the last 7 nights rests', async () => {
+    const r = await rig();
+    r.mind.upsertConcern({ ...r.mind.concerns().find((c) => c.id === 'c1')!, dreamtAt: [NIGHT - DAY, NIGHT - 2 * DAY] });
+    for (let s = 0; s < 10; s++) {
+      const pool = dreamPool({ mind: r.mind, affect: initialAffectState(NIGHT), now: NIGHT, rng: makeRng(`c${s}`), cycle: 'early' });
+      expect(pool.map((e) => e.source)).not.toContain('concern:c1');
+    }
+  });
+
+  it('a dream records the worry it carried', async () => {
+    const r = await rig();
+    const rec = (await r.dreams.dreamOnce('early'))!;
+    expect(rec.pool.some((e) => e.id === 'concern:c1')).toBe(true); // the only open worry
+    expect(r.mind.concerns().find((c) => c.id === 'c1')!.dreamtAt).toEqual([NIGHT]);
+  });
+
+  it('a question that only restates an open worry is dropped', async () => {
+    const r = await rig({ appraise: { ...appraised, question: { q: 'will he send the demo video he said he would send?', knowability: 0.6, confidence: 0.3 } } });
+    const rec = (await r.dreams.dreamOnce('early'))!;
+    expect(rec.question).toBeUndefined();
+    expect(r.events.some((e) => e.kind === 'mind.dream_question_dropped')).toBe(true);
+  });
+});
+
 describe('the dream (§3.3) — lived, never told, never a replay', () => {
   it('a dream that names a feeling is caught; events alone pass', () => {
     for (const t of ["i'm so scared and the door won't open", 'i feel lonely in the big room', 'she was anxious the whole time', 'feeling overwhelmed by the waves']) expect(dreamTelling(t), t).not.toEqual([]);
@@ -249,7 +276,7 @@ describe('waking (§3.4e) — most dreams go; what stays is a dream', () => {
       const s = t.mind.state().sleep!;
       t.mind.setState({ sleep: { ...s, dreams: s.dreams.map((d) => ({ ...d, intensity: 1, crossDomain: true })) } });
       woke = await t.dreams.wake({ woken: true });
-      expect(woke[0]!.p).toBeCloseTo(DREAM.recallCap, 6);
+      expect(woke[0]!.p).toBeCloseTo(Math.min(DREAM.recallCap, DREAM.recallBase.late + 0.4 + 0.25), 6);
       if (woke[0]!.recalled) {
         r = t;
         break;

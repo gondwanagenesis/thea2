@@ -53,7 +53,8 @@ export const DREAM = {
   assocMax: 8,
   callsMax: 6,
   textGapMs: 3 * DAY,
-  recallBase: { early: 0.05, late: 0.2 },
+  // calibrated on the v13 probe (her real memory): ~0.45 a night → ~3 remembered mornings a week
+  recallBase: { early: 0.03, late: 0.15 },
   recallCap: 0.85,
   fragmentFadeMs: 12 * H,
   crossDomainCos: 0.35,
@@ -188,9 +189,15 @@ export const dreamPool = (i: PoolInput): DreamElement[] => {
   for (const m of pick(lag, (x) => (notAversiveTwice(x) ? feltIntensity(x.felt.sig) + Math.abs(x.value) + ((x.importance ?? 5) >= 6 ? 0.5 : 0) + (x.gold === true ? 0.5 : 0) : 0), n.lag, rng)) {
     add('lag', m.id, momentLine(m, now), m);
   }
-  // unresolved — something still open (a due-soon one weighs more: threat rehearsal, folded in)
-  const open = mind.openConcerns().filter((c) => c.kind !== 'curiosity');
-  for (const c of pick<Concern>(open, (x) => (x.importance / 10) * Math.pow(0.5, Math.max(0, now - x.touched) / (3 * DAY)) * (x.due !== undefined && x.due - now < 48 * H ? 1.3 : 1), 1, rng)) {
+  // unresolved — something still open (a due-soon one weighs more: threat rehearsal, folded in).
+  // Found in the v13 probe: with no guard on concerns, one stale worry was every dream of every
+  // night and every question they left. The same worry: ≤2 of any 7 nights, habituating over 3 days.
+  const open = mind.openConcerns().filter((c) => c.kind !== 'curiosity' && (c.dreamtAt ?? []).filter((t) => now - t < 7 * DAY).length < DREAM.maxNightsPer7);
+  const concernHabit = (c: Concern): number => {
+    const last = (c.dreamtAt ?? []).at(-1);
+    return last === undefined ? 0 : Math.pow(0.5, (now - last) / DREAM.habitHalfLifeMs);
+  };
+  for (const c of pick<Concern>(open, (x) => (x.importance / 10) * Math.pow(0.5, Math.max(0, now - x.touched) / (3 * DAY)) * (x.due !== undefined && x.due - now < 48 * H ? 1.3 : 1) * (1 - concernHabit(x)), 1, rng)) {
     add('unresolved', `concern:${c.id}`, `something still open: ${clipText(c.what, 160)}`);
   }
   // world — something she found out (v12), sometimes
@@ -264,6 +271,15 @@ export const dreamTelling = (text: string): string[] => {
 
 const words = (s: string): string[] => s.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, ' ').split(/\s+/).filter((w) => w !== '');
 
+const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'to', 'of', 'in', 'on', 'for', 'with', 'is', 'are', 'can', 'i', 'my', 'me', 'it', 'that', 'this', 'so', 'be', 'do', 'does', 'what', 'why', 'how', 'she', 'her', 'he', 'his']);
+/** Share of the question's content words found in the other text. */
+export const wordOverlap = (q: string, other: string): number => {
+  const a = words(q).filter((w) => !STOP.has(w));
+  if (a.length === 0) return 0;
+  const b = new Set(words(other));
+  return a.filter((w) => b.has(w)).length / a.length;
+};
+
 /** Longest run of consecutive words the scene shares with any source (the replicative guard). */
 export const overlapRun = (scene: string, sources: readonly string[], n = 8): boolean => {
   const sw = words(scene);
@@ -280,7 +296,7 @@ export const overlapRun = (scene: string, sources: readonly string[], n = 8): bo
 export const DREAM_APPRAISER_SYSTEM = [
   "You are the part of Thea's mind that registers, as she dreams, how each scene lands for her — against what she cares about and what she's waiting on (the same way her waking feelings are appraised). This is machinery; she never reads it.",
   `For each scene: up to two feelings (from this list only: ${APPRAISAL_TAGS.join(', ')}), each with an intensity 1-5 (dreams are rarely above 4), and an importance 1-10.`,
-  'Optionally ONE question: only if the dream put two things from different parts of her life together in a way that opens a real question she could look into or ask about (knowability and confidence 0-1). Otherwise null.',
+  'Optionally ONE question: only if the dream put two things from different parts of her life together in a way that opens a real question about the world or about herself, one she could look into or ask about (knowability and confidence 0-1). Never a task, a blocker, or something she is waiting on someone for. Otherwise null.',
   'Return JSON {scenes:[{events:[{emotion,i}], importance}], question: {q, knowability, confidence} | null}.',
 ].join('\n');
 
@@ -458,7 +474,8 @@ export const makeDreams = (d: DreamDeps): Dreams => {
       }
     }
     const endSig = sceneSigs.at(-1) ?? new Array<number>(12).fill(0);
-    const intensity = Math.max(0, ...sceneSigs.map((x) => feltIntensity(x)));
+    // how vivid: the strongest single feeling it carried (a sum over a scene overstated it — probe)
+    const intensity = Math.max(0, ...sceneEvents.flat().map((e) => e.i / 10));
     const id = `dr_${now}_${newId(d.clock, d.rng).slice(-6)}`;
 
     // what it does to memory (never value/outcome/followed/gold/never)
@@ -494,6 +511,11 @@ export const makeDreams = (d: DreamDeps): Dreams => {
           examples: shifted.slice(0, 5).map((x) => ({ id: x.id, text: x.text, felt: x.felt })),
         });
       }
+      // the worries it carried rest too (≤2 of any 7 nights)
+      for (const e of pool.filter((x) => x.role === 'unresolved')) {
+        const c = d.mind.concerns().find((x) => `concern:${x.id}` === e.source);
+        if (c !== undefined) d.mind.upsertConcern({ ...c, dreamtAt: [...(c.dreamtAt ?? []), now].slice(-7) });
+      }
       emit('mind.dream_consolidated', { id, arm, linked: moments.length, reconsolidated: shifted.map((x) => ({ id: x.id, dNorm: x.dNorm })) });
     }
 
@@ -505,7 +527,12 @@ export const makeDreams = (d: DreamDeps): Dreams => {
     const vecs = moments.map((x) => d.mind.sitVec(x)).filter((v): v is Float32Array => v !== undefined);
     let crossDomain = false;
     for (let a = 0; a < vecs.length && !crossDomain; a++) for (let b = a + 1; b < vecs.length; b++) if (cosine(vecs[a]!, vecs[b]!) < DREAM.crossDomainCos) crossDomain = true;
-    const question = appraisal.question ?? undefined;
+    // a dream-born question is a real question — never an open worry restated (found in the probe:
+    // every question the dreams left was "can diego verify the route…", her stale blocker)
+    const proposed = appraisal.question ?? undefined;
+    const restated = proposed !== undefined && d.mind.openConcerns().some((c) => wordOverlap(proposed.q, c.what) >= 0.35);
+    if (restated) emit('mind.dream_question_dropped', { why: 'restates an open concern', q: proposed.q.slice(0, 160) });
+    const question = restated ? undefined : proposed;
     const record: DreamRecord = {
       id,
       night,
