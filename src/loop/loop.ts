@@ -28,7 +28,7 @@ import { OTHER_SAFE_CLASSES } from './types.js';
 import { createToolRegistry, overlayRegistry } from './registry.js';
 import { buildMessages } from './messages.js';
 import { validateCommittee, runCommittee } from './committee.js';
-import { OUTPUT_CONTRACT, decideToolDef, isDecideCall, looksJsonShaped, proseToDecision } from './decide.js';
+import { OUTPUT_CONTRACT, decideToolDef, decideToolDefWithFelt, isDecideCall, looksJsonShaped, proseToDecision } from './decide.js';
 import {
   assess,
   emit,
@@ -84,6 +84,9 @@ const normalizeDecision = (raw: unknown): unknown => {
     completeness: clamp01(r['completeness']),
     // v8: a private expectation rides through when it is a usable string.
     ...(typeof r['expect'] === 'string' && r['expect'].trim() !== '' ? { expect: r['expect'].trim().slice(0, 400) } : {}),
+    // v13 H2: her private word for how she is (sampled turns only), and how sure she is of it
+    ...(typeof r['felt'] === 'string' && r['felt'].trim() !== '' ? { felt: r['felt'].trim().slice(0, 80) } : {}),
+    ...(typeof r['felt_sure'] === 'number' ? { felt_sure: clamp01(r['felt_sure']) } : {}),
   };
 };
 
@@ -218,6 +221,8 @@ const lockDecision = (state: TurnState, decision: ModelDecision): DecisionObject
     spawns: state.spawns,
     inhibitions: state.inhibitions,
     ...(decision.expect !== undefined ? { expect: decision.expect } : {}),
+    ...(decision.felt !== undefined ? { felt: decision.felt } : {}),
+    ...(decision.felt_sure !== undefined ? { felt_sure: decision.felt_sure } : {}),
   };
   const check = DecisionObjectSchema.safeParse(d);
   if (!check.success) {
@@ -393,7 +398,8 @@ export const runLoop: RunLoop = async (entry, deps) => {
       entry.authority === 'other'
         ? offered.filter((d) => OTHER_SAFE_CLASSES.has(state.tools.get(d.name)?.inhibitionMeta.class ?? ''))
         : offered;
-    state.defs = [...forThisTurn, decideToolDef];
+    // v13 H2: on a sampled turn, decide also asks (privately) for a word for how she is
+    state.defs = [...forThisTurn, entry.askFelt === true ? decideToolDefWithFelt : decideToolDef];
 
     try {
       if (entry.committee !== undefined) return await runCommitteeEntry(entry, deps, state);

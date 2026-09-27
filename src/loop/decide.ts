@@ -43,6 +43,31 @@ export const decideToolDef: ToolDef = {
   },
 };
 
+/**
+ * v13 H2 (plan docs/plans/v13-proposal-knowing-what-she-feels.md §6 Phase 1): on a few sampled turns
+ * a day, `decide` also asks — privately — for a word or two for how she is. It sits BEFORE bubbles
+ * (pre-expressive: named before she says anything, so she can't just read it off her own reply).
+ * It asks, never tells; it is never sent; "not sure" is a real answer.
+ */
+export const decideToolDefWithFelt: ToolDef = {
+  ...decideToolDef,
+  parameters: {
+    type: 'object',
+    properties: {
+      plan: { type: 'string', enum: ['reply', 'silent', 'defer'] },
+      felt: { type: 'string', description: 'private, never sent: a word or two for how you are right now, or "not sure"' },
+      felt_sure: { ...unit, description: 'private: how sure you are of that' },
+      bubbles: { type: 'array', items: { type: 'string' } },
+      confidence: { ...unit, description: 'how sure you are of what you say' },
+      weight: { ...unit, description: 'how much this matters to you' },
+      reluctance: { ...unit, description: 'how much you would rather not say it' },
+      completeness: { ...unit, description: 'how finished the thought is' },
+      expect: { type: 'string', description: 'private, never sent: one short line on what you think happens next' },
+    },
+    required: ['plan', 'bubbles', 'confidence', 'weight', 'reluctance', 'completeness'],
+  },
+};
+
 export const isDecideCall = (c: ToolCall): boolean => c.name === DECIDE_TOOL_NAME;
 
 /** Defaults a prose reply folds into. Documented values, not model guesses. */

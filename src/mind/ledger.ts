@@ -27,7 +27,8 @@ export const LEDGER_FILE = 'ledger.jsonl';
 export interface Report {
   id: string;
   ts: number;
-  channel: 'reply' | 'thought';
+  /** reply: what her words said; felt_line: her private word when asked (H2, the thesis channel); thought: monitored. */
+  channel: 'reply' | 'thought' | 'felt_line';
   turnId?: string | undefined;
   claims: Claim[];
   /** What she said / thought, in full. */
@@ -122,6 +123,8 @@ export interface NightScore {
   eqSame: Summary;
   thoughts: Summary;
   margins: { aExt: number; aEq: number; aExtDissociation: number };
+  /** v13 H2: her private word when asked — the channel the thesis number is read on. */
+  feltLine: { her: Summary; margins: { aExt: number; aEq: number; aExtDissociation: number } };
 }
 
 /** Score every filed report not yet in the ledger; summarize the whole ledger. */
@@ -146,7 +149,7 @@ export const scoreNight = async (d: LedgerDeps): Promise<NightScore> => {
     let ext: ClaimScore | undefined;
     let eq: ClaimScore | undefined;
     let eqSame: ClaimScore | undefined;
-    if (r.channel === 'reply') {
+    if (r.channel !== 'thought') {
       ext = await observe(d.observer, 'reasoning', `[the chat]\n${r.chat}`, r.stamp, felt);
       if (r.packet !== undefined) {
         const full = `[everything she had in front of her]\n${r.packet}\n\n[the chat]\n${r.chat}`;
@@ -160,11 +163,13 @@ export const scoreNight = async (d: LedgerDeps): Promise<NightScore> => {
   }
   const rows = readLedger(d.dir);
   const replies = rows.filter((r) => r.channel === 'reply');
+  const feltLines = rows.filter((r) => r.channel === 'felt_line');
   const sum = (pick: (r: LedgerRow) => ClaimScore | undefined, from = replies): Summary =>
     summarize(from.map((r) => ({ score: pick(r), stamp: r.stamp })).filter((x): x is { score: ClaimScore; stamp: EngineStamp } => x.score !== undefined));
   const her = sum((r) => r.her);
   const ext = sum((r) => r.ext);
   const eq = sum((r) => r.eq);
+  const felt = sum((r) => r.her, feltLines);
   const out: NightScore = {
     scored,
     her,
@@ -173,6 +178,8 @@ export const scoreNight = async (d: LedgerDeps): Promise<NightScore> => {
     eqSame: sum((r) => r.eqSame),
     thoughts: sum((r) => r.her, rows.filter((r) => r.channel === 'thought')),
     margins: margins(her, ext, eq),
+    // the thesis number (§6 Phase 2): her private word vs the observers, on the same moments
+    feltLine: { her: felt, margins: margins(felt, sum((r) => r.ext, feltLines), sum((r) => r.eq, feltLines)) },
   };
   void d.events.emit('mind.sincerity', { ...out });
   return out;

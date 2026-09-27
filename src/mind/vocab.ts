@@ -74,6 +74,14 @@ export const feltIntensity = (sig: ArrayLike<number>): number => {
   return Math.min(1, peak);
 };
 
+/**
+ * v13 H1: how strongly a MEMORY was felt — the 12-dim peak, or the full state's (identity dials and
+ * hungers) when it carries one. Council finding N1: a day dominated by missing him stored ~0 in the
+ * 12 dims; the full state sees it.
+ */
+export const momentIntensity = (f: { sig: ArrayLike<number>; full?: ArrayLike<number> | undefined }): number =>
+  Math.max(feltIntensity(f.sig), f.full === undefined ? 0 : feltIntensity(f.full));
+
 /** A felt signature for one tag at intensity i (1-10): direction × i/10. */
 export const tagSignature = (tag: string, i: number): number[] => {
   const s = Math.max(0, Math.min(10, i)) / 10;

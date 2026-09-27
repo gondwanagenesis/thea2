@@ -16,7 +16,7 @@
 
 import { z } from 'zod';
 import type { AffectState, EmotionEventInput, AffectStore } from '../affect/index.js';
-import { PRIMARY_BASELINE, type Primary } from '../affect/index.js';
+import { PRIMARY_BASELINE, TAG_PRIMARY_DELTAS, type Primary } from '../affect/index.js';
 import type { ChatMsg, ModelClient } from '../model/index.js';
 import type { Job, JobCtx } from '../sched/index.js';
 import type { Clock, Rng } from '../kernel/index.js';
@@ -226,9 +226,26 @@ export interface WanderDeps {
   asleep?: ((now: number) => boolean) | undefined;
   /** v13: a dream-caused text may go at most once every 3 days. */
   dreamText?: { may(now: number): boolean; told(now: number): void } | undefined;
+  /** v13 1.2: thought-feelings with nothing behind them — measured, or enforced (auto: when the measure says). */
+  grounding?: 'auto' | 'measure' | 'enforce' | undefined;
 }
 
 const selfLines = (mind: MindStore): string => mind.self().slice(0, 6).map((l) => l.text).join('\n');
+
+/**
+ * v13 1.2: is a feeling her thought names grounded — its primary already off home (a live feeling
+ * the thought may regulate), or the same family felt in the last 6 h? A tag with no primary (a dial
+ * tag like "calm") can't be checked and passes.
+ */
+export const isGrounded = (tag: string, s: AffectState, recentFamilies: ReadonlySet<string | undefined>): boolean => {
+  const deltas = (TAG_PRIMARY_DELTAS as Readonly<Record<string, Readonly<Record<string, number>>>>)[tag];
+  if (deltas === undefined) return true;
+  const top = Object.entries(deltas).sort((a, b) => b[1] - a[1])[0];
+  if (top === undefined || top[1] <= 0) return true;
+  const p = top[0] as keyof typeof PRIMARY_BASELINE;
+  if ((s.primaries[p] ?? 0) - PRIMARY_BASELINE[p] >= 0.02) return true;
+  return recentFamilies.has(familyOf(tag));
+};
 
 /** v13: a feeling a dream left (its cause names the night) — telling him about it is rare. */
 const DREAM_CAUSED = /^(?:the dream:|something in the night)/;
@@ -349,7 +366,24 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
     if (c !== undefined) mind.upsertConcern({ ...c, status: 'closed', touched: now });
   }
   if (out.reappraise !== undefined && out.reappraise.length > 0) {
-    const valid = out.reappraise.filter((r): r is typeof r & { emotion: AppraisalTag } => isAppraisalTag(r.emotion));
+    const named = out.reappraise.filter((r): r is typeof r & { emotion: AppraisalTag } => isAppraisalTag(r.emotion));
+    // v13 1.2 (plan §6 Phase 1.2): a thought may regulate a live feeling, not conjure one with no cause.
+    // Measured always; enforced when the measure says so (auto: ≥40% ungrounded over ≥20) or by config.
+    const s0 = deps.affect.current();
+    const recentFamilies = new Set(s0.traces.habitWindow.filter((h) => now - h.t < 6 * 3600_000).map((h) => familyOf(h.tag)));
+    const g0 = mind.state().grounding ?? { since: now, total: 0, ungrounded: 0 };
+    const mode = deps.grounding ?? 'measure';
+    const enforce = mode === 'enforce' || (mode === 'auto' && g0.total >= 20 && g0.ungrounded / g0.total >= 0.4);
+    let ungrounded = 0;
+    const valid = named.filter((r) => {
+      const ok = isGrounded(r.emotion, s0, recentFamilies);
+      if (!ok) {
+        ungrounded += 1;
+        void deps.events.emit('mind.reappraise_ungrounded', { tag: r.emotion, enforced: enforce });
+      }
+      return ok || !enforce;
+    });
+    mind.setState({ grounding: { since: g0.since, total: g0.total + named.length, ungrounded: g0.ungrounded + ungrounded, enforce } });
     // her own inner life, not contact with him (2026-09-27: a 5 am thought used to end "missing him")
     const evs: EmotionEventInput[] = valid.map((r) => ({ kind: 'emotion', tag: r.emotion, i: r.i, cause: `thinking it over: ${r.cause}`, contact: false }));
     try {

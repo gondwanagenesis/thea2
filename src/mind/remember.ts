@@ -11,7 +11,7 @@
 //      how it went this time ("that joke used to hurt; now it's ours")
 
 import { cosine } from './vectors.js';
-import { feltIntensity, nearestTag } from './vocab.js';
+import { momentIntensity, nearestTag } from './vocab.js';
 import type { MindStore } from './store.js';
 import type { Act, Line, Moment, Outcome } from './types.js';
 
@@ -37,6 +37,15 @@ export interface EncodeInput {
   importance?: number | undefined;
   /** v9: the tools she used in this moment. */
   acts?: Act[] | undefined;
+  /** v13 H1: the honest word (drive-aware readout; default: nearest tag of the 12-dim sig). */
+  word?: string | undefined;
+  /** v13 H1: the full state (identity dials + hungers) the 12 dims drop. */
+  full?: number[] | undefined;
+  /** v13 H2: her private word for how she was, when asked, and how sure. */
+  called?: string | undefined;
+  calledSure?: number | undefined;
+  /** v13 H3: what was moving most in her then (material). */
+  moving?: string | undefined;
 }
 
 const ACT_FIELDS = ['scene', 'motion', 'prompt', 'query', 'words', 'about', 'brief', 'text', 'emoji', 'url', 'command', 'pattern', 'task', 'path', 'question', 'candy', 'room', 'action'] as const;
@@ -64,13 +73,16 @@ export const encodeLived = (i: EncodeInput): Moment => ({
   hers: i.hers,
   ...(i.move !== undefined ? { move: i.move } : {}),
   ...(i.tone !== undefined ? { tone: i.tone } : {}),
-  felt: { sig: i.sig, word: nearestTag(i.sig), source: 'exact' },
+  felt: { sig: i.sig, word: i.word ?? nearestTag(i.sig), source: 'exact', by: 'engine', ...(i.full !== undefined ? { full: i.full } : {}) },
   ...(i.expect !== undefined ? { expect: i.expect } : {}),
   ...(i.importance !== undefined ? { importance: i.importance } : {}),
   value: 0,
   shown: 0,
   followed: 0,
   ...(i.acts !== undefined && i.acts.length > 0 ? { acts: i.acts } : {}),
+  ...(i.called !== undefined ? { called: i.called } : {}),
+  ...(i.calledSure !== undefined ? { calledSure: i.calledSure } : {}),
+  ...(i.moving !== undefined ? { moving: i.moving } : {}),
 });
 
 /**
@@ -80,7 +92,7 @@ export const encodeLived = (i: EncodeInput): Moment => ({
 export const mostFelt = (ms: readonly Moment[], n: number): Moment[] => {
   if (ms.length <= n) return [...ms].sort((a, b) => a.ts - b.ts);
   return [...ms]
-    .sort((a, b) => feltIntensity(b.felt.sig) - feltIntensity(a.felt.sig) || b.ts - a.ts)
+    .sort((a, b) => momentIntensity(b.felt) - momentIntensity(a.felt) || b.ts - a.ts)
     .slice(0, n)
     .sort((a, b) => a.ts - b.ts);
 };
@@ -91,9 +103,9 @@ export const mostFelt = (ms: readonly Moment[], n: number): Moment[] => {
  * was felt; exact only when both ends were.
  */
 export const peakEnd = (ms: readonly Moment[]): Moment['felt'] => {
-  const felt = ms.filter((m) => feltIntensity(m.felt.sig) > 0);
+  const felt = ms.filter((m) => momentIntensity(m.felt) > 0);
   if (felt.length === 0) return { sig: new Array<number>(12).fill(0), source: 'estimated' };
-  const peak = felt.reduce((a, b) => (feltIntensity(b.felt.sig) > feltIntensity(a.felt.sig) ? b : a));
+  const peak = felt.reduce((a, b) => (momentIntensity(b.felt) > momentIntensity(a.felt) ? b : a));
   const end = felt.reduce((a, b) => (b.ts > a.ts ? b : a));
   const sig = peak.felt.sig.map((x, k) => Math.round(((x + (end.felt.sig[k] ?? 0)) / 2) * 1000) / 1000);
   const word = peak.felt.word ?? nearestTag(sig);

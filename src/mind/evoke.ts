@@ -13,7 +13,7 @@
 import { modulate, type CompiledCoupling, type Vec12 } from '../coupling/index.js';
 import type { Rng } from '../kernel/index.js';
 import { cosine } from './vectors.js';
-import { feltIntensity, toSparse } from './vocab.js';
+import { momentIntensity, toSparse } from './vocab.js';
 import { isPrecedent, type MindStore } from './store.js';
 import { DREAM, dreamFade, isAversive } from './dream.js';
 import type { Moment } from './types.js';
@@ -73,7 +73,7 @@ export const INTENSITY_SOFTEN_SHOWN = 10;
 /** v12.1: the pull of how strongly she felt it — 0 for a blank memory, at most EVOKE_WEIGHTS.intensity. */
 export const intensityTerm = (m: Moment): number => {
   const source = m.felt.source === 'exact' ? 1 : NONEXACT_FELT_WEIGHT;
-  return (EVOKE_WEIGHTS.intensity * feltIntensity(m.felt.sig) * source) / (1 + m.shown / INTENSITY_SOFTEN_SHOWN);
+  return (EVOKE_WEIGHTS.intensity * momentIntensity(m.felt) * source) / (1 + m.shown / INTENSITY_SOFTEN_SHOWN);
 };
 
 export interface EvokeInput {

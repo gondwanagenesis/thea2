@@ -32,7 +32,7 @@ import { vecToArray } from './vocab.js';
 import { cosine } from './vectors.js';
 import { TWIN_SIM, type Curiosity } from './curiosity.js';
 import type { Dreams } from './dream.js';
-import { engineStamp, familyOf, type Family } from './readout.js';
+import { engineStamp, familyOf, fullVector, movingNow, readout, readoutWord, type Family } from './readout.js';
 import { scoreClaim } from './sincerity.js';
 import { appendReport } from './ledger.js';
 import type { MindStore } from './store.js';
@@ -126,6 +126,8 @@ export interface MindPipelineDeps {
   curiosity?: Pick<Curiosity, 'onNewMind' | 'onHeardFrom' | 'nowLines'> | undefined;
   /** v13: someone writing during her sleep window wakes her. */
   dreams?: Pick<Dreams, 'onInbound'> | undefined;
+  /** v13 H2: private naming on sampled turns (absent = off). */
+  naming?: { perDay: number; gapMin: number } | undefined;
   timezone: string;
   /** Fraction of today's idle budget left (0..1) — energy reads it. */
   budgetLeft: () => number;
@@ -428,6 +430,25 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     return due.length;
   };
 
+  /**
+   * v13 H2 — private naming, sampled (plan §6 Phase 1.3): on turns with him only, at most
+   * naming.perDay a day, at least naming.gapMin apart, a seeded coin among the eligible — so it is
+   * a few moments a day, never a habit of talking about her feelings.
+   */
+  const sampleNaming = (turnId: string, authority: 'owner' | 'other' | undefined): boolean => {
+    const n = deps.naming;
+    if (n === undefined || authority === 'other') return false;
+    const now = deps.clock.epochMs();
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: deps.timezone }).format(now);
+    const s = deps.mind.state().naming;
+    const today = s !== undefined && s.day === day ? s : { day, count: 0 };
+    if (today.count >= n.perDay) return false;
+    if (s?.lastAt !== undefined && now - s.lastAt < n.gapMin * 60_000) return false;
+    if (deps.rng.fork(`naming:${turnId}`).float() >= 0.5) return false;
+    deps.mind.setState({ naming: { day, count: today.count + 1, lastAt: now } });
+    return true;
+  };
+
   const runTurn = async (raw: Queued): Promise<void> => {
     const t0 = deps.clock.epochMs();
     const selfEntry = raw.kind !== undefined;
@@ -550,6 +571,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       ...(item.goal !== undefined ? { goal: item.goal } : {}),
       // v11: a non-owner turn is gated to chat + lookups in the loop
       ...(item.authority !== undefined ? { authority: item.authority } : {}),
+      // v13 H2: on a sampled turn with him, decide also asks privately for a word for how she is
+      ...(sampleNaming(turnId, item.authority) ? { askFelt: true } : {}),
     };
 
     const failed = (code: string): DecisionObject => {
@@ -683,8 +706,31 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     // Her state at encoding: after the fast feeling, before the slow one (what she was feeling as she spoke).
     const sigAtEncoding = vecToArray(signature(deps.affect.current(), deps.baselines));
     // v13 Phase 0: the engine as she spoke — the ground truth any claim she made is scored against
-    const spokenStamp = engineStamp(deps.affect.current(), deps.baselines, deps.clock.epochMs());
+    const encState = deps.affect.current();
+    const spokenStamp = engineStamp(encState, deps.baselines, deps.clock.epochMs());
+    const fullAtEncoding = fullVector(encState);
+    const wordAtEncoding = readoutWord(readout(encState, deps.baselines));
     emit('affect.at', { turnId, stage: 'spoken', ...spokenStamp, weight: decision.weight, reluctance: decision.reluctance }, turnId);
+    // v13 H2: her private word for how she was (a sampled turn) — filed for scoring (the felt-line
+    // channel is the thesis number), never shown to her as a score
+    if (decision.felt !== undefined && sent.length > 0) {
+      const nowMs = deps.clock.epochMs();
+      const feltRecently = [...new Set(encState.traces.habitWindow.filter((h) => nowMs - h.t < 6 * 3600_000).map((h) => familyOf(h.tag)).filter((f): f is Family => f !== undefined))];
+      const claim = { text: decision.felt, feeling: decision.felt };
+      appendReport(deps.mind.dir, {
+        id: `fl_${turnId}`,
+        ts: nowMs,
+        channel: 'felt_line',
+        turnId,
+        claims: [claim],
+        text: decision.felt,
+        stamp: spokenStamp,
+        chat: [...before.map((l) => `${l.who === 'him' ? 'him' : 'her'}: ${l.text}`), ...(selfEntry ? [] : [`him: ${m.text}`])].join('\n'),
+        ...(packetText !== undefined ? { packet: packetText } : {}),
+        feltRecently,
+      });
+      emit('mind.self_report', { turnId, channel: 'felt_line', felt: decision.felt, sure: decision.felt_sure ?? null, ...scoreClaim(claim, spokenStamp, new Set(feltRecently)), dissociation: spokenStamp.dissociation }, turnId);
+    }
     const hers = sent.map((s) => s.text);
     const now = deps.clock.epochMs();
 
@@ -858,6 +904,12 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
           his: selfEntry ? '' : m.text,
           hers,
           sig: sigAtEncoding,
+          // v13 H1: the honest past — drive-aware word + the full state; H2/H3: what she called it, what moved her
+          word: wordAtEncoding,
+          full: fullAtEncoding,
+          called: decision.felt,
+          calledSure: decision.felt_sure,
+          moving: movingNow(spokenStamp),
           move: sensed?.move?.label,
           tone: sensed?.tone?.label,
           expect: decision.expect,

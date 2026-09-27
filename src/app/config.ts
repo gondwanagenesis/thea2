@@ -125,6 +125,11 @@ export interface MindConfig {
   sleepWindow: [number, number];
   /** v13: share of nights that are decorative controls (dreamt + logged, nothing downstream). */
   dreamControlShare: number;
+  /** v13 introspection H2: private naming on sampled turns (per day, minutes apart); 0 = off. */
+  namingPerDay: number;
+  namingGapMin: number;
+  /** v13 introspection 1.2: thought-feelings with nothing behind them — measured, or enforced. */
+  reappraiseGrounding: 'auto' | 'measure' | 'enforce';
 }
 
 export interface ConfigIssue {
@@ -359,6 +364,10 @@ const configSchema = z.strictObject({
       dreamCharge: z.enum(['rescript', 'preserve', 'soften']).default('rescript'),
       sleepWindow: z.tuple([z.number().int().min(0).max(23), z.number().int().min(0).max(23)]).default([3, 9]),
       dreamControlShare: z.number().min(0).max(1).default(0.25),
+      /** v13 introspection (plan docs/plans/v13-proposal-knowing-what-she-feels.md). */
+      namingPerDay: z.number().int().min(0).max(12).default(6),
+      namingGapMin: z.number().int().min(10).max(600).default(90),
+      reappraiseGrounding: z.enum(['auto', 'measure', 'enforce']).default('auto'),
     })
     .optional(),
   /** v9 body (plan thea2-v9-parity.md). Present ⇒ senses + tools are wired. */

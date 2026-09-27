@@ -113,10 +113,27 @@ export interface ComposeInput {
   howTo?: { name: string; note: string } | undefined;
 }
 
+/**
+ * v13 H3: the pre-registered arm of a memory (by its id — deterministic): arm B memories she named
+ * show what was moving most in her then, beside her word; arm A show only her word (the control).
+ */
+export const feedbackArm = (id: string): 'A' | 'B' => {
+  let h = 0;
+  for (let k = 0; k < id.length; k++) h = (h * 31 + id.charCodeAt(k)) | 0;
+  return (h & 1) === 1 ? 'B' : 'A';
+};
+
 const renderMoment = (m: Moment, tz: string): Segment[] => {
   const segs: Segment[] = [];
   const when = `${dateLabel(m.ts, tz)}, ${dayPart(hourIn(m.ts, tz))}`;
-  segs.push({ kind: 'frame', text: m.felt.word !== undefined ? `${when}. you were ${m.felt.word}` : when });
+  // v13 H1: an honest past — a feeling a reader of her texts guessed is marked as a guess
+  const guessed = m.felt.source !== 'exact';
+  segs.push({ kind: 'frame', text: m.felt.word !== undefined ? `${when}. you were ${m.felt.word}${guessed ? ', going by what you wrote' : ''}` : when });
+  // v13 H2/H3: what she privately called it then (her words), beside what was moving in her (material)
+  if (m.called !== undefined) {
+    segs.push({ kind: 'quote', text: `you called it "${clip(m.called, 60)}"` });
+    if (feedbackArm(m.id) === 'B' && m.moving !== undefined) segs.push({ kind: 'frame', text: `(what was moving most then: ${clip(m.moving, 110)})` });
+  }
   for (const l of m.before.slice(-1)) {
     segs.push({ kind: 'quote', text: `${l.who === 'him' ? 'him' : 'you'}: ${clip(l.text, 200)}` });
   }

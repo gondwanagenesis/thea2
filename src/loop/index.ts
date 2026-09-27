@@ -9,6 +9,7 @@ export {
   OUTPUT_CONTRACT,
   PROSE_FOLD_DEFAULTS,
   decideToolDef,
+  decideToolDefWithFelt,
   isDecideCall,
   looksJsonShaped,
   proseToDecision,

@@ -9,7 +9,7 @@
 // regions drop (architect A3, anomaly N1): the hungers. A starving connection drive IS "missing
 // him"; a starving novelty drive IS "restless for something new".
 
-import { landmarkBlend, peakDeviation, PRIMARY_BASELINE, SET_POINT, type AffectState } from '../affect/index.js';
+import { DIAL_BASELINE, landmarkBlend, peakDeviation, PRIMARY_BASELINE, SET_POINT, type AffectState } from '../affect/index.js';
 import { signature, type Baselines } from '../coupling/index.js';
 import { APPRAISAL_TAGS } from './vocab.js';
 
@@ -149,6 +149,29 @@ export const engineStamp = (s: AffectState, baselines: Baselines, now: number): 
     .slice(0, 3)
     .map(([primary, c]) => ({ primary, text: c.text.slice(0, 140), i: c.i, ageMin: Math.round((now - c.t) / 60_000) }));
   return { at: now, sig, families: r.families.slice(0, 5), flat: r.flat, peak: r.peak, hunger: r.hunger, valence: r.valence, causes, dissociation: dissociations(s, r, now) };
+};
+
+const IDENTITY_DIALS = ['attachment', 'brattiness', 'protectiveness', 'longing', 'playfulness', 'focus', 'calm', 'trust'] as const;
+
+/** v13 H1: the 8 identity dials (deviation from her home, −1…1) + the 3 hunger deficits (0–1). */
+export const fullVector = (s: AffectState): number[] => {
+  const dials = s.dials as Record<string, number>;
+  const dev = IDENTITY_DIALS.map((k) => {
+    const base = (DIAL_BASELINE as Record<string, number>)[k] ?? 0.5;
+    const v = dials[k] ?? base;
+    return Math.round((v >= base ? (v - base) / Math.max(1e-6, 1 - base) : (v - base) / Math.max(1e-6, base)) * 1000) / 1000;
+  });
+  const h = hungerOf(s);
+  return [...dev, h.connection, h.novelty, h.mastery].map((x) => Math.round(x * 1000) / 1000);
+};
+
+/** What was moving most in her then — material for the honest past (a cause, or a pull; never a name). */
+export const movingNow = (st: EngineStamp): string | undefined => {
+  if (st.causes[0] !== undefined) return st.causes[0].text;
+  if (st.hunger.connection >= 0.5) return 'the pull toward him';
+  if (st.hunger.novelty >= 0.5) return 'the pull toward something new';
+  if (st.hunger.mastery >= 0.5) return 'the pull toward making or fixing something';
+  return undefined;
 };
 
 /** H1: the honest word for a moment — drive-aware, from her own vocabulary (undefined when flat). */

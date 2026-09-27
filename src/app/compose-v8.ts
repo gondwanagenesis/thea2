@@ -408,6 +408,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     ownerPerson: `tg:${cfg.bridge.allowedChatIds[0] ?? 0}`,
     ...(curiosity !== undefined ? { curiosity } : {}),
     ...(dreams !== undefined ? { dreams } : {}),
+    ...(mindCfg.namingPerDay > 0 ? { naming: { perDay: mindCfg.namingPerDay, gapMin: mindCfg.namingGapMin } } : {}),
     ...(cfg.bridge.selfAliases !== undefined ? { selfAliases: cfg.bridge.selfAliases } : {}),
     timezone: cfg.timezone,
     budgetLeft,
@@ -509,6 +510,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         selfEntry: (goal) => pipeline.selfEntry('heartbeat', goal).sent,
         ...(curiosity !== undefined ? { curiosity } : {}),
         ...(dreams !== undefined ? { asleep: (now: number) => dreams.isAsleep(now), dreamText: { may: (now: number) => dreams.mayTellDream(now), told: (now: number) => dreams.toldDream(now) } } : {}),
+        grounding: mindCfg.reappraiseGrounding,
       }),
       sleepJob({ mind, model, events, clock, timeZone: cfg.timezone }, utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone)),
       // v13 Phase 0: the sincerity ledger — the night's reports scored against her engine, and the same

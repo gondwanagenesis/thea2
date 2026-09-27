@@ -33,7 +33,7 @@ import type { Embedder } from '../embed/index.js';
 import type { Job } from '../sched/index.js';
 import { ago, TELLING_PATTERNS } from './compose.js';
 import { cosine } from './vectors.js';
-import { APPRAISAL_TAGS, feltIntensity, isAppraisalTag, nearestTag, tagSignature } from './vocab.js';
+import { APPRAISAL_TAGS, feltIntensity, isAppraisalTag, momentIntensity, nearestTag, tagSignature } from './vocab.js';
 import { LOVE_DECLARATION, MACHINERY_TALK, type MindStore } from './store.js';
 import { dayKey, FOUND_ID_PREFIX, inQuietHours } from './wander.js';
 import { appendChange } from './changes.js';
@@ -181,12 +181,12 @@ export const dreamPool = (i: PoolInput): DreamElement[] => {
 
   // residue — the last day and a half, most felt first, unresolved heavier, habituated lighter
   const residue = all.filter((m) => m.source === 'lived' && m.kind !== 'diary' && now - m.ts < 36 * H);
-  for (const m of pick(residue, (x) => (notAversiveTwice(x) ? (0.3 + feltIntensity(x.felt.sig)) * (0.5 + (x.importance ?? 5) / 10) * ((x.outcome?.landed ?? 0) <= -1 ? 1.3 : 1) * (1 - dreamHabit(x, now)) : 0), n.residue, rng)) {
+  for (const m of pick(residue, (x) => (notAversiveTwice(x) ? (0.3 + momentIntensity(x.felt)) * (0.5 + (x.importance ?? 5) / 10) * ((x.outcome?.landed ?? 0) <= -1 ? 1.3 : 1) * (1 - dreamHabit(x, now)) : 0), n.residue, rng)) {
     add('residue', m.id, momentLine(m, now), m);
   }
   // the dream-lag — personally significant things about a week old (routine excluded)
-  const lag = all.filter((m) => m.source === 'lived' && m.kind !== 'diary' && now - m.ts >= 4 * DAY && now - m.ts <= 8 * DAY && !((m.importance ?? 5) < 4 && feltIntensity(m.felt.sig) < 0.2));
-  for (const m of pick(lag, (x) => (notAversiveTwice(x) ? feltIntensity(x.felt.sig) + Math.abs(x.value) + ((x.importance ?? 5) >= 6 ? 0.5 : 0) + (x.gold === true ? 0.5 : 0) : 0), n.lag, rng)) {
+  const lag = all.filter((m) => m.source === 'lived' && m.kind !== 'diary' && now - m.ts >= 4 * DAY && now - m.ts <= 8 * DAY && !((m.importance ?? 5) < 4 && momentIntensity(m.felt) < 0.2));
+  for (const m of pick(lag, (x) => (notAversiveTwice(x) ? momentIntensity(x.felt) + Math.abs(x.value) + ((x.importance ?? 5) >= 6 ? 0.5 : 0) + (x.gold === true ? 0.5 : 0) : 0), n.lag, rng)) {
     add('lag', m.id, momentLine(m, now), m);
   }
   // unresolved — something still open (a due-soon one weighs more: threat rehearsal, folded in).
@@ -203,7 +203,7 @@ export const dreamPool = (i: PoolInput): DreamElement[] => {
   // world — something she found out (v12), sometimes
   if (rng.float() < n.world) {
     const found = all.filter((m) => m.id.startsWith(FOUND_ID_PREFIX));
-    const f = pick(found, (x) => 0.5 + feltIntensity(x.felt.sig) + 1 / (1 + (now - x.ts) / (7 * DAY)), 1, rng)[0];
+    const f = pick(found, (x) => 0.5 + momentIntensity(x.felt) + 1 / (1 + (now - x.ts) / (7 * DAY)), 1, rng)[0];
     if (f !== undefined) add('world', f.id, `something you found out: ${clipText(f.hers.join(' '), 160)}`, f);
     else {
       const it = [...mind.interests()].sort((a, b) => b.strength - a.strength)[0];
@@ -219,7 +219,7 @@ export const dreamPool = (i: PoolInput): DreamElement[] => {
       if (!notAversiveTwice(x)) return 0;
       const v = mind.sitVec(x.id)!;
       const near = residueVecs.length === 0 ? 0 : Math.max(...residueVecs.map((r) => cosine(v, r)));
-      return (0.2 + feltIntensity(x.felt.sig)) * Math.max(0.05, 1 - near);
+      return (0.2 + momentIntensity(x.felt)) * Math.max(0.05, 1 - near);
     },
     n.remote,
     rng,

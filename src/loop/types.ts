@@ -77,6 +77,8 @@ export interface LoopEntry {
    * pipeline from the VERIFIED speaker, never from message text.
    */
   authority?: 'owner' | 'other' | undefined;
+  /** v13 H2: this turn's decide also asks, privately, for a word for how she is (sampled turns). */
+  askFelt?: boolean | undefined;
 }
 
 /** v11: the tool classes a NON-owner (a group member or another bot) may cause. Chat + lookups only. */
@@ -124,6 +126,9 @@ export interface DecisionObject {
   inhibitions: Verdict[];
   /** v8: her private expectation of what happens next (never sent). */
   expect?: string | undefined;
+  /** v13 H2: her private word for how she is, on sampled turns (never sent). */
+  felt?: string | undefined;
+  felt_sure?: number | undefined;
 }
 
 /** What the model authors of a decision. The rest of the DecisionObject is loop-owned. */
@@ -136,6 +141,9 @@ export interface ModelDecision {
   completeness: number;
   /** v8: her private expectation of what happens next (never sent). */
   expect?: string | undefined;
+  /** v13 H2: her private word for how she is, when asked (never sent). */
+  felt?: string | undefined;
+  felt_sure?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------

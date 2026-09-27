@@ -17,7 +17,7 @@ import type { Clock } from '../kernel/index.js';
 import type { EventLog } from '../events/index.js';
 import type { MindStore } from './store.js';
 import type { SelfLine } from './types.js';
-import { feltIntensity } from './vocab.js';
+import { momentIntensity } from './vocab.js';
 import { mostFelt } from './remember.js';
 
 const DAY = 24 * 3600_000;
@@ -101,7 +101,7 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
     }
     if (m.gold !== true && m.value !== 0 && now - m.ts > 7 * DAY) {
       // v12.1: what she felt strongly fades slower (×0.97 flat → up to ×0.995 at full intensity)
-      mind.update(m.id, { value: Math.round(m.value * (VALUE_FADE + VALUE_FADE_FELT_BONUS * feltIntensity(m.felt.sig)) * 1000) / 1000 });
+      mind.update(m.id, { value: Math.round(m.value * (VALUE_FADE + VALUE_FADE_FELT_BONUS * momentIntensity(m.felt)) * 1000) / 1000 });
       decayed += 1;
     }
   }

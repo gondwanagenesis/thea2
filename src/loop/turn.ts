@@ -245,7 +245,9 @@ export const assess = (
   if (state.runner !== undefined) {
     // The decide contract rides only when `decide` is actually offered (the
     // main set, the fail-open final call, revision calls) — never for workers.
-    const decide = defs.some((d) => d.name === DECIDE_TOOL_NAME) ? { schema: decideToolDef.parameters } : undefined;
+    // v13 H2: the decide actually offered (it may carry the private felt fields this turn)
+    const offeredDecide = defs.find((d) => d.name === DECIDE_TOOL_NAME);
+    const decide = offeredDecide !== undefined ? { schema: offeredDecide.parameters ?? decideToolDef.parameters } : undefined;
     return responseOfStream(
       state.runner.run(
         state.entry,

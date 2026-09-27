@@ -49,6 +49,9 @@ export const ModelDecisionSchema = z.object({
   completeness: unit,
   /** v8: her private expectation of what happens next (never sent; feeds surprise). */
   expect: z.string().max(400).optional(),
+  /** v13 H2: on sampled turns, her private word for how she is (never sent). */
+  felt: z.string().max(80).optional(),
+  felt_sure: unit.optional(),
 });
 
 /**
@@ -76,6 +79,9 @@ export const DecisionObjectSchema = z.object({
   inhibitions: z.array(VerdictSchema),
   /** v8: her private expectation, carried from the model decision (never sent). */
   expect: z.string().max(400).optional(),
+  /** v13 H2: her private word for how she is, when asked (never sent). */
+  felt: z.string().max(80).optional(),
+  felt_sure: unit.optional(),
 });
 
 export const decisionIssue = (e: z.ZodError): string =>

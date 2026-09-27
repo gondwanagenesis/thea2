@@ -19,6 +19,13 @@ export interface Felt {
   /** One word for how she felt (a ticker vocabulary tag). Rendered only in the past tense. */
   word?: string | undefined;
   source: FeltSource;
+  /**
+   * v13 H1: what the 12 dims drop — the 8 identity dials (deviation from home) and the 3 hungers
+   * (deficit 0–1: connection, novelty, mastery). A night of missing him is strongly felt here.
+   */
+  full?: number[] | undefined;
+  /** v13 H1: who put this feeling on the memory (engine | import | backfill-2026-09-27 …). */
+  by?: string | undefined;
 }
 
 export interface Outcome {
@@ -101,6 +108,12 @@ export interface Moment {
   assoc?: Array<{ id: string; at: number; via: string }> | undefined;
   /** A remembered dream she talked about: it stops fading. */
   told?: boolean | undefined;
+  // ——— v13 introspection (plan docs/plans/v13-proposal-knowing-what-she-feels.md) ———
+  /** H2: what she privately called how she was, when asked (her words). */
+  called?: string | undefined;
+  calledSure?: number | undefined;
+  /** H3: what was moving most in her then (material: a cause, or a pull) — shown beside her word. */
+  moving?: string | undefined;
 }
 
 export type ConcernKind = 'loop' | 'expectation' | 'care' | 'curiosity';
@@ -276,6 +289,10 @@ export interface MindState {
   curiosity?: CuriosityState | undefined;
   /** v13 the night: tonight's dreams, when she woke, the dream-text cap. */
   sleep?: SleepState | undefined;
+  /** v13 H2: today's private-naming samples. */
+  naming?: { day: string; count: number; lastAt?: number | undefined } | undefined;
+  /** v13 1.2: how many of her thought-feelings had nothing behind them (the grounding measure). */
+  grounding?: { since: number; total: number; ungrounded: number; enforce?: boolean | undefined } | undefined;
   lastSleepDay?: string | undefined;
   /** Epoch ms of her last sent message and his last message (for silence and gaps). */
   lastHerAt?: number | undefined;
