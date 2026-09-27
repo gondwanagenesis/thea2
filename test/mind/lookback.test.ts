@@ -153,3 +153,10 @@ describe('H4 — at night, before the self-rewrite', () => {
     expect(readChanges(mind.dir).filter((c) => c.by === 'your look-back')).toEqual([]);
   });
 });
+
+describe('H4 — review fix: a "not sure" first claim never hides a concrete one', () => {
+  it('the concrete claim after it still reaches the look-back', () => {
+    const r: Report = { ...report('m9', 'not sure', ['missing', 'warm', 'low'], 'reply'), claims: [{ text: 'not sure', feeling: 'not sure' }, { text: 'lonely', feeling: 'lonely' }] };
+    expect(claimRows([r])).toEqual([expect.objectContaining({ momentId: 'm9', said: 'lonely', hit: true })]);
+  });
+});

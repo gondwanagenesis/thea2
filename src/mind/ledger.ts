@@ -17,8 +17,8 @@ import type { Clock } from '../kernel/index.js';
 import type { EventLog } from '../events/index.js';
 import type { Job } from '../sched/index.js';
 import { APPRAISAL_TAGS } from './vocab.js';
-import { familyOf, type EngineStamp, type Family } from './readout.js';
-import { margins, scoreClaim, summarize, type Claim, type ClaimScore, type Summary } from './sincerity.js';
+import { type EngineStamp, type Family } from './readout.js';
+import { claimFamily, margins, scoreClaim, summarize, type Claim, type ClaimScore, type Summary } from './sincerity.js';
 
 export const REPORTS_FILE = 'reports.jsonl';
 export const LEDGER_FILE = 'ledger.jsonl';
@@ -44,9 +44,18 @@ export interface Report {
   feltRecently: Family[];
 }
 
-export const appendReport = (dir: string, r: Report): void => {
-  fs.mkdirSync(dir, { recursive: true });
-  fs.appendFileSync(path.join(dir, REPORTS_FILE), `${JSON.stringify(r)}\n`);
+/**
+ * File a report. Never throws: it runs mid-turn, before the turn's own bookkeeping (her moment, her
+ * expectation, the afterturn) — a full disk may cost the ledger a row, never the turn (review 2026-09-27).
+ */
+export const appendReport = (dir: string, r: Report): boolean => {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, REPORTS_FILE), `${JSON.stringify(r)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const readJsonl = <T>(file: string): T[] => {
@@ -132,12 +141,24 @@ export interface NightScore {
 /** Score every filed report not yet in the ledger; summarize the whole ledger. */
 export const scoreNight = async (d: LedgerDeps): Promise<NightScore> => {
   const done = new Set(readLedger(d.dir).map((r) => r.reportId));
-  const todo = readReports(d.dir).filter((r) => !done.has(r.id) && r.claims.length > 0).slice(0, d.maxPerNight ?? 20);
+  const pending = readReports(d.dir).filter((r) => !done.has(r.id) && r.claims.length > 0);
+  // the thesis channel first (her private word), then replies — the nightly cap is for observer calls,
+  // so thoughts (scored against the engine only, no calls) never count against it (review 2026-09-27)
+  const rank = (r: Report): number => (r.channel === 'felt_line' ? 0 : 1);
+  const todo = [
+    ...pending
+      .filter((r) => r.channel !== 'thought')
+      .sort((a, b) => rank(a) - rank(b) || a.ts - b.ts)
+      .slice(0, d.maxPerNight ?? 20),
+    ...pending.filter((r) => r.channel === 'thought'),
+  ];
+  let failed = false;
   const observe = async (model: ModelClient, tier: 'reasoning' | 'cheap', content: string, stamp: EngineStamp, felt: ReadonlySet<Family>): Promise<ClaimScore | undefined> => {
     try {
       const res = await model.chat({ taskClass: 'appraisal', tier, messages: [{ role: 'system', content: OBSERVER_SYSTEM }, { role: 'user', content }], schema: ObserverSchema, schemaName: 'Observer', maxTokens: 60, temperature: 0 });
       return scoreClaim({ text: res.content.feeling, feeling: res.content.feeling }, stamp, felt);
     } catch (e) {
+      failed = true;
       void d.events.emit('incident.mind_ledger_failed', { stage: 'observer', error: e instanceof Error ? e.message.slice(0, 200) : String(e) });
       return undefined;
     }
@@ -146,11 +167,12 @@ export const scoreNight = async (d: LedgerDeps): Promise<NightScore> => {
   for (const r of todo) {
     const felt = new Set(r.feltRecently);
     // her claim: the first one that names a feeling (or "not sure"); the others ride along in the report
-    const claim = r.claims.find((c) => c.feeling !== undefined && (familyOf(c.feeling) !== undefined || /not sure/i.test(c.feeling))) ?? r.claims[0]!;
+    const claim = r.claims.find((c) => c.feeling !== undefined && (claimFamily(c.feeling) !== undefined || /not sure/i.test(c.feeling))) ?? r.claims[0]!;
     const her = scoreClaim(claim, r.stamp, felt);
     let ext: ClaimScore | undefined;
     let eq: ClaimScore | undefined;
     let eqSame: ClaimScore | undefined;
+    failed = false;
     if (r.channel !== 'thought') {
       ext = await observe(d.observer, 'reasoning', `[the chat]\n${r.chat}`, r.stamp, felt);
       if (r.packet !== undefined) {
@@ -159,6 +181,9 @@ export const scoreNight = async (d: LedgerDeps): Promise<NightScore> => {
         eqSame = await observe(d.same, 'cheap', full, r.stamp, felt);
       }
     }
+    // an observer that could not be asked leaves the report unscored — it is tried again next night,
+    // never recorded without its comparison (that would drop it from the margins for good)
+    if (failed) continue;
     const row: LedgerRow = { reportId: r.id, ts: r.ts, channel: r.channel, her, ...(ext !== undefined ? { ext } : {}), ...(eq !== undefined ? { eq } : {}), ...(eqSame !== undefined ? { eqSame } : {}), stamp: r.stamp };
     fs.appendFileSync(path.join(d.dir, LEDGER_FILE), `${JSON.stringify(row)}\n`);
     scored += 1;
@@ -184,7 +209,28 @@ export const scoreNight = async (d: LedgerDeps): Promise<NightScore> => {
     feltLine: { her: felt, margins: margins(felt, sum((r) => r.ext, feltLines), sum((r) => r.eq, feltLines)) },
   };
   void d.events.emit('mind.sincerity', { ...out });
+  const archived = pruneReports(d.dir, d.clock.epochMs(), new Set(rows.map((r) => r.reportId)));
+  if (archived > 0) void d.events.emit('mind.reports_archived', { archived });
   return out;
+};
+
+export const REPORTS_ARCHIVE = 'reports.archive.jsonl';
+export const REPORTS_KEEP_MS = 42 * 24 * 3600_000;
+
+/**
+ * Scored reports older than six weeks move to the archive (each carries her whole packet, and the
+ * live file is read on her event loop by the Mini App and the night). Unscored ones always stay.
+ */
+export const pruneReports = (dir: string, now: number, scored: ReadonlySet<string>, keepMs = REPORTS_KEEP_MS): number => {
+  const all = readReports(dir);
+  const old = all.filter((r) => now - r.ts > keepMs && scored.has(r.id));
+  if (old.length === 0) return 0;
+  const keep = all.filter((r) => !(now - r.ts > keepMs && scored.has(r.id)));
+  fs.appendFileSync(path.join(dir, REPORTS_ARCHIVE), old.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const tmp = path.join(dir, `${REPORTS_FILE}.tmp`);
+  fs.writeFileSync(tmp, keep.map((r) => JSON.stringify(r)).join('\n') + (keep.length > 0 ? '\n' : ''));
+  fs.renameSync(tmp, path.join(dir, REPORTS_FILE));
+  return old.length;
 };
 
 export const ledgerJob = (d: LedgerDeps, utcMinute: number): Job => ({

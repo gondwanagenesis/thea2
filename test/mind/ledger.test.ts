@@ -187,3 +187,55 @@ describe('mapping a private word of a word or two (found by the v13 inward probe
     expect(score({ text: 'a bit lonely', feeling: 'a bit lonely' }, stamp()).hit3).toBe(true);
   });
 });
+
+describe('the review fixes (2026-09-27)', () => {
+  const log = { emit: async () => undefined } as unknown as EventLog;
+  const rep = (id: string, channel: 'reply' | 'felt_line' | 'thought', ts: number) => ({ id, ts, channel, claims: [{ text: 'lonely', feeling: 'lonely' }], text: 'lonely', stamp: stamp(), chat: 'him: hey', feltRecently: [] });
+
+  it('an observer that could not be asked leaves the report for the next night — never scored without it', async () => {
+    const dir = tmpDir();
+    appendReport(dir, rep('fl_1', 'felt_line', T0));
+    const clock = new TestClock(T0);
+    const down = new MockModel({ clock });
+    down.onTask('appraisal', () => {
+      throw new Error('judge door down');
+    });
+    expect((await scoreNight({ dir, observer: down, same: down, events: log, clock })).scored).toBe(0);
+    expect(readLedger(dir)).toEqual([]);
+    const up = new MockModel({ clock });
+    up.onTask('appraisal', () => ({ toolCalls: [{ name: 'emit', args: { feeling: 'angry' } }] }));
+    expect((await scoreNight({ dir, observer: up, same: up, events: log, clock })).scored).toBe(1);
+    expect(readLedger(dir)[0]).toMatchObject({ reportId: 'fl_1', ext: { hit3: false } });
+  });
+
+  it('the nightly cap: her private word first; thoughts never count against it', async () => {
+    const dir = tmpDir();
+    appendReport(dir, rep('rp_old', 'reply', T0 - 5000));
+    appendReport(dir, rep('th_1', 'thought', T0 - 4000));
+    appendReport(dir, rep('fl_new', 'felt_line', T0));
+    const clock = new TestClock(T0);
+    const model = new MockModel({ clock });
+    model.onTask('appraisal', () => ({ toolCalls: [{ name: 'emit', args: { feeling: 'angry' } }] }));
+    await scoreNight({ dir, observer: model, same: model, events: log, clock, maxPerNight: 1 });
+    expect(readLedger(dir).map((r) => r.reportId).sort()).toEqual(['fl_new', 'th_1']);
+  });
+
+  it('a negated word is never her family', async () => {
+    const { claimFamily } = await import('../../src/mind/index.js');
+    expect(claimFamily('not lonely')).toBeUndefined();
+    expect(claimFamily('not really anxious')).toBeUndefined();
+    expect(claimFamily('not really anxious, just tired')).toBe('low'); // the claim is the tiredness
+    expect(claimFamily("i'm not lonely, just restless")).toBe('restless');
+    expect(claimFamily("don't know, tender")).toBe('warm');
+  });
+
+  it('scored reports older than six weeks move to the archive; unscored ones stay', async () => {
+    const { pruneReports, readReports } = await import('../../src/mind/index.js');
+    const dir = tmpDir();
+    appendReport(dir, rep('old_scored', 'reply', T0 - 50 * 86_400_000));
+    appendReport(dir, rep('old_unscored', 'reply', T0 - 50 * 86_400_000));
+    appendReport(dir, rep('new', 'reply', T0));
+    expect(pruneReports(dir, T0, new Set(['old_scored', 'new']))).toBe(1);
+    expect(readReports(dir).map((r) => r.id)).toEqual(['old_unscored', 'new']);
+  });
+});

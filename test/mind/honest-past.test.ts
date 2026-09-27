@@ -129,3 +129,16 @@ describe('1.2 — a thought may regulate a live feeling, not conjure one', () =>
     expect(isGrounded('anxious', initialAffectState(T0), new Set(['anxious']))).toBe(true);
   });
 });
+
+describe('review fix — the slow appraisal survives a malformed self_claims', () => {
+  it('nulls are dropped, long quotes clipped, garbage lost — never the whole appraisal', async () => {
+    const { SlowAppraisalSchema } = await import('../../src/mind/index.js');
+    const base = { event: [], self: [], outcome_prev: null, concerns: [], importance: 4 };
+    const a = SlowAppraisalSchema.safeParse({ ...base, self_claims: [{ text: 'x'.repeat(300), feeling: null }, { text: '' }] });
+    expect(a.success).toBe(true);
+    expect(a.success && a.data.self_claims).toEqual([{ text: 'x'.repeat(200) }]);
+    const b = SlowAppraisalSchema.safeParse({ ...base, self_claims: 'nonsense' });
+    expect(b.success).toBe(true);
+    expect(b.success && b.data.self_claims).toBeUndefined();
+  });
+});

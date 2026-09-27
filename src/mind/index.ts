@@ -82,6 +82,8 @@ export { makeRoom, roomItems, quantities, drawCondition, stateFromFelt, matchCho
 export {
   appendReport,
   readReports,
+  pruneReports,
+  REPORTS_ARCHIVE,
   readLedger,
   scoreNight,
   ledgerJob,

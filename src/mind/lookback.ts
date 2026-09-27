@@ -72,9 +72,10 @@ export const claimRows = (reports: readonly Report[]): ClaimRow[] => {
     for (const c of r.claims) {
       const key = `${r.momentId}:${r.channel}`;
       if (seen.has(key)) continue;
-      seen.add(key);
       const s = scoreClaim(c, r.stamp, new Set(r.feltRecently));
+      // a "not sure" first claim must not hide a concrete one after it (review 2026-09-27)
       if (s.unsure) continue;
+      seen.add(key);
       const cause = r.stamp.causes[0];
       out.push({
         momentId: r.momentId,

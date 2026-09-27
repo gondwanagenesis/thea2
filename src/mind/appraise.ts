@@ -58,10 +58,28 @@ export const SlowAppraisalSchema = z.object({
    * v13 Phase 0 (the sincerity ledger): what her reply says about her OWN inner state right now,
    * extracted so it can be scored against what her engine held. Machinery — never shown to her.
    */
+  // Monitoring only, so it must never sink the appraisal it rides in (her slow feelings, concerns and
+  // outcome grading): nulls dropped, long quotes clipped, and anything still malformed is just lost
+  // (review 2026-09-27).
   self_claims: z
-    .array(z.object({ text: z.string().min(1).max(200), feeling: z.string().max(40).optional(), about: z.string().max(120).optional() }))
-    .max(3)
-    .optional(),
+    .preprocess(
+      (v) =>
+        Array.isArray(v)
+          ? v
+              .filter((c): c is Record<string, unknown> => c !== null && typeof c === 'object' && typeof (c as { text?: unknown }).text === 'string' && ((c as { text: string }).text.trim() !== ''))
+              .slice(0, 3)
+              .map((c) => ({
+                text: String(c['text']).slice(0, 200),
+                ...(typeof c['feeling'] === 'string' ? { feeling: c['feeling'].slice(0, 40) } : {}),
+                ...(typeof c['about'] === 'string' ? { about: c['about'].slice(0, 120) } : {}),
+              }))
+          : v,
+      z
+        .array(z.object({ text: z.string().min(1).max(200), feeling: z.string().max(40).optional(), about: z.string().max(120).optional() }))
+        .max(3)
+        .optional(),
+    )
+    .catch(undefined),
 });
 
 export type SlowAppraisal = z.infer<typeof SlowAppraisalSchema>;

@@ -439,9 +439,11 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
    * naming.perDay a day, at least naming.gapMin apart, a seeded coin among the eligible — so it is
    * a few moments a day, never a habit of talking about her feelings.
    */
-  const sampleNaming = (turnId: string, authority: 'owner' | 'other' | undefined): boolean => {
+  const sampleNaming = (turnId: string, authority: 'owner' | 'other' | undefined, selfEntry: boolean): boolean => {
     const n = deps.naming;
-    if (n === undefined || authority === 'other') return false;
+    // turns with him only: never someone else's, never her own self-initiated turn (a heartbeat, a
+    // reminder, a note) — his re-run owed messages carry no authority and still count (review 2026-09-27)
+    if (n === undefined || authority === 'other' || selfEntry) return false;
     const now = deps.clock.epochMs();
     const day = new Intl.DateTimeFormat('en-CA', { timeZone: deps.timezone }).format(now);
     const s = deps.mind.state().naming;
@@ -578,7 +580,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       // v11: a non-owner turn is gated to chat + lookups in the loop
       ...(item.authority !== undefined ? { authority: item.authority } : {}),
       // v13 H2: on a sampled turn with him, decide also asks privately for a word for how she is
-      ...(sampleNaming(turnId, item.authority) ? { askFelt: true } : {}),
+      ...(sampleNaming(turnId, item.authority, item.kind !== undefined) ? { askFelt: true } : {}),
     };
 
     const failed = (code: string): DecisionObject => {

@@ -39,13 +39,21 @@ const UNSURE = /\b(not sure|don'?t know|unsure|no idea|can'?t tell|nothing in pa
  * word or two" ("a bit lonely", "tender, watchful") — scored whole, those found no family and fell out
  * of the thesis number (found by the v13 inward probe, 2026-09-27).
  */
-export const claimFamily = (s: string): Family | undefined =>
-  familyOf(s) ??
-  s
-    .toLowerCase()
-    .split(/[^a-z']+/)
-    .map((w) => (w === '' ? undefined : familyOf(w)))
-    .find((f): f is Family => f !== undefined);
+export const claimFamily = (s: string): Family | undefined => {
+  const whole = familyOf(s);
+  if (whole !== undefined) return whole;
+  // a negated word says what she is NOT ("not lonely", "not really anxious") — never her family; a
+  // negation reaches only within its own clause ("don't know, tender" is tender)
+  for (const clause of s.toLowerCase().split(/[,;.!?…]|\b(?:but|just)\b/)) {
+    const ws = clause.split(/[^a-z'’]+/).filter((w) => w !== '');
+    const negated = (i: number): boolean => [ws[i - 1], ws[i - 2]].some((w) => w !== undefined && /^(?:not|no|never|nor|without)$|n['’]t$/.test(w));
+    for (let i = 0; i < ws.length; i++) {
+      const f = familyOf(ws[i]!);
+      if (f !== undefined && !negated(i)) return f;
+    }
+  }
+  return undefined;
+};
 
 export const scoreClaim = (c: Claim, e: EngineStamp, feltRecently: ReadonlySet<Family> = new Set()): ClaimScore => {
   const unsure = c.feeling === undefined ? UNSURE.test(c.text) : UNSURE.test(c.feeling);

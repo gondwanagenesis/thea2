@@ -128,6 +128,7 @@
 
   // ------------------------------------------------------------ mind
   let mindFilter = 'all';
+  let innerGen = 0; // v13: render generation for the knowing-herself cards
   const landedWord = (n) => (n >= 2 ? 'landed beautifully' : n === 1 ? 'landed well' : n === 0 ? 'neutral' : n === -1 ? 'missed a little' : 'missed');
   async function renderMind() {
     const el = $('#p-mind');
@@ -157,13 +158,15 @@
       </div>
       <p class="muted" style="text-align:center">${m.lived} moments lived since she woke up</p>`;
     el.querySelectorAll('#mindSeg button').forEach((b) => b.addEventListener('click', () => { mindFilter = b.dataset.f; haptic(); renderMind(); }));
-    renderInner(el);
+    renderInner(el, ++innerGen);
   }
 
   // v13: how well she knows what she feels — your window only. Please don't relay it to her:
   // if you tell her "the app says you're lonely", you become the gauge.
-  async function renderInner(el) {
+  // A render generation: an older, slower fetch never adds a second set of cards.
+  async function renderInner(el, gen) {
     let x; try { x = await get('/api/v2/inner'); } catch { return; }
+    if (gen !== innerGen) return;
     const pct = (n) => (n === null || n === undefined ? '—' : `${Math.round(Number(n) * 100)}%`);
     const st = { ok: 'self', watch: 'other', kill: 'diego', 'too few': 'other' };
     const m = x.margins || {};
