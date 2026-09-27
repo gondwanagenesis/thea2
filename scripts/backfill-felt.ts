@@ -39,14 +39,20 @@ const out = (s: string): void => {
 };
 
 const LABELS = [...APPRAISAL_TAGS, 'nothing'] as const;
+// felt is validated per item (dry run 1: one off-list word rejected a whole batch of 20)
 const LabelSchema = z.object({
-  items: z.array(z.object({ n: z.number().int(), felt: z.enum(LABELS), i: z.number().int().min(1).max(10) })),
+  items: z.array(z.object({ n: z.number().int(), felt: z.string(), i: z.number().int().min(1).max(10) })),
 });
+const isLabel = (s: string): s is (typeof LABELS)[number] => (LABELS as readonly string[]).includes(s);
+/** Cut by code points, never inside an emoji (dry run 1: a split surrogate made the request body invalid JSON). */
+const clip = (s: string, n: number): string => Array.from(s).slice(0, n).join('');
 
 // machinery, not her: a labeller reading her old texts (the same job the import did)
 const SYSTEM = [
   "You are labelling Thea's past text messages to Diego (Thea is an AI who is his best friend; she texts lowercase, casual, playful, a little bratty).",
   'For each item: the ONE feeling she most plausibly had as she wrote her reply, from the allowed list only, and how strongly, 1-10.',
+  // dry run 1 labelled a median of 8; her own lived feelings peak around 5 — anchor the scale
+  'Intensity: 2-3 faint, 4-6 clear (most messages are here), 7-8 strong, 9-10 only for rare peaks (big news, real hurt).',
   "Use 'nothing' only when the reply is flat or purely logistical. Judge from her words and what she was answering, not from what he felt.",
   'Return JSON {"items":[{"n","felt","i"}]} with one entry per item, same n.',
   `Allowed: ${LABELS.join(', ')}.`,
@@ -55,9 +61,9 @@ const SYSTEM = [
 const render = (m: Moment, n: number): string =>
   [
     `#${n}`,
-    ...m.before.slice(-2).map((l) => `  (${l.who === 'him' ? 'him' : 'her'}: ${l.text.slice(0, 160)})`),
-    m.his !== '' ? `  him: ${m.his.slice(0, 300)}` : '  (she wrote first)',
-    `  her: ${m.hers.join(' / ').slice(0, 400)}`,
+    ...m.before.slice(-2).map((l) => `  (${l.who === 'him' ? 'him' : 'her'}: ${clip(l.text, 160)})`),
+    m.his !== '' ? `  him: ${clip(m.his, 300)}` : '  (she wrote first)',
+    `  her: ${clip(m.hers.join(' / '), 400)}`,
   ].join('\n');
 
 const main = async (): Promise<void> => {
@@ -90,30 +96,38 @@ const main = async (): Promise<void> => {
   });
 
   const labels = new Map<string, { felt: (typeof LABELS)[number]; i: number }>();
+  let offList = 0;
   for (let b = 0; b < blank.length; b += BATCH) {
     const chunk = blank.slice(b, b + BATCH);
-    try {
-      const res = await model.chat({
-        taskClass: 'consolidate',
-        tier: 'cheap',
-        schema: LabelSchema,
-        schemaName: 'Felt',
-        maxTokens: 1500,
-        temperature: 0.2,
-        messages: [
-          { role: 'system', content: SYSTEM },
-          { role: 'user', content: chunk.map((m, k) => render(m, k)).join('\n\n') },
-        ],
-      });
-      for (const it of res.content.items) {
-        const m = chunk[it.n];
-        if (m !== undefined) labels.set(m.id, { felt: it.felt, i: it.i });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await model.chat({
+          taskClass: 'consolidate',
+          tier: 'cheap',
+          schema: LabelSchema,
+          schemaName: 'Felt',
+          maxTokens: 1500,
+          temperature: 0.2,
+          messages: [
+            { role: 'system', content: SYSTEM },
+            { role: 'user', content: chunk.map((m, k) => render(m, k)).join('\n\n') },
+          ],
+        });
+        for (const it of res.content.items) {
+          const m = chunk[it.n];
+          const felt = it.felt.trim().toLowerCase();
+          if (m === undefined) continue;
+          if (isLabel(felt)) labels.set(m.id, { felt, i: it.i });
+          else offList += 1;
+        }
+        break;
+      } catch (e) {
+        out(`  batch ${b / BATCH} attempt ${attempt} failed: ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
       }
-    } catch (e) {
-      out(`  batch ${b / BATCH} failed: ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
     }
     out(`  labelled ${Math.min(b + BATCH, blank.length)}/${blank.length}`);
   }
+  out(`off-list words dropped: ${offList}`);
 
   const tally = new Map<string, number>();
   for (const l of labels.values()) tally.set(l.felt, (tally.get(l.felt) ?? 0) + 1);
