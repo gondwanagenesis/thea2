@@ -6,6 +6,7 @@
 import { DIAL_BASELINE, PRIMARY_BASELINE, type AffectStore } from '../affect/index.js';
 import type { EventLog } from '../events/index.js';
 import type { MindStore } from '../mind/index.js';
+import { innerReport, readChanges, readLedger, readLexicon, readReports, readRoom } from '../mind/index.js';
 import type { Body } from '../body/index.js';
 import { describeWhere, loadWhere } from '../body/index.js';
 
@@ -181,5 +182,40 @@ export const moneyView = async (s: FaceSources): Promise<Record<string, unknown>
     today: { models: sum(today), requests: today.length, calls: live?.costToday ?? 0 },
     week: { models: sum(calls), by_class: byClass },
     wallet: s.body?.wallet.status() ?? null,
+  };
+};
+
+/**
+ * v13 introspection — his window onto how well she knows what she feels (plan docs/plans/
+ * v13-proposal-knowing-what-she-feels.md): the ledger's margins, the room, her lexicon, the look-back,
+ * her changelog and contests, last night's dreams, and every kill test's live reading. Never hers —
+ * and Diego is asked not to relay it to her (§7.1: "you become the gauge").
+ */
+export const innerView = async (s: FaceSources): Promise<Record<string, unknown>> => {
+  const now = s.clock.epochMs();
+  const dir = s.mind.dir;
+  const events = await collect(s.events, ['mind.lookback', 'mind.felt_shift', 'memory.contested', 'self.listened', 'mind.lexicon_verified', 'self.listener'], now - 42 * DAY);
+  const st = s.mind.state();
+  const r = innerReport({
+    now,
+    ledger: readLedger(dir),
+    reports: readReports(dir).filter((x) => now - x.ts <= 42 * DAY),
+    room: readRoom(dir),
+    lexicon: readLexicon(dir),
+    self: s.mind.self(),
+    changes: readChanges(dir, 30),
+    moments: s.mind.moments().filter((m) => now - m.ts <= 42 * DAY),
+    thoughts: s.mind.stream().filter((t) => now - t.ts <= 42 * DAY),
+    dreams: s.mind.dreams().filter((d) => now - d.ts <= 3 * DAY),
+    lifts: st.lifts ?? [],
+    grounding: st.grounding,
+    events,
+  });
+  const when = (t: number): string => `${dayLabel(t, s.timeZone)} ${hhmm(t, s.timeZone)}`;
+  return {
+    ...r,
+    changes: (r['changes'] as Array<{ ts: number }>).map((c) => ({ ...c, when: when(c.ts) })),
+    contests: (r['contests'] as Array<{ ts: number }>).map((c) => ({ ...c, when: when(c.ts) })),
+    lifts: (r['lifts'] as Array<{ ts: number; told: boolean }>).map((l) => ({ ...l, when: when(l.ts) })),
   };
 };

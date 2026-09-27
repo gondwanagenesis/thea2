@@ -63,6 +63,10 @@ describe('v9 face — the Mini App', () => {
     expect(JSON.stringify(why)).toContain('he came home wrecked'); // the cause, shown to him
     const mind = await get('/api/v2/mind');
     expect(mind['lived']).toBe(1);
+    // v13: his window onto how well she knows what she feels
+    const inner = await get('/api/v2/inner');
+    expect(Array.isArray(inner['kill'])).toBe(true);
+    expect((inner['kill'] as Array<{ id: string }>).map((k) => k.id)).toEqual(expect.arrayContaining(['P0-b', 'P0-c', 'thesis', 'H4', 'H5', 'H7', 'H8']));
     const money = await get('/api/v2/money');
     expect(money['today']).toBeTypeOf('object');
     expect((await req(`${base}/..%2F..%2Fetc%2Fpasswd`, { cookie })).status).toBe(404);

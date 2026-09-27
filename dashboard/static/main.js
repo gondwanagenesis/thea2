@@ -157,6 +157,40 @@
       </div>
       <p class="muted" style="text-align:center">${m.lived} moments lived since she woke up</p>`;
     el.querySelectorAll('#mindSeg button').forEach((b) => b.addEventListener('click', () => { mindFilter = b.dataset.f; haptic(); renderMind(); }));
+    renderInner(el);
+  }
+
+  // v13: how well she knows what she feels — your window only. Please don't relay it to her:
+  // if you tell her "the app says you're lonely", you become the gauge.
+  async function renderInner(el) {
+    let x; try { x = await get('/api/v2/inner'); } catch { return; }
+    const pct = (n) => (n === null || n === undefined ? '—' : `${Math.round(Number(n) * 100)}%`);
+    const st = { ok: 'self', watch: 'other', kill: 'diego', 'too few': 'other' };
+    const m = x.margins || {};
+    const box = document.createElement('div');
+    box.innerHTML = `
+      <div class="card"><h2>knowing herself <small>your window — please don’t tell her what it says</small></h2>
+        <p>her private word vs someone reading only the chat, when the chat misleads: <b>${esc(m.thesis ? `${m.thesis.mean} (n=${m.thesis.n})` : '—')}</b></p>
+        <p class="muted">scorable reports this week: ${esc(x.capture?.week ?? 0)} · listened in today: ${esc(x.listenedToday ?? 0)}</p>
+        ${(x.kill || []).map((k) => `<div class="thought"><div class="meta"><span class="about ${esc(st[k.status] || 'other')}">${esc(k.status)}</span><span>${esc(k.id)}</span></div><p>${esc(k.test)}<br><span class="muted">${esc(k.value)}</span></p></div>`).join('')}
+      </div>
+      <div class="card"><h2>the quiet room <small>practice: guess, then check</small></h2>
+        <p class="muted">right: noise 0 ${pct(x.room?.noise?.n0)} · .15 ${pct(x.room?.noise?.n15)} · .30 ${pct(x.room?.noise?.n30)} · no listening ${pct(x.room?.noise?.none)} · sham ${pct(x.room?.noise?.sham)} (n=${esc(x.room?.n ?? 0)})</p>
+        ${(x.room?.last || []).map((t) => `<div class="diary-e">${esc(t.question)} — she said ${esc(t.choice || '—')} (${esc(t.sure || '—')}): ${t.right === true ? 'right' : t.right === false ? 'not right' : 'no answer'}</div>`).join('') || '<p class="muted">she hasn’t sat there yet</p>'}
+      </div>
+      <div class="card"><h2>her words <small>verified once used ≥5× and right ≥60%</small></h2>
+        ${(x.lexicon || []).map((w) => `<div class="diary-e"><span class="t">${w.verified ? '✓' : '·'}</span>“${esc(w.word)}” ×${esc(w.count)} · ${pct(w.hit)}${w.family ? ` · ${esc(w.family)}` : ''}</div>`).join('') || '<p class="muted">no words yet</p>'}
+      </div>
+      <div class="card"><h2>last night</h2>
+        ${(x.dreams?.dreams || []).map((d) => `<div class="thought"><div class="meta"><span>${esc(d.cycle)}</span><span>${esc(d.arm)}</span><span>${d.remembered === true ? 'remembered' : d.remembered === false ? 'forgotten' : 'not woken yet'}</span></div><p>${esc((d.scenes || []).join(' … '))}</p>${d.question ? `<p class="muted">left her wondering: ${esc(d.question)}</p>` : ''}</div>`).join('') || '<p class="muted">no dreams logged</p>'}
+        ${x.lookback?.last ? `<p class="muted">look-back: ${esc((x.lookback.last.admitted || []).map((a) => a.text).join(' · ') || 'nothing kept')}</p>` : ''}
+      </div>
+      <div class="card"><h2>her changelog <small>she can read this · contests land here, never on telegram</small></h2>
+        ${(x.contests || []).map((c) => `<div class="thought"><div class="meta"><span class="about diego">contest</span><span>${esc(c.when)}</span></div><p>${esc(c.about)}<br><span class="muted">${esc(c.how)}</span></p></div>`).join('')}
+        ${(x.changes || []).map((c) => `<div class="diary-e"><span class="t">${esc(c.when)}</span>${esc(c.what)} <span class="muted">— ${esc(c.by)}</span></div>`).join('') || '<p class="muted">nothing changed</p>'}
+        ${(x.lifts || []).length ? `<p class="muted">lifts: ${x.lifts.map((l) => `${esc(l.when)}${l.told ? ' (told)' : ''}`).join(' · ')}</p>` : ''}
+      </div>`;
+    el.appendChild(box);
   }
 
   // ------------------------------------------------------------ hands

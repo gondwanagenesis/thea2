@@ -118,4 +118,5 @@ export {
   type DreamElement,
   type DreamRole,
 } from './dream.js';
+export { innerReport, overwritingIndex, pairedMargin, type InnerInput, type InnerEvent, type KillRow, type KillStatus } from './report.js';
 export { makeMindPipeline, UNDELIVERED_HEAD, type BodySeam, type MindPipeline, type MindPipelineDeps, type SelfEntryHandle } from './pipeline.js';

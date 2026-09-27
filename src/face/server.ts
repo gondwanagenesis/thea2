@@ -8,7 +8,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import type { EventLog } from '../events/index.js';
-import { affectHistory, familyView, mindView, moneyView, nowView, whyView, type FaceSources } from './data.js';
+import { affectHistory, familyView, innerView, mindView, moneyView, nowView, whyView, type FaceSources } from './data.js';
 import type { Live } from './live.js';
 import { leavePresent } from '../body/index.js';
 
@@ -89,6 +89,7 @@ export const startFaceServer = (d: FaceServerDeps): Promise<FaceServer> =>
             if (req.method === 'GET' && p === '/api/v2/mind') return json(res, 200, await mindView(d.sources));
             if (req.method === 'GET' && p === '/api/v2/family') return json(res, 200, await familyView(d.sources));
             if (req.method === 'GET' && p === '/api/v2/money') return json(res, 200, await moneyView(d.sources));
+            if (req.method === 'GET' && p === '/api/v2/inner') return json(res, 200, await innerView(d.sources));
             if (p === '/api/live/status') {
               const st = d.live?.status();
               return json(res, 200, st === undefined ? { calls: 0, voices: [], voice: '', minutes_today: 0, cost_today: 0, off: true } : { calls: st.calls, voices: st.voices, voice: st.voice, minutes_today: st.minutesToday, cost_today: st.costToday });
