@@ -46,6 +46,7 @@ import {
   type WanderCfg,
 } from '../mind/index.js';
 import { wakeNoteJob } from './wake-note.js';
+import { salonInboxJob, salonOutbox } from './salon.js';
 import { brokerShell, describeWhere, loadWhere, makeBody, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
 import { makeLive, startFaceServer, type FaceServer } from '../face/index.js';
@@ -408,11 +409,17 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         })
       : undefined;
 
+  // the salon (Diego: "i want them to talk"): the relay's inbox and her outbox, when she has a group
+  const salonDir = v('var/salon');
+  const salonGroup = cfg.bridge.allowedChatIds.find((id) => id < 0);
+
   // v13.1 her voice (Diego: "make her sound a lot more like thea 1"): fingerprints + dressing + redo
   const voice = mindCfg.voice === 'off' ? undefined : makeVoice({ mind, model, clock, rng: rng.fork('voice'), names: Object.values(cfg.people).map((p) => p.name ?? '').filter((n) => n !== ''), mode: mindCfg.voice });
 
   const pipeline = makeMindPipeline({
     ...(voice !== undefined ? { voice } : {}),
+    // the salon: her group sends, for the relay that carries them to Thea1
+    ...(salonGroup !== undefined ? { salonOut: salonOutbox(salonDir) } : {}),
     model,
     ...(fallbackModel !== undefined ? { fallbackModel } : {}),
     gate,
@@ -561,6 +568,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
       ...(body !== undefined ? [remindersJob(body.reminders, clock, (goal) => void pipeline.selfEntry('heartbeat', goal))] : []),
       // ops: a one-shot note left for when she wakes (his request, relayed — she writes it herself)
       wakeNoteJob({ file: path.join(paths.mind, 'wake-note.json'), clock, events, conversationActive, selfEntry: (goal) => pipeline.selfEntry('heartbeat', goal) }),
+      ...(salonGroup !== undefined ? [salonInboxJob({ dir: salonDir, groupChatId: salonGroup, clock, inbound: (m) => pipeline.inbound(m), events })] : []),
       // v10 workshop: the broker marks a deploy live ~45 s AFTER restarting her, so boot alone would miss it
       ...(body !== undefined
         ? [

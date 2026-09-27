@@ -1,0 +1,16 @@
+[Unit]
+Description=The salon — carries Thea1's and Thea2's group lines to each other while Diego has a salon open
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /opt/thea2/deploy/salon-relay.mjs
+Restart=on-failure
+RestartSec=5
+# reads Thea1's ledger + Thea2's outbox; writes only the two salon inboxes and its own state
+ReadWritePaths=/opt/holobionte/salon /opt/thea2/var/salon /var/lib/thea-salon
+ProtectSystem=full
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

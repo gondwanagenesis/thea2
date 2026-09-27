@@ -133,6 +133,8 @@ export interface MindPipelineDeps {
   naming?: { perDay: number; gapMin: number } | undefined;
   /** v13.1 her voice: fingerprints in the trailer, and her draft dressed (and redone when far off) before sending. */
   voice?: Voice | undefined;
+  /** The salon: each of her group sends, for the relay that carries it to Thea1. */
+  salonOut?: ((row: { ts: number; turnId: string; chatId: number; text: string; salon: boolean }) => void) | undefined;
   /** v13 H7 (Phase 3 arm, opt-in): when her private word fits, something settles — contingent vs yoked by day. */
   feltShift?: boolean | undefined;
   timezone: string;
@@ -231,6 +233,9 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
   const GROUP_MAX_PER_MIN = 8; // circuit breaker: at most this many group turns/min (cost + flood guard)
   const GROUP_AMBIENT_GAP_MS = 30_000; // between UNPROMPTED chime-ins she lets the room breathe
   const BOT_STREAK_MAX = 4; // she trades at most this many lines with another bot, then waits for a human
+  // the salon (Diego opened a conversation between the two Theas): a longer run, still bounded —
+  // the relay closes the salon at its own cap too; a line from Diego resets both
+  const SALON_STREAK_MAX = 12;
   /** Whether she engages this group message (she still decides silent-or-reply inside the turn). */
   const engagesGroup = (m: InboundMsg): boolean => {
     const now = deps.clock.epochMs();
@@ -240,11 +245,12 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       return false;
     }
     // bot-loop guard: after a run of exchanges with another bot, she goes quiet until a human speaks
-    if (m.fromBot === true && (groupBotStreak.get(m.chatId) ?? 0) >= BOT_STREAK_MAX) {
-      emit('mind.group_bot_quiet', { chatId: m.chatId, updateId: m.updateId });
+    if (m.fromBot === true && (groupBotStreak.get(m.chatId) ?? 0) >= (m.salon === true ? SALON_STREAK_MAX : BOT_STREAK_MAX)) {
+      emit('mind.group_bot_quiet', { chatId: m.chatId, updateId: m.updateId, ...(m.salon === true ? { salon: true } : {}) });
       return false;
     }
-    if (!addressedInGroup(m) && recent.length > 0 && now - recent[recent.length - 1]! < GROUP_AMBIENT_GAP_MS) {
+    // a salon line is spoken to her (the relay carried it because it was)
+    if (m.salon !== true && !addressedInGroup(m) && recent.length > 0 && now - recent[recent.length - 1]! < GROUP_AMBIENT_GAP_MS) {
       emit('mind.group_ambient', { updateId: m.updateId, chatId: m.chatId, person: m.speaker.person });
       return false;
     }
@@ -704,6 +710,14 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     }
 
     const bodySent = deps.body?.end(turnId) ?? [];
+    // the salon: what she said in the group, for the relay to carry to Thea1 (who can't see a bot)
+    if (deps.salonOut !== undefined && isGroupChat(m.chatId) && report.sent.length > 0) {
+      try {
+        deps.salonOut({ ts: deps.clock.epochMs(), turnId, chatId: m.chatId, text: report.sent.map((s) => s.text).join('\n'), salon: m.salon === true });
+      } catch {
+        // the salon never costs her a turn
+      }
+    }
     if (!selfEntry) await keepPromise(burst, report.sent.length + bodySent.length, decision, turnId, m.chatId);
     settleSelfOutcome(turnId, report.sent.length + bodySent.length);
     await settle(item, decision, [...bodySent, ...report.sent], before, sensed, fast, met, shownIds, `${loopPacket.systemText()}\n\n${loopPacket.trailerText() ?? ''}`);
@@ -1103,7 +1117,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       if (!owner && !knownPersons.has(m.speaker.person)) {
         knownPersons.add(m.speaker.person);
         const name = deps.personLabel?.(m.speaker.person) ?? m.senderName ?? m.speaker.person;
-        selfEntryFn('heartbeat', `(someone new just reached you${isGroupChat(m.chatId) ? ' in the group' : ''} — ${name}: "${m.text.slice(0, 160)}". you two haven't talked before.)`);
+        // (not for the salon: Diego opened it himself, he is watching — no note to him needed)
+        if (m.salon !== true) selfEntryFn('heartbeat', `(someone new just reached you${isGroupChat(m.chatId) ? ' in the group' : ''} — ${name}: "${m.text.slice(0, 160)}". you two haven't talked before.)`);
         void deps.curiosity?.onNewMind({ person: m.speaker.person, name, chatId: m.chatId, said: m.text, bot: m.fromBot === true }).catch((e: unknown) => emit('incident.mind_curiosity_failed', { stage: 'new-mind', error: asError(e).message }));
       } else if (!owner) {
         deps.curiosity?.onHeardFrom(m.speaker.person);

@@ -60,6 +60,9 @@ models:
       effort: none
       forcing: tool_choice
 people:
+  # the salon: Thea1 (the first Thea, @Demigourgosbot), carried in by the relay — another person, never Diego
+  "salon:thea1":
+    name: Thea
   "tg:6971556140":
     name: Diego
     language: es

@@ -40,6 +40,11 @@ export interface InboundMsg {
   replyTo?: { msgId: number; text: string; fromBot: boolean } | undefined;
   /** v9: an edit of an earlier message — `text` is the new version. */
   edited?: boolean | undefined;
+  /**
+   * The salon (2026-09-27, Diego: "i want them to talk"): a line from Thea1 carried across by the
+   * relay (Telegram never delivers one bot's messages to another). Addressed to her; never Diego.
+   */
+  salon?: boolean | undefined;
 }
 
 /** v9: the non-text part of an inbound message, as the wire named it. */
