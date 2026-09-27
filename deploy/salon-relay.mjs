@@ -95,8 +95,16 @@ const close = (why) => {
   save(s);
 };
 
+const lastCarried = {};
 const carry = (to, from, text) => {
   if (!s.open || s.carried >= CAP) return;
+  // the same line twice from the same side within a minute is a double send, never a new line
+  const prev = lastCarried[from];
+  if (prev && prev.text === text && Date.now() - prev.at < 60_000) {
+    log(`${from}: duplicate line dropped`);
+    return;
+  }
+  lastCarried[from] = { text, at: Date.now() };
   drop(to === 't1' ? T1_INBOX : T2_INBOX, from, text);
   s.carried += 1;
   s.lastAt = Date.now();
