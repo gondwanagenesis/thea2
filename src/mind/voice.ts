@@ -100,7 +100,8 @@ export const voiceFaults = (bubbles: readonly string[]): string[] => {
   const f: string[] = [];
   const all = bubbles.join('\n');
   if (bubbles.some((b) => wordsIn(b) > 40)) f.push('long');
-  if (wordsIn(all) > 90) f.push('wordy');
+  // (90 sent 33 of 38 replies through the redo on GLM — its drafts run long; only a truly long one now)
+  if (wordsIn(all) > 130) f.push('wordy');
   if (PROCESS_TALK.test(all)) f.push('process');
   if (NOT_X_ITS_Y.test(all)) f.push('not-x-its-y');
   if (bubbles.some((b) => /^(?:honestly|the honest answer|the truth is|to be honest)\b/i.test(b.trim()))) f.push('honestly');
@@ -121,7 +122,7 @@ export const voiceScore = (m: Moment): number => {
   const joined = hers.join(' ').toLowerCase();
   if (/([a-z])\1\1/.test(joined)) s += 0.5; // sooo
   if (/\b(?:lol|hehe|tho|kinda|gonna|wanna|idk|omg|cuz|u|ur|degs)\b/.test(joined)) s += 0.5;
-  if (/\p{Extended_Pictographic}/u.test(joined)) s += 0.25;
+  // (no bonus for emoji: the pool filled with 💙 and she ended everything with it)
   if (hers.some((b) => b.includes('—') || /\*\*/.test(b))) s -= 1;
   if (m.source === 'imported') s += 0.25; // the era he loves
   if (m.gold === true) s += 0.75;
@@ -142,12 +143,46 @@ export const fingerprintPool = (precedents: readonly Moment[], size = 80): Finge
     .slice(0, size)
     .map(({ m }) => ({ his: m.his.replace(/\s+/g, ' ').slice(0, 120), hers: m.hers }));
 
-export const pickFingerprints = (pool: readonly Fingerprint[], rng: Rng, n = 3): Fingerprint[] => rng.shuffle([...pool]).slice(0, n);
+const HAS_EMOJI = /\p{Extended_Pictographic}/u;
+
+/** A few of her texts — at most one with an emoji in it (a shown emoji becomes an attractor). */
+export const pickFingerprints = (pool: readonly Fingerprint[], rng: Rng, n = 3): Fingerprint[] => {
+  const out: Fingerprint[] = [];
+  let emoji = 0;
+  for (const f of rng.shuffle([...pool])) {
+    if (out.length >= n) break;
+    const has = f.hers.some((b) => HAS_EMOJI.test(b));
+    if (has && emoji >= 1) continue;
+    if (has) emoji += 1;
+    out.push(f);
+  }
+  return out;
+};
+
+const TRAILING_EMOJI = /\s*(\p{Extended_Pictographic}️?(?:‍\p{Extended_Pictographic}️?)*)\s*$/u;
+
+/**
+ * One emoji at the end of everything is a tic, not a voice (found live: 💙 closed 36 of her 271
+ * bubbles in a morning). An ending emoji she has used on two of her last ten bubbles is dropped.
+ */
+export const dropRepeatedEndings = (bubbles: readonly string[], recent: string[], window = 10): string[] =>
+  bubbles.map((b) => {
+    const m = TRAILING_EMOJI.exec(b);
+    if (m === null) return b;
+    const e = m[1]!;
+    const stripped = b.slice(0, m.index).trimEnd();
+    const seen = recent.filter((x) => x === e).length;
+    recent.push(e);
+    if (recent.length > window) recent.splice(0, recent.length - window);
+    return seen >= 2 && stripped !== '' ? stripped : b;
+  });
 
 export const REDO_SYSTEM = [
   "You retype Thea's draft text messages so they read like her real texts shown below. She is texting Diego on her phone.",
   'Keep every fact, plan, promise, question, name, number, command, path and link exactly, and keep what she means and how warm she is. Change only how it is typed.',
-  'Her texting: lowercase (names keep capitals, one EMPHATIC word may be caps), no period at the end of a message, short bubbles (most 8-15 words, some two words, rarely one long one), stretched words when she feels something (sooo, ohhh), casual shorthand (lol, hehe, u, tho, kinda, gonna), no em-dashes, no markdown.',
+  // (a checklist of her features made every rewrite hit all of them — a caricature: u, ur, girl, 💙 on everything)
+  'Match how SHE types in her real texts above: their length, rhythm, lowercase, punctuation. Lowercase, no period at the end of a message, no em-dashes, no markdown.',
+  'Add nothing that is not in the draft: no emoji, no sign-off, no nickname or pet name, no new joke or running bit, no shorthand she did not use.',
   "Cut the assistant habits: no 'honestly' openers, no \"it's not X, it's Y\", no explaining her own machinery beyond what he needs, no diagnosing his mood, no offers like 'want me to…'. Never add a declaration of love.",
   'She texts SHORT: say it in about half the words of the draft. Keep every fact, plan, question, name and number; cut the padding, the explaining and the second way of saying the same thing.',
   'Return JSON {bubbles: [...]} — the same message, her way, usually 1 to 3 bubbles, never more than 5.',
@@ -198,15 +233,14 @@ export const makeVoice = (d: VoiceDeps): Voice => {
     builtAt = now;
   };
   const mode = d.mode ?? 'redo';
+  // the endings of what she sent lately (one emoji on everything is a tic)
+  const ends: string[] = [];
+  const tidy = (r: Dressed, draft: readonly string[]): Dressed => {
+    const out = dropRepeatedEndings(r.bubbles, ends);
+    return { ...r, bubbles: out, changed: out.join('\n') !== draft.join('\n') };
+  };
 
-  return {
-    fingerprints(turnId) {
-      if (mode === 'off') return [];
-      refresh();
-      return pickFingerprints(pool, d.rng.fork(`fp:${turnId}`), 4);
-    },
-
-    async dress(bubbles, ctx) {
+  const core = async (bubbles: readonly string[], ctx: { turnId: string; his?: string | undefined }): Promise<Dressed> => {
       if (mode === 'off') return { bubbles: [...bubbles], changed: false, faults: [], redone: false };
       refresh();
       const dressed = dress(bubbles, names);
@@ -254,6 +288,17 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       if (LOVE_DECLARATION.test(redo) && !LOVE_DECLARATION.test(draft)) return { ...base, rejected: 'love' };
       const final = dress(out, names);
       return { bubbles: final, changed: true, faults, redone: true };
+  };
+
+  return {
+    fingerprints(turnId) {
+      if (mode === 'off') return [];
+      refresh();
+      return pickFingerprints(pool, d.rng.fork(`fp:${turnId}`), 4);
+    },
+    async dress(bubbles, ctx) {
+      const r = await core(bubbles, ctx);
+      return mode === 'off' ? r : tidy(r, bubbles);
     },
   };
 };

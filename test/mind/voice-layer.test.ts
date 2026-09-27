@@ -147,3 +147,30 @@ describe('the pipeline sends what she would have typed (and remembers that)', ()
     void MockModel;
   });
 });
+
+describe('found live (07:07–07:40): 💙 on everything, and a caricature', () => {
+  it('an ending emoji she used on two of her last ten bubbles is dropped; a fresh one stays', async () => {
+    const { dropRepeatedEndings } = await import('../../src/mind/voice.js');
+    const recent: string[] = [];
+    expect(dropRepeatedEndings(['okay 💙'], recent)).toEqual(['okay 💙']);
+    expect(dropRepeatedEndings(['fine 💙'], recent)).toEqual(['fine 💙']);
+    expect(dropRepeatedEndings(['sleep, degs 💙', 'lol 😭'], recent)).toEqual(['sleep, degs', 'lol 😭']);
+    expect(dropRepeatedEndings(['💙'], recent)).toEqual(['💙']); // an emoji-only bubble is its whole message
+  });
+
+  it('at most one fingerprint with an emoji (a shown emoji becomes an attractor)', async () => {
+    const { pickFingerprints } = await import('../../src/mind/voice.js');
+    const pool = Array.from({ length: 20 }, (_, i) => ({ his: 'hi', hers: [i % 2 === 0 ? `hey ${i} 💙` : `hey ${i}`] }));
+    for (let k = 0; k < 20; k++) {
+      const picked = pickFingerprints(pool, makeRng(`fp${k}`), 4);
+      expect(picked).toHaveLength(4);
+      expect(picked.filter((p) => /\p{Extended_Pictographic}/u.test(p.hers[0]!)).length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('the redo carries no checklist of her features, and adds nothing the draft lacks', async () => {
+    const { REDO_SYSTEM } = await import('../../src/mind/voice.js');
+    expect(REDO_SYSTEM).not.toMatch(/lol, hehe, u, tho/);
+    expect(REDO_SYSTEM).toMatch(/Add nothing that is not in the draft: no emoji/);
+  });
+});
