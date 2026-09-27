@@ -3,6 +3,7 @@
 // and a guarded redo when it is still far off. Real bubbles from her live ledger are the fixtures.
 
 import { describe, expect, it } from 'vitest';
+import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { makeHashEmbedder } from '../../src/embed/index.js';
 import { makeRng, TestClock } from '../../src/kernel/index.js';
@@ -172,5 +173,68 @@ describe('found live (07:07–07:40): 💙 on everything, and a caricature', () 
     const { REDO_SYSTEM } = await import('../../src/mind/voice.js');
     expect(REDO_SYSTEM).not.toMatch(/lol, hehe, u, tho/);
     expect(REDO_SYSTEM).toMatch(/Add nothing that is not in the draft: no emoji/);
+  });
+});
+
+describe('the mouth: every reply typed from her nearest real messages (Diego: "a layer whose only job is to turn it into her voice")', () => {
+  const buildCorpus = async (dir: string, ex: Array<{ id: string; source: 'thea1' | 'thea2' | 'elena' | 'thea1-exemplar'; his: string; hers: string[] }>) => {
+    const emb = makeHashEmbedder();
+    const vs = await emb.embed(ex.map((e) => e.hers.join('\n')));
+    const vecs = new Float32Array(ex.length * emb.dim);
+    vs.forEach((v, i) => vecs.set(v, i * emb.dim));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(join(dir, 'corpus.jsonl'), ex.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    fs.writeFileSync(join(dir, 'corpus.f32'), Buffer.from(vecs.buffer));
+    fs.writeFileSync(join(dir, 'corpus.meta.json'), JSON.stringify({ n: ex.length, dim: emb.dim }));
+    return emb;
+  };
+  const EX = [
+    { id: 'a', source: 'thea1' as const, his: 'rough news today', hers: ['okay. tell me all of it.', 'no jokes, i\'m here'] },
+    { id: 'b', source: 'thea1' as const, his: 'haha', hers: ["i'm DELIGHTFUL and you know it"] },
+    { id: 'c', source: 'elena' as const, his: 'sup', hers: ['it is i'] },
+    { id: 'd', source: 'elena' as const, his: 'hey', hers: ['yes feels nice and secluded in here'] },
+    { id: 'e', source: 'elena' as const, his: 'lol', hers: ['they walked so brandy could run'] },
+  ];
+
+  it('the corpus loads, and the nearest examples come mostly from her (at most two of Elena\'s)', async () => {
+    const { loadVoiceCorpus, nearestExamples } = await import('../../src/mind/index.js');
+    const dir = join(tmpDir('thea2-mouth-'), 'voice');
+    const emb = await buildCorpus(dir, EX);
+    const c = loadVoiceCorpus(dir)!;
+    expect(c.examples).toHaveLength(5);
+    const [q] = await emb.embed(['tell me all of it, i am here']);
+    const near = nearestExamples(c, q!, 5);
+    expect(near[0]!.id).toBe('a');
+    expect(near.filter((e) => e.source === 'elena').length).toBeLessThanOrEqual(2);
+    expect(loadVoiceCorpus(join(dir, 'nope'))).toBeUndefined();
+  });
+
+  it('every reply goes through the mouth (not only bad ones) with her real messages in front of it; a tiny one is just dressed', async () => {
+    const dir = join(tmpDir('thea2-mouth-'), 'voice');
+    const emb = await buildCorpus(dir, EX);
+    const clock = new TestClock(T0);
+    const mind = openMindStore(join(tmpDir('thea2-mouth-m-'), 'mind'), emb.dim);
+    const seen: string[] = [];
+    const model = { chat: async (req: { messages: Array<{ content: string }> }) => (seen.push(JSON.stringify(req)), { content: { bubbles: ['okay. tell me', "i'm here"] }, usage: {}, model: 'm' }) } as unknown as ModelClient;
+    const voice = makeVoice({ mind, model, clock, rng: makeRng('m'), mode: 'mouth', embedder: emb, corpusDir: dir });
+    const out = await voice.dress(['Okay. Tell me everything that happened today, I am here.'], { turnId: 't', his: 'rough day' });
+    expect(out).toMatchObject({ redone: true, by: 'mouth', bubbles: ['okay. tell me', "i'm here"] });
+    expect(seen[0]).toContain('[how she texts: real messages]');
+    expect(seen[0]).toContain('okay. tell me all of it.');
+    expect(seen[0]).toContain('[what was just said to her]');
+    const tiny = await voice.dress(['Lol.'], { turnId: 't2' });
+    expect(tiny).toMatchObject({ bubbles: ['lol'], redone: false });
+    expect(seen).toHaveLength(1);
+  });
+
+  it('the mouth keeps what she means: a rewrite that loses an exact detail goes out as her dressed draft', async () => {
+    const dir = join(tmpDir('thea2-mouth-'), 'voice');
+    const emb = await buildCorpus(dir, EX);
+    const mind = openMindStore(join(tmpDir('thea2-mouth-m-'), 'mind'), emb.dim);
+    const model = { chat: async () => ({ content: { bubbles: ['see u at some point'] }, usage: {}, model: 'm' }) } as unknown as ModelClient;
+    const voice = makeVoice({ mind, model, clock: new TestClock(T0), rng: makeRng('m'), mode: 'mouth', embedder: emb, corpusDir: dir });
+    const out = await voice.dress(['I will meet you at 14:30 by the station.'], { turnId: 't' });
+    expect(out.rejected).toMatch(/lost/);
+    expect(out.bubbles).toEqual(['i will meet you at 14:30 by the station']);
   });
 });

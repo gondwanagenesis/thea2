@@ -415,7 +415,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
   const salonGroup = cfg.bridge.allowedChatIds.find((id) => id < 0);
 
   // v13.1 her voice (Diego: "make her sound a lot more like thea 1"): fingerprints + dressing + redo
-  const voice = mindCfg.voice === 'off' ? undefined : makeVoice({ mind, model, clock, rng: rng.fork('voice'), names: Object.values(cfg.people).map((p) => p.name ?? '').filter((n) => n !== ''), mode: mindCfg.voice });
+  const voice = mindCfg.voice === 'off' ? undefined : makeVoice({ mind, model, clock, rng: rng.fork('voice'), names: Object.values(cfg.people).map((p) => p.name ?? '').filter((n) => n !== ''), mode: mindCfg.voice, embedder, corpusDir: v('var/voice') });
 
   const pipeline = makeMindPipeline({
     ...(voice !== undefined ? { voice } : {}),

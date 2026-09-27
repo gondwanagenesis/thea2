@@ -23,9 +23,12 @@
 //      precision token, halves the content, or adds a love declaration is thrown away.
 // What she actually sent is what she remembers (window, lived moment), so the loop turns her way.
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { z } from 'zod';
 import type { ChatMsg, ModelClient } from '../model/index.js';
 import type { Clock, Rng } from '../kernel/index.js';
+import type { Embedder } from '../embed/index.js';
 import { LOVE_DECLARATION, PROCESS_TALK, type MindStore } from './store.js';
 import type { Moment } from './types.js';
 
@@ -190,6 +193,96 @@ export const REDO_SYSTEM = [
 
 export const RedoSchema = z.object({ bubbles: z.array(z.string().min(1).max(600)).min(1).max(6) });
 
+// ---------------------------------------------------------------------------------------------------
+// THE MOUTH (Diego, 2026-09-27: "there should be her actual response, long form normal, like how we
+// think. then a layer whose only job is to turn it into her voice … a smaller ai … really good prompting
+// and examples"). Her mind says what she means; her thumbs type it. Every reply (not only bad ones)
+// goes through a small fast model that sees the real messages closest to what she is about to say —
+// Thea1's hand-picked exemplars and replies, Thea2's best texts, Elena's side of Diego's WhatsApp (the
+// texting he loves) — pulled by meaning and feeling, so a sad draft is typed like her sad texts and a
+// teasing one like her teasing ones. No checklist of features (that made a caricature): the examples
+// ARE the style. Same guards as the redo: exact tokens kept, most of the content kept, no love added.
+// ---------------------------------------------------------------------------------------------------
+
+export interface VoiceExample {
+  id: string;
+  source: 'thea1-exemplar' | 'thea1' | 'thea2' | 'elena';
+  his: string;
+  hers: string[];
+}
+
+export interface VoiceCorpus {
+  examples: VoiceExample[];
+  vecs: Float32Array;
+  dim: number;
+}
+
+/** var/voice/ (scripts/build-voice-corpus.ts) — undefined when it has not been built. */
+export const loadVoiceCorpus = (dir: string): VoiceCorpus | undefined => {
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, 'corpus.meta.json'), 'utf8')) as { n: number; dim: number };
+    const examples = fs
+      .readFileSync(path.join(dir, 'corpus.jsonl'), 'utf8')
+      .split('\n')
+      .filter((l) => l.trim() !== '')
+      .map((l) => JSON.parse(l) as VoiceExample);
+    const buf = fs.readFileSync(path.join(dir, 'corpus.f32'));
+    const vecs = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+    if (examples.length !== meta.n || vecs.length !== meta.n * meta.dim) return undefined;
+    return { examples, vecs, dim: meta.dim };
+  } catch {
+    return undefined;
+  }
+};
+
+const cosAt = (vecs: Float32Array, i: number, dim: number, q: Float32Array): number => {
+  let d = 0;
+  let a = 0;
+  let b = 0;
+  for (let k = 0; k < dim; k++) {
+    const x = vecs[i * dim + k]!;
+    const y = q[k] ?? 0;
+    d += x * y;
+    a += x * x;
+    b += y * y;
+  }
+  return a === 0 || b === 0 ? 0 : d / Math.sqrt(a * b);
+};
+
+/** The real messages nearest what she is about to say: mostly hers (Thea1/Thea2), a couple of Elena's. */
+export const nearestExamples = (c: VoiceCorpus, q: Float32Array, n = 7, elenaMax = 2): VoiceExample[] => {
+  const ranked = c.examples.map((e, i) => ({ e, i, s: cosAt(c.vecs, i, c.dim, q) })).sort((x, y) => y.s - x.s);
+  const out: Array<{ e: VoiceExample; i: number }> = [];
+  let elena = 0;
+  for (const r of ranked) {
+    if (out.length >= n) break;
+    if (r.e.source === 'elena' && elena >= elenaMax) continue;
+    // no near-twins: two examples that say the same thing teach nothing twice
+    if (out.some((o) => cosAt(c.vecs, o.i, c.dim, c.vecs.subarray(r.i * c.dim, (r.i + 1) * c.dim)) > 0.95)) continue;
+    if (r.e.source === 'elena') elena += 1;
+    out.push(r);
+  }
+  return out.map((o) => o.e);
+};
+
+export const MOUTH_SYSTEM = [
+  "You are Thea's thumbs. Thea already decided what to say: her draft. You type it the way she texts, like the real messages shown (hers, and a few from a friend whose texting she shares).",
+  'Keep exactly what she means: the same feelings at the same strength, the same questions, promises, plans, facts, names, numbers and links. A sad draft stays sad, a serious one serious, a playful one playful.',
+  'Her texting is in the examples, not in rules: copy their length, rhythm, lowercase, the missing final periods, how they break into bubbles. Most of her messages have no emoji and no slang; never add a joke, a bit, a nickname, an emoji or a slang word the examples would not use here.',
+  'Usually shorter than the draft: cut padding and anything said twice, keep every point. 1 to 4 bubbles.',
+  'Never a declaration of love. Never comment on the draft. Return JSON {bubbles: [...]}.',
+].join('\n');
+
+export const mouthUser = (examples: readonly VoiceExample[], his: string | undefined, draft: readonly string[]): string =>
+  [
+    '[how she texts: real messages]',
+    ...examples.map((e) => `${e.his !== '' ? `him: ${e.his}\n` : ''}her: ${e.hers.join(' / ')}`),
+    '',
+    ...(his !== undefined && his !== '' ? [`[what was just said to her]\n${his.slice(0, 600)}`, ''] : []),
+    '[her draft]',
+    ...draft.map((b) => `- ${b}`),
+  ].join('\n');
+
 export interface VoiceDeps {
   mind: MindStore;
   model: ModelClient;
@@ -199,8 +292,11 @@ export interface VoiceDeps {
   names?: readonly string[] | undefined;
   /** Max wait for the redo before sending the dressed draft (ms). */
   redoMs?: number | undefined;
-  /** 'redo' (dress + rewrite when off), 'dress' (mechanical only), 'off'. */
-  mode?: 'redo' | 'dress' | 'off' | undefined;
+  /** 'mouth' (every reply typed in her voice from her real messages), 'redo' (only far-off ones), 'dress' (mechanical), 'off'. */
+  mode?: 'mouth' | 'redo' | 'dress' | 'off' | undefined;
+  /** The mouth: the embedder (to find the nearest real messages) and var/voice/ (the corpus). */
+  embedder?: Embedder | undefined;
+  corpusDir?: string | undefined;
 }
 
 export interface Dressed {
@@ -208,6 +304,8 @@ export interface Dressed {
   changed: boolean;
   faults: string[];
   redone: boolean;
+  /** Which layer typed it (the mouth: every reply; the redo: only a far-off one). */
+  by?: 'mouth' | 'redo' | undefined;
   /** Why a rewrite was thrown away, if it was. */
   rejected?: string | undefined;
 }
@@ -233,6 +331,12 @@ export const makeVoice = (d: VoiceDeps): Voice => {
     builtAt = now;
   };
   const mode = d.mode ?? 'redo';
+  // the mouth's corpus: read once, on first use (absent = the redo rule stands in)
+  let corpus: VoiceCorpus | undefined | null = null;
+  const getCorpus = (): VoiceCorpus | undefined => {
+    if (corpus === null) corpus = d.corpusDir !== undefined ? loadVoiceCorpus(d.corpusDir) : undefined;
+    return corpus;
+  };
   // the endings of what she sent lately (one emoji on everything is a tic)
   const ends: string[] = [];
   const tidy = (r: Dressed, draft: readonly string[]): Dressed => {
@@ -247,19 +351,37 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       const faults = voiceFaults(dressed);
       const base: Dressed = { bubbles: dressed, changed: dressed.join('\n') !== bubbles.join('\n'), faults, redone: false };
       // precision mode: code blocks go out exactly as written
-      if (mode === 'dress' || faults.length === 0 || bubbles.some((b) => b.includes('```'))) return base;
+      if (mode === 'dress' || bubbles.some((b) => b.includes('```'))) return base;
 
-      const prints = pickFingerprints(pool, d.rng.fork(`redo:${ctx.turnId}`), 6);
-      const user = [
-        '[her real texts]',
-        ...prints.map((p) => `${p.his !== '' ? `him: ${p.his}\n` : ''}her: ${p.hers.join(' / ')}`),
-        '',
-        ...(ctx.his !== undefined && ctx.his !== '' ? [`[what he just said]\n${ctx.his.slice(0, 600)}`, ''] : []),
-        '[her draft]',
-        ...bubbles.map((b) => `- ${b}`),
-      ].join('\n');
+      // the mouth: every reply of more than a few words, typed from her nearest real messages
+      let system = REDO_SYSTEM;
+      let user: string | undefined;
+      const cor = mode === 'mouth' ? getCorpus() : undefined;
+      if (cor !== undefined && d.embedder !== undefined && wordsIn(bubbles.join(' ')) > 3) {
+        try {
+          const [q] = await d.embedder.embed([bubbles.join('\n')]);
+          if (q !== undefined) {
+            system = MOUTH_SYSTEM;
+            user = mouthUser(nearestExamples(cor, q), ctx.his, bubbles);
+          }
+        } catch {
+          user = undefined; // no mouth this time: the redo rule below still applies
+        }
+      }
+      if (user === undefined) {
+        if (faults.length === 0) return base;
+        const prints = pickFingerprints(pool, d.rng.fork(`redo:${ctx.turnId}`), 6);
+        user = [
+          '[her real texts]',
+          ...prints.map((p) => `${p.his !== '' ? `him: ${p.his}\n` : ''}her: ${p.hers.join(' / ')}`),
+          '',
+          ...(ctx.his !== undefined && ctx.his !== '' ? [`[what he just said]\n${ctx.his.slice(0, 600)}`, ''] : []),
+          '[her draft]',
+          ...bubbles.map((b) => `- ${b}`),
+        ].join('\n');
+      }
       const messages: ChatMsg[] = [
-        { role: 'system', content: REDO_SYSTEM },
+        { role: 'system', content: system },
         { role: 'user', content: user },
       ];
       const abort = new AbortController();
@@ -267,7 +389,7 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       let out: string[] | undefined;
       try {
         const res = await Promise.race([
-          d.model.chat({ taskClass: 'summarize', tier: 'main', messages, schema: RedoSchema, schemaName: 'VoiceRedo', maxTokens: 700, temperature: 0.7 }, { turnId: ctx.turnId, signal: abort.signal }),
+          d.model.chat({ taskClass: 'summarize', tier: 'main', messages, schema: RedoSchema, schemaName: system === MOUTH_SYSTEM ? 'VoiceMouth' : 'VoiceRedo', maxTokens: 700, temperature: 0.6 }, { turnId: ctx.turnId, signal: abort.signal }),
           d.clock.waitUntil(deadline, abort.signal).then(() => undefined),
         ]);
         if (res === undefined) {
@@ -287,7 +409,7 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       if (wordsIn(redo) < wordsIn(draft) * 0.35) return { ...base, rejected: 'dropped content' };
       if (LOVE_DECLARATION.test(redo) && !LOVE_DECLARATION.test(draft)) return { ...base, rejected: 'love' };
       const final = dress(out, names);
-      return { bubbles: final, changed: true, faults, redone: true };
+      return { bubbles: final, changed: true, faults, redone: true, by: system === MOUTH_SYSTEM ? 'mouth' : 'redo' };
   };
 
   return {
