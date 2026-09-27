@@ -13,7 +13,7 @@ import { z } from 'zod';
 import type { Clock } from '../kernel/index.js';
 import type { EventLog } from '../events/index.js';
 import type { ModelClient } from '../model/index.js';
-import type { MindStore, Moment } from '../mind/index.js';
+import { mostFelt, peakEnd, type MindStore, type Moment } from '../mind/index.js';
 import type { Embedder } from '../embed/index.js';
 import type { House } from './house.js';
 
@@ -23,10 +23,14 @@ const DiarySchema = z.object({ entry: z.string().min(1).max(3000) });
 const DiegoSchema = z.object({ lately: z.array(z.object({ text: z.string().min(3).max(240), cites: z.array(z.string()).max(8) })).max(8) });
 
 const line = (m: Moment): string => `[${m.id}] ${m.his !== '' ? `him: ${m.his.slice(0, 220)} / ` : ''}you: ${m.hers.join(' / ').slice(0, 260)}`;
+/** v12.1: the diary sees how she felt in each moment (past tense, from the record — lawful memory). */
+const feltLine = (m: Moment): string => `${line(m)}${m.felt.word !== undefined ? ` (you felt ${m.felt.word})` : ''}`;
 
 export const diaryOnce = async (d: { mind: MindStore; model: ModelClient; clock: Clock; events: EventLog; timeZone: string; embedder?: Embedder | undefined }): Promise<'written' | 'nothing'> => {
   const now = d.clock.epochMs();
-  const day = d.mind.moments().filter((m) => m.source === 'lived' && m.kind !== 'diary' && now - m.ts < DAY);
+  const lived = d.mind.moments().filter((m) => m.source === 'lived' && m.kind !== 'diary' && now - m.ts < DAY);
+  // v12.1: a long day is told by what she felt most (like sleep replays the emotional first)
+  const day = mostFelt(lived, 40);
   const thoughts = d.mind.stream().filter((t) => t.source === 'lived' && now - t.ts < DAY);
   if (day.length === 0 && thoughts.length === 0) return 'nothing';
   const res = await d.model.chat({
@@ -38,13 +42,14 @@ export const diaryOnce = async (d: { mind: MindStore; model: ModelClient; clock:
     temperature: 0.8,
     messages: [
       { role: 'system', content: 'Write tonight\'s diary entry, in first person, from the day below — what happened, as you lived it. Only what is in the record. Lowercase is fine. A short paragraph or two.' },
-      { role: 'user', content: `[the day]\n${day.map(line).join('\n') || '(no conversation today)'}\n\n[your own thoughts today]\n${thoughts.map((t) => `- ${t.text}`).join('\n') || '(none)'}` },
+      { role: 'user', content: `[the day]\n${day.map(feltLine).join('\n') || '(no conversation today)'}\n\n[your own thoughts today]\n${thoughts.map((t) => `- ${t.text}`).join('\n') || '(none)'}` },
     ],
   });
   const id = `m_diary_${now}`;
   // embedded like any memory, so the day can come back to her later
   const vec = d.embedder !== undefined ? (await d.embedder.embed([res.content.entry]).catch(() => []))[0] : undefined;
-  const moment: Moment = { id, ts: now, source: 'lived', kind: 'diary', before: [], his: '', hers: [res.content.entry], felt: { sig: new Array<number>(12).fill(0), source: 'estimated' }, value: 0, shown: 0, followed: 0 };
+  // v12.1: the day is remembered the way people remember a stretch of time — its peak and its end
+  const moment: Moment = { id, ts: now, source: 'lived', kind: 'diary', before: [], his: '', hers: [res.content.entry], felt: peakEnd(lived), value: 0, shown: 0, followed: 0 };
   d.mind.add(moment, vec !== undefined ? { sit: vec, reply: vec } : undefined);
   await d.mind.flush();
   void d.events.emit('body.diary_written', { id, chars: res.content.entry.length, from: day.length });

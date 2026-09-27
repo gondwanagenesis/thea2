@@ -20,6 +20,18 @@ The v8 theory, in code: **her inner life is written into the machinery, never in
 | 1.4 Thoughts arise — salience over the unresolved, habituation, never self-seeding | `wander.ts` | `wander-sleep.test.ts` |
 | 1.5 Experience changes her — RPE value, followed-option credit, reconsolidation | `remember.ts`, `pipeline.ts` afterturn | `laws.test.ts` › conditioning + extinction, reconsolidation |
 
+## v12.1 felt memory (2026-09-27)
+
+Emotion does three jobs for memory: it makes a memory stick, says whether it was good or bad, and pulls up memories that match the mood. v8 had the last two. v12.1 adds the first and closes the gaps (`test/mind/felt-memory.test.ts`):
+
+- **Intensity.** `evoke.ts` `intensityTerm`: `EVOKE_WEIGHTS.intensity` (0.1) × `feltIntensity` (the signature's peak dim, 0–1; exactly i/10 for a tag signature) × source weight, softened by `1 / (1 + shown / 10)` so a charged memory can't dominate forever. It applies to options and, as a tie-break inside the similarity floor, to diary/thought memories.
+- **Inherited feelings.** `NONEXACT_FELT_WEIGHT` is 0.75 (was 0.5) for the mood and intensity terms.
+- **Fading.** `sleep.ts` value fade is `VALUE_FADE` (0.97) + `VALUE_FADE_FELT_BONUS` (0.025) × intensity: a fully intense memory fades at ×0.995.
+- **The night.** On a long day, the self-rewrite and the diary see the 40 moments she felt most (`remember.ts` `mostFelt`), in lived order. The diary lines carry "(you felt X)" (past tense, lawful). The diary moment's feeling follows the peak-end rule (`peakEnd`).
+- **Findings.** Stored with her exact state after the curious/delighted events land (`CuriosityDeps.feltNow`). They were stored blank.
+- **His reactions** (`pipeline.ts` `onReaction`). Only his count. Any emoji but 👎 means gold + value half-way to +1. 👎 means never + value half-way to −1. `memory.reaction` carries `his` and `verdict`.
+- **Backfill.** `scripts/backfill-felt.ts` labels emotionally blank imported memories with her closed vocabulary (the import silently dropped off-vocabulary words). It is a dry run by default; `--apply` backs up `moments.jsonl` and refuses while thead holds the lock.
+
 ## The turn
 
 `SENSE → EVOKE → FEEL fast → MODULATE → THINK&SPEAK (runLoop, one voice call) → EXPRESS (realize)`, then detached `FEEL slow → REMEMBER`. The delivery plumbing (queue, interruption + carry-over, decision rows before realization, ledger rows per send, errors as values) is v7's, adapted in `pipeline.ts`. A dead voice door falls back once to `voiceFallback`.

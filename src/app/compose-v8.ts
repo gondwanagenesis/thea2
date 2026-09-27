@@ -30,6 +30,7 @@ import {
   openMindStore,
   sleepJob,
   tryTextFirst,
+  vecToArray,
   wanderJob,
   type Curiosity,
   type MindPipeline,
@@ -352,6 +353,8 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
           selfEntryIn: (chatId, goal) => pipeline.selfEntry('heartbeat', goal, chatId).sent,
           tellHim: (goal) =>
             tryTextFirst({ mind, clock, cfg: wanderCfg, conversationActive: () => conversationActive(), selfEntry: (g) => pipeline.selfEntry('heartbeat', g).sent }, goal),
+          // v12.1: a finding is remembered with how it felt (the same exact state a reply is encoded with)
+          feltNow: () => vecToArray(signature(affect.current(), COUPLING_BASELINES)),
         })
       : undefined;
 

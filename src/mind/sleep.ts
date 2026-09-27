@@ -17,8 +17,15 @@ import type { Clock } from '../kernel/index.js';
 import type { EventLog } from '../events/index.js';
 import type { MindStore } from './store.js';
 import type { SelfLine } from './types.js';
+import { feltIntensity } from './vocab.js';
+import { mostFelt } from './remember.js';
 
 const DAY = 24 * 3600_000;
+
+/** Nightly value fade for memories older than a week (plan §3.10). */
+export const VALUE_FADE = 0.97;
+/** v12.1: how much slower a fully intense memory fades (emotional memories resist forgetting). */
+export const VALUE_FADE_FELT_BONUS = 0.025;
 
 export const SelfRewriteSchema = z.object({
   lines: z.array(z.object({ text: z.string().min(1).max(300), cites: z.array(z.string()).max(8) })).min(1).max(12),
@@ -52,7 +59,8 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
       swept += 1;
     }
     if (m.gold !== true && m.value !== 0 && now - m.ts > 7 * DAY) {
-      mind.update(m.id, { value: Math.round(m.value * 0.97 * 1000) / 1000 });
+      // v12.1: what she felt strongly fades slower (×0.97 flat → up to ×0.995 at full intensity)
+      mind.update(m.id, { value: Math.round(m.value * (VALUE_FADE + VALUE_FADE_FELT_BONUS * feltIntensity(m.felt.sig)) * 1000) / 1000 });
       decayed += 1;
     }
   }
@@ -63,8 +71,10 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
     }
   }
 
-  // Self-narrative from the day's lived moments.
+  // Self-narrative from the day's lived moments — on a long day, the ones she felt most
+  // (v12.1: it used to be the last 40, so a morning that moved her was cut from who she is).
   const today = mind.moments().filter((m) => m.source === 'lived' && now - m.ts <= DAY);
+  const felt = mostFelt(today, 40);
   let selfCount: number | null = null;
   if (today.length > 0) {
     const current = mind.self();
@@ -73,7 +83,7 @@ export const sleepOnce = async (deps: SleepDeps): Promise<{ swept: number; decay
       'CURRENT:',
       ...current.map((l) => `- ${l.text} [${l.cites.join(', ')}]`),
       'TODAY:',
-      ...today.slice(-40).map(
+      ...felt.map(
         (m) =>
           `- (${m.id}) ${m.his !== '' ? `him: ${m.his.slice(0, 160)} / ` : ''}her: ${m.hers.join(' ').slice(0, 200)}${m.felt.word !== undefined ? ` / felt ${m.felt.word}` : ''}${m.outcome !== undefined ? ` / ${m.outcome.why}` : ''}`,
       ),

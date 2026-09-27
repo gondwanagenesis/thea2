@@ -18,6 +18,7 @@ import {
   lintSegments,
   metabolism,
   moodTerm,
+  NONEXACT_FELT_WEIGHT,
   nearestTag,
   openMindStore,
   slowEvents,
@@ -214,11 +215,16 @@ describe('law 1.3 — feelings act silently: memory and metabolism', () => {
     expect(pull(a, 'anxious')).toBeLessThan(0);
   });
 
-  it('inherited (circular Thea1) feelings count half', () => {
+  // v12.1 (Diego, 2026-09-27, "the things that she's missing … and inherited memories"): an estimate
+  // from her own words is evidence, not nothing — inherited feelings count three quarters, not half.
+  // Still less than exact: they are estimated (or circular Thea1 state), not lived.
+  it('inherited (circular Thea1) feelings count less than exact ones — three quarters', () => {
     const a = vec12({ valence: 0.6, joy: 0.6 });
     const exact = moment({ felt: { sig: tagSignature('joy', 8), source: 'exact' } });
     const inherited = moment({ felt: { sig: tagSignature('joy', 8), source: 'inherited' } });
-    expect(moodTerm(a, inherited, coupling)).toBeCloseTo(moodTerm(a, exact, coupling) / 2, 6);
+    expect(moodTerm(a, inherited, coupling)).toBeCloseTo(moodTerm(a, exact, coupling) * NONEXACT_FELT_WEIGHT, 6);
+    expect(NONEXACT_FELT_WEIGHT).toBe(0.75);
+    expect(moodTerm(a, inherited, coupling)).toBeLessThan(moodTerm(a, exact, coupling));
   });
 
   it('metabolism: arousal raises temperature, a bright mood widens recall, calm buys patience, 3am prefers short, surprise speeds learning — all clamped', () => {

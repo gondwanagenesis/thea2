@@ -13,7 +13,7 @@
 import { modulate, type CompiledCoupling, type Vec12 } from '../coupling/index.js';
 import type { Rng } from '../kernel/index.js';
 import { cosine } from './vectors.js';
-import { toSparse } from './vocab.js';
+import { feltIntensity, toSparse } from './vocab.js';
 import { isPrecedent, type MindStore } from './store.js';
 import type { Moment } from './types.js';
 
@@ -52,8 +52,28 @@ export const EVOKE_DEFAULTS: EvokeConfig = {
   memoryFloor: 0.3,
 };
 
-/** Score weights (plan §3.2). Starting values; the P2 offline test tunes them. */
-export const EVOKE_WEIGHTS = { sim: 0.45, move: 0.15, value: 0.15, mood: 0.15, gold: 0.1 } as const;
+/**
+ * Score weights (plan §3.2). Starting values; the P2 offline test tunes them.
+ * v12.1 intensity (Diego, 2026-09-27: "isn't that why we have emotions, to give memories
+ * weights?"): what she felt strongly comes back more readily — emotional memories are stored
+ * more firmly (McGaugh 2004). Capped at its weight; softened by how often it has come up.
+ */
+export const EVOKE_WEIGHTS = { sim: 0.45, move: 0.15, value: 0.15, mood: 0.15, gold: 0.1, intensity: 0.1 } as const;
+
+/**
+ * An estimated (inherited, from Thea1's texts) feeling counts this much of an exact one. It was
+ * 0.5; v12.1 raises it — an estimate from her own words is evidence, not nothing.
+ */
+export const NONEXACT_FELT_WEIGHT = 0.75;
+
+/** Recalls over which a memory's charge halves its pull (against rumination: the same hurt dominating). */
+export const INTENSITY_SOFTEN_SHOWN = 10;
+
+/** v12.1: the pull of how strongly she felt it — 0 for a blank memory, at most EVOKE_WEIGHTS.intensity. */
+export const intensityTerm = (m: Moment): number => {
+  const source = m.felt.source === 'exact' ? 1 : NONEXACT_FELT_WEIGHT;
+  return (EVOKE_WEIGHTS.intensity * feltIntensity(m.felt.sig) * source) / (1 + m.shown / INTENSITY_SOFTEN_SHOWN);
+};
 
 export interface EvokeInput {
   /** Situation vector (context + his words). */
@@ -86,13 +106,13 @@ export interface Evoked {
 
 const words = (m: Moment): number => m.hers.join(' ').split(/\s+/).filter((w) => w.length > 0).length;
 
-/** The mood term: coupling's capped aᵀMe, rescaled into ±weight; inherited/estimated feelings count half. */
+/** The mood term: coupling's capped aᵀMe, rescaled into ±weight; inherited/estimated feelings count NONEXACT_FELT_WEIGHT. */
 export const moodTerm = (a: Vec12, m: Moment, coupling: CompiledCoupling): number => {
   const lambda = coupling.cfg.lambda;
   if (lambda <= 0) return 0;
   const raw = modulate(a, toSparse(m.felt.sig), [], coupling);
   const scaled = (raw / lambda) * EVOKE_WEIGHTS.mood;
-  return m.felt.source === 'exact' ? scaled : scaled * 0.5;
+  return m.felt.source === 'exact' ? scaled : scaled * NONEXACT_FELT_WEIGHT;
 };
 
 export const scoreMoment = (m: Moment, sim: number, input: EvokeInput): Scored => {
@@ -102,6 +122,7 @@ export const scoreMoment = (m: Moment, sim: number, input: EvokeInput): Scored =
     (input.move !== undefined && m.move === input.move ? EVOKE_WEIGHTS.move : 0) +
     EVOKE_WEIGHTS.value * m.value +
     mood +
+    intensityTerm(m) +
     (m.gold === true ? EVOKE_WEIGHTS.gold : 0);
   if (input.cfg.shortBias > 0) score += input.cfg.shortBias * (1 - Math.min(1, words(m) / 40));
   return { m, score, sim, mood };
@@ -147,7 +168,8 @@ export const evoke = (store: MindStore, input: EvokeInput): Evoked => {
       : cosine(input.queryVec, v);
     if (eligibleOption(m, input)) candidates.push(scoreMoment(m, sim, input));
     else if ((m.kind === 'diary' || m.kind === 'thought') && m.never !== true && input.now - m.ts >= cfg.recentWindowMs) {
-      memoryCands.push({ m, score: sim, sim, mood: 0 });
+      // v12.1: among what resembles the moment, what she felt most comes first (relevance still gates it)
+      memoryCands.push({ m, score: sim + intensityTerm(m), sim, mood: 0 });
     }
   }
   candidates.sort((x, y) => y.score - x.score || (x.m.id < y.m.id ? -1 : 1));
@@ -198,7 +220,7 @@ export const evoke = (store: MindStore, input: EvokeInput): Evoked => {
     }
   }
 
-  memoryCands.sort((x, y) => y.sim - x.sim || (x.m.id < y.m.id ? -1 : 1));
+  memoryCands.sort((x, y) => y.score - x.score || (x.m.id < y.m.id ? -1 : 1));
   const memories = memoryCands.filter((s) => s.sim >= cfg.memoryFloor).slice(0, cfg.memories);
   return { options: picked, memories, considered: candidates.length };
 };

@@ -11,7 +11,7 @@
 //      how it went this time ("that joke used to hurt; now it's ours")
 
 import { cosine } from './vectors.js';
-import { nearestTag } from './vocab.js';
+import { feltIntensity, nearestTag } from './vocab.js';
 import type { MindStore } from './store.js';
 import type { Act, Line, Moment, Outcome } from './types.js';
 
@@ -72,6 +72,33 @@ export const encodeLived = (i: EncodeInput): Moment => ({
   followed: 0,
   ...(i.acts !== undefined && i.acts.length > 0 ? { acts: i.acts } : {}),
 });
+
+/**
+ * v12.1: on a long day, the `n` moments she felt most, back in the order she lived them —
+ * what the night keeps (the diary, the self-rewrite). A short day is kept whole.
+ */
+export const mostFelt = (ms: readonly Moment[], n: number): Moment[] => {
+  if (ms.length <= n) return [...ms].sort((a, b) => a.ts - b.ts);
+  return [...ms]
+    .sort((a, b) => feltIntensity(b.felt.sig) - feltIntensity(a.felt.sig) || b.ts - a.ts)
+    .slice(0, n)
+    .sort((a, b) => a.ts - b.ts);
+};
+
+/**
+ * v12.1: how a stretch of time is remembered — the peak-end rule (Kahneman et al. 1993): the
+ * most intense moment and the last one, averaged. Its word is the peak's. Blank when nothing
+ * was felt; exact only when both ends were.
+ */
+export const peakEnd = (ms: readonly Moment[]): Moment['felt'] => {
+  const felt = ms.filter((m) => feltIntensity(m.felt.sig) > 0);
+  if (felt.length === 0) return { sig: new Array<number>(12).fill(0), source: 'estimated' };
+  const peak = felt.reduce((a, b) => (feltIntensity(b.felt.sig) > feltIntensity(a.felt.sig) ? b : a));
+  const end = felt.reduce((a, b) => (b.ts > a.ts ? b : a));
+  const sig = peak.felt.sig.map((x, k) => Math.round(((x + (end.felt.sig[k] ?? 0)) / 2) * 1000) / 1000);
+  const word = peak.felt.word ?? nearestTag(sig);
+  return { sig, ...(word !== undefined ? { word } : {}), source: peak.felt.source === 'exact' && end.felt.source === 'exact' ? 'exact' : 'estimated' };
+};
 
 /** The shown option closest to her reply (any similarity) — logged so the follow threshold can be calibrated live. */
 export const bestOption = (

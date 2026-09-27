@@ -35,7 +35,8 @@ import type { Embedder } from '../embed/index.js';
 import { ago } from './compose.js';
 import { cosine } from './vectors.js';
 import type { MindStore } from './store.js';
-import type { About, Concern, CuriosityState, Interest, QuestionSource } from './types.js';
+import type { About, Concern, CuriosityState, Interest, Moment, QuestionSource } from './types.js';
+import { nearestTag } from './vocab.js';
 import { FOUND_ID_PREFIX, freshness, inQuietHours, rollWander, type CuriositySeam, type Item } from './wander.js';
 
 const DAY = 86_400_000;
@@ -88,6 +89,8 @@ export interface CuriosityDeps {
   selfEntryIn(chatId: number, goal: string): Promise<number>;
   /** A striking finding → the text-first gate (quiet hours, cap, backoff) → a turn to Diego. */
   tellHim(goal: string): Promise<boolean>;
+  /** v12.1: her exact state now (coupling deviation vector) — stamped on a finding's memory. Absent ⇒ stored blank. */
+  feltNow?: () => number[];
 }
 
 export interface LearnOutcome {
@@ -521,21 +524,9 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     const topic = j.topic.trim().slice(0, 60);
     if (topic !== '') noteExplored(topic, now);
 
-    // what she found goes into her stream; a real finding also into her memory (curious states are remembered)
+    // what she found goes into her stream (a real finding also into her memory — below, once it has been felt)
     const thoughtId = `t_${now}_${newId(d.clock, d.rng).slice(-6)}`;
     d.mind.appendThought({ id: thoughtId, ts: now, text: j.thought, about: q.about === 'self' ? 'self' : 'world', itemKey: `learned:${q.id}`, source: 'lived' });
-    if (progress === 2) {
-      let vec: Float32Array | undefined;
-      try {
-        [vec] = await d.embedder.embed([j.thought]);
-      } catch {
-        vec = undefined;
-      }
-      d.mind.add(
-        { id: `${FOUND_ID_PREFIX}${now}_${newId(d.clock, d.rng).slice(-6)}`, ts: now, source: 'lived', kind: 'thought', before: [], his: '', hers: [j.thought], felt: { sig: new Array<number>(12).fill(0), source: 'estimated' }, importance: 7, value: 0, shown: 0, followed: 0 },
-        vec !== undefined ? { sit: vec, reply: vec } : undefined,
-      );
-    }
 
     // the question itself: progress, confidence, and whether she lets it go
     let closed = false;
@@ -578,6 +569,24 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
         emit('incident.mind_feel_failed', { stage: 'learned', error: e instanceof Error ? e.message : String(e) });
       }
       emit('mind.felt', { stage: 'learned', events: evs.map((e) => ({ source: 'learning', tag: e.kind === 'emotion' ? e.tag : '', cause: e.kind === 'emotion' ? e.cause : '' })) });
+    }
+
+    // a real finding becomes a memory WITH how it felt (v12.1: it was stored blank, so the delight
+    // of finding out was lost to recall — "curious states are remembered" is now true)
+    if (progress === 2) {
+      let vec: Float32Array | undefined;
+      try {
+        [vec] = await d.embedder.embed([j.thought]);
+      } catch {
+        vec = undefined;
+      }
+      const sig = d.feltNow?.();
+      const word = sig !== undefined ? nearestTag(sig) : undefined;
+      const felt: Moment['felt'] = sig !== undefined ? { sig, ...(word !== undefined ? { word } : {}), source: 'exact' } : { sig: new Array<number>(12).fill(0), source: 'estimated' };
+      d.mind.add(
+        { id: `${FOUND_ID_PREFIX}${now}_${newId(d.clock, d.rng).slice(-6)}`, ts: now, source: 'lived', kind: 'thought', before: [], his: '', hers: [j.thought], felt, importance: 7, value: 0, shown: 0, followed: 0 },
+        vec !== undefined ? { sit: vec, reply: vec } : undefined,
+      );
     }
 
     // what it opened: the frontier widens as she learns

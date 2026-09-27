@@ -15,6 +15,8 @@ import { MockModel } from '../../src/model/index.js';
 import type { EventLog } from '../../src/events/index.js';
 import {
   FOUND_ID_PREFIX,
+  feltIntensity,
+  tagSignature,
   INVESTIGATOR_FRAME,
   TELLING_PATTERNS,
   THINKER_SYSTEM,
@@ -101,6 +103,8 @@ const rig = (o: { mode?: CuriosityMode; perDay?: number; asksPerDay?: number; qu
       told.push(goal);
       return o.tellOk ?? true;
     },
+    // her state after the learning feelings land (blank before: proves the memory is stamped after)
+    feltNow: () => (felt.length > 0 ? tagSignature('delighted', 8) : new Array<number>(12).fill(0)),
   });
   return { cur, mind, model, clock, felt, events, pursuits, finish: (r) => done?.(r), asks, told, state };
 };
@@ -280,7 +284,11 @@ describe('v12 reward (§1.6–1.7) — learning progress, not novelty', () => {
     expect(r.felt.map((e) => (e.kind === 'emotion' ? e.tag : ''))).toEqual(['curious', 'delighted']);
     expect(r.felt.every((e) => e.kind !== 'emotion' || e.cause.length > 0)).toBe(true);
     expect(r.mind.stream().at(-1)?.text).toContain('each arm tastes');
-    expect(r.mind.moments().some((m) => m.kind === 'thought' && m.importance === 7 && m.hers[0]!.includes('each arm tastes'))).toBe(true);
+    const found = r.mind.moments().find((m) => m.kind === 'thought' && m.importance === 7 && m.hers[0]!.includes('each arm tastes'));
+    expect(found).toBeDefined();
+    // v12.1: remembered WITH the delight of finding out (it was stored blank)
+    expect(found!.felt.source).toBe('exact');
+    expect(feltIntensity(found!.felt.sig)).toBeCloseTo(0.8, 6);
     expect(r.mind.concerns().find((c) => c.id === 'q_oct')!.status).toBe('closed');
     const follow = r.mind.openConcerns().find((c) => c.born === 'followup');
     expect(follow).toMatchObject({ what: 'do octopuses dream?', parent: 'q_oct', domain: 'octopus cognition' });

@@ -35,6 +35,8 @@ import type { MindStore } from './store.js';
 import type { Concern, Line } from './types.js';
 
 export const UNDELIVERED_HEAD = '[unsent]';
+/** v12.1: how far one reaction of his moves a memory's value toward ±1 (a clear signal: half way). */
+export const REACTION_PULL = 0.5;
 
 const carryBlock = (bubbles: readonly string[]): string =>
   `\n\n${UNDELIVERED_HEAD}\nyou were interrupted and these words were never sent:\n` + bubbles.map((b) => `- ${b}`).join('\n');
@@ -845,15 +847,23 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     });
   };
 
-  /** ⭐ keeps a moment forever; 👎 means never again. Other reactions are just warmth, recorded. */
+  /**
+   * His reactions are his signal (Diego, 2026-09-27: "I'm not gonna star something, I'm gonna
+   * react to it… any reaction is a good sign except a thumbs down"). Any emoji but 👎: it landed,
+   * and it's kept (gold: weighted up, never fades). 👎: it landed badly, and never again. Only HIS
+   * reactions count — in a group, someone else's cannot bury or crown her memory.
+   */
   const onReaction = (m: InboundMsg): void => {
     const r = m.reaction;
     if (r === undefined) return;
     const target = deps.mind.moments().find((x) => x.msgIds?.includes(r.toMsgId) === true);
-    emit('memory.reaction', { emoji: r.emoji, toMsgId: r.toMsgId, momentId: target?.id ?? null, updateId: m.updateId });
-    if (target === undefined) return;
-    if (r.emoji === '⭐' || r.emoji === '🌟') deps.mind.update(target.id, { gold: true });
-    else if (r.emoji === '👎') deps.mind.update(target.id, { never: true });
+    const his = isOwnerMsg(m);
+    const verdict = !his || target === undefined ? 'none' : r.emoji === '👎' ? 'never' : 'kept';
+    emit('memory.reaction', { emoji: r.emoji, toMsgId: r.toMsgId, momentId: target?.id ?? null, updateId: m.updateId, his, verdict });
+    if (target === undefined || !his) return;
+    const toward = (goal: number): number => Math.round((target.value + REACTION_PULL * (goal - target.value)) * 1000) / 1000;
+    if (verdict === 'never') deps.mind.update(target.id, { never: true, value: toward(-1) });
+    else deps.mind.update(target.id, { gold: true, value: toward(1) });
     void deps.mind.flush();
   };
 

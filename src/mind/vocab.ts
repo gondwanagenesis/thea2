@@ -63,6 +63,17 @@ export const tagDirection = (tag: string): number[] => {
   return unit;
 };
 
+/**
+ * v12.1: how strongly a feeling was felt, 0–1 — the signature's peak dim. For a tag signature this
+ * is exactly i/10; for her exact state it is the largest deviation from home. The same scale for
+ * both, so an estimated memory and a lived one are comparable.
+ */
+export const feltIntensity = (sig: ArrayLike<number>): number => {
+  let peak = 0;
+  for (let i = 0; i < sig.length; i++) peak = Math.max(peak, Math.abs(sig[i] ?? 0));
+  return Math.min(1, peak);
+};
+
 /** A felt signature for one tag at intensity i (1-10): direction × i/10. */
 export const tagSignature = (tag: string, i: number): number[] => {
   const s = Math.max(0, Math.min(10, i)) / 10;
