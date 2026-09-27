@@ -8,7 +8,7 @@
 // the way the import meant to: tagSignature(tag, i), source 'estimated'.
 //
 // Dry run by default (prints the distribution and samples). --apply writes, after a backup,
-// and refuses while thead holds the var lock (stop thea2 first).
+// and refuses while thead is running (var/thead.pid names a live process — stop thea2 first).
 //
 //   set -a; . /etc/thea2/keys.env; set +a
 //   npx tsx scripts/backfill-felt.ts --var /opt/thea2/var [--apply] [--limit 50]
@@ -70,8 +70,17 @@ const main = async (): Promise<void> => {
   const cfg = loadConfig(CONFIG, process.env);
   const clock = new SystemClock();
   const rng = makeRng('backfill-felt');
-  const lock = path.join(VAR, 'thead.lock');
-  if (APPLY && fs.existsSync(lock)) throw new Error(`thead holds ${lock} — stop thea2 before --apply (the store is hers while she runs)`);
+  // thead's process lock is var/thead.pid (src/app/lock.ts THEAD_LOCK_PATH): refuse while that pid lives
+  const lock = path.join(VAR, 'thead.pid');
+  const alive = (): boolean => {
+    try {
+      process.kill(Number(fs.readFileSync(lock, 'utf8').trim()), 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (APPLY && fs.existsSync(lock) && alive()) throw new Error(`thead is running (${lock}) — stop thea2 before --apply (the store is hers while she runs)`);
 
   const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.models.endpoint, apiKey: cfg.models.apiKey });
   const mind = openMindStore(path.join(VAR, 'mind'), embedder.dim);
