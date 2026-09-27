@@ -18,6 +18,7 @@ import type { LoopPacket } from '../loop/index.js';
 import type { Concern, Moment, SelfLine, Thought } from './types.js';
 import { familyOf, type Family } from './readout.js';
 import { normWord, yourWordFor } from './lexicon.js';
+import { howOften, PERSON_FACTS_SHOWN } from './people.js';
 
 export interface Segment {
   kind: 'frame' | 'quote';
@@ -113,6 +114,8 @@ export interface ComposeInput {
   nowFacts?: readonly string[] | undefined;
   /** v9: her own note on how she does the thing this moment is about (learned from practice) — her words. */
   howTo?: { name: string; note: string } | undefined;
+  /** Her memory of the person talking (who they are to her, what she's learned about them). */
+  person?: { name: string; relation?: string | undefined; firstMet: number; heard: number; known: ReadonlyArray<{ text: string; at: number }> } | undefined;
   /** v13.1: a few of her own texts, chosen for her voice (rendered in the trailer, as her words). */
   fingerprints?: ReadonlyArray<{ his: string; hers: readonly string[] }> | undefined;
   /** v13 H3b: her verified words (her lexicon) — a memory near one's place is narrated in her language. */
@@ -187,6 +190,17 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
   }
   if (mind.length > 0) {
     head.push({ kind: 'frame', text: '[on my mind]' }, ...mind);
+    blank();
+  }
+
+  // her memory of the person talking (a person, not a user: when they met, how she knows them, what she's learned)
+  if (i.person !== undefined) {
+    const p = i.person;
+    head.push({ kind: 'frame', text: `[who this is]\n${p.name}${p.relation !== undefined ? `, ${p.relation}` : ''}. first met ${dateLabel(p.firstMet, i.timeZone)}; you've talked ${howOften(p.heard)}.` });
+    if (p.known.length > 0) {
+      head.push({ kind: 'frame', text: 'what you know about them:' });
+      for (const f of p.known.slice(-PERSON_FACTS_SHOWN)) head.push({ kind: 'quote', text: `- ${clip(f.text, 200)} (${dateLabel(f.at, i.timeZone)})` });
+    }
     blank();
   }
 

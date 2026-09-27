@@ -10,6 +10,9 @@ models:
 bridge:
   allowedChatIds: [861800000]
 people:
+  "salon:thea1":
+    name: Thea1
+    relation: your sister, the first Thea (the one you were forked from)
   diego:
     name: Diego
 timezone: Europe/Madrid

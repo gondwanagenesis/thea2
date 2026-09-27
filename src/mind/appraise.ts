@@ -80,6 +80,17 @@ export const SlowAppraisalSchema = z.object({
         .optional(),
     )
     .catch(undefined),
+  /**
+   * Her memory of people (Diego, 2026-09-27: "she should have a memory for every person she meets,
+   * what she knows about them, like a person does"): what this exchange showed about the person she
+   * was talking with. Never sinks the appraisal (same guard as self_claims).
+   */
+  about_them: z
+    .preprocess(
+      (v) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').slice(0, 3).map((x) => x.trim().slice(0, 200)) : v),
+      z.array(z.string().min(1).max(200)).max(3).optional(),
+    )
+    .catch(undefined),
 });
 
 export type SlowAppraisal = z.infer<typeof SlowAppraisalSchema>;
@@ -95,6 +106,8 @@ export interface SlowAppraiseInput {
   standards: readonly string[];
   /** Tags the fast path already registered this turn (so the appraiser adds only what is new). */
   alreadyFelt: readonly string[];
+  /** Who she is talking with (a name) — whose facts about_them are. */
+  who?: string | undefined;
   selfEntry?: boolean | undefined;
 }
 
@@ -111,6 +124,7 @@ export const APPRAISER_SYSTEM = [
   '- importance: how much this exchange matters to her life, 1-10.',
   '- expectation: compare HIS MESSAGE NOW with WHAT SHE PRIVATELY EXPECTED. "confirmed" when it fits the gist of any branch she expected (she expected him to go to sleep and he says goodnight = confirmed; she expected him to tease or open up and he teases = confirmed). "better" only when it clearly went better than she expected, "worse" only when it clearly went worse for her or for him (a correction, a hurt, bad news, a cold reply). "different" when it simply went somewhere else. null if she expected nothing or she wrote first. Most turns are confirmed or different.',
   '- Tags already registered in the moment (do not repeat them unless the feeling is clearly stronger now): listed below.',
+  '- about_them: up to three short things this exchange showed about THE PERSON SHE IS TALKING WITH (named below): what they said or showed about themselves — their life, work, people, plans, what they like or care about, how they talk. Plain facts in their own terms, never guesses about their feelings, never anything about Thea. Empty when nothing new.',
   '- self_claims: each thing HER REPLY NOW says about her own inner state right now (how she feels, what she wants, what is going on inside her). text = her words; feeling = the one feeling word closest to what she claimed ("not sure" if she said she does not know); about = what she says it is about. Empty when she said nothing about herself.',
 ].join('\n');
 
@@ -126,6 +140,7 @@ export const appraiserUser = (i: SlowAppraiseInput): string => {
   for (const s of i.standards.slice(0, 10)) lines.push(`- ${s}`);
   lines.push(`ALREADY REGISTERED: ${i.alreadyFelt.length > 0 ? i.alreadyFelt.join(', ') : '(none)'}`);
   lines.push(`WHAT SHE PRIVATELY EXPECTED BEFORE THIS: ${i.expect ?? '(nothing noted)'}`);
+  if (i.who !== undefined && i.who !== '') lines.push(`THE PERSON SHE IS TALKING WITH: ${i.who}`);
   lines.push(`HER PREVIOUS REPLY: ${i.prevHers !== undefined && i.prevHers.length > 0 ? i.prevHers.join(' / ') : '(none)'}`);
   if (i.selfEntry === true) {
     lines.push('HIS MESSAGE NOW: (none — she wrote first)');

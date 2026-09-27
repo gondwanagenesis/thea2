@@ -35,6 +35,7 @@ import {
   makeDreams,
   makeRoom,
   makeVoice,
+  openPeople,
   liftJob,
   dreamJob,
   wakeJob,
@@ -439,6 +440,9 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     allowedChatIds: cfg.bridge.allowedChatIds,
     reconcileWindowMs: cfg.reconcile.lostReplyWindowMin * 60_000,
     personLabel,
+    // her memory of people (every person she meets, what she knows about them)
+    people: openPeople(paths.mind),
+    personRelation: (person: string) => cfg.people[person]?.relation,
     // v11: Diego is the person whose id matches his DM chat (in a Telegram DM, chatId == his user id).
     ownerPerson: `tg:${cfg.bridge.allowedChatIds[0] ?? 0}`,
     ...(curiosity !== undefined ? { curiosity } : {}),

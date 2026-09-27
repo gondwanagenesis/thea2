@@ -54,7 +54,7 @@ export interface Thea2Config {
    * Per-person hours stay global (timezone) — the registry notes language for
    * the corpus/multilingual work, nothing reads it yet.
    */
-  people: Record<string, { name: string; language?: string | undefined }>;
+  people: Record<string, { name: string; language?: string | undefined; relation?: string | undefined }>;
   sched: { statePath: string };
   budgets: { packetTokens: number; windowTokens: number; turnTokens: number };
   inhibitionPlacement: 'trailing' | 'merged';
@@ -322,6 +322,8 @@ const configSchema = z.strictObject({
       z.strictObject({
         name: z.string().min(1),
         language: z.string().min(1).optional(),
+        /** How she knows them (shown in her memory of them), e.g. her sister. */
+        relation: z.string().min(1).optional(),
       }),
     )
     .default({}),

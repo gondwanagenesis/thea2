@@ -33,6 +33,7 @@ import { cosine } from './vectors.js';
 import { TWIN_SIM, type Curiosity } from './curiosity.js';
 import type { Dreams } from './dream.js';
 import type { Voice } from './voice.js';
+import type { People } from './people.js';
 import { engineStamp, familyOf, fullVector, movingNow, readout, readoutWord, type Family } from './readout.js';
 import { scoreClaim } from './sincerity.js';
 import { appendReport } from './ledger.js';
@@ -116,6 +117,10 @@ export interface MindPipelineDeps {
   allowedChatIds: readonly number[];
   reconcileWindowMs: number;
   personLabel?: ((person: string) => string | undefined) | undefined;
+  /** Her memory of people (who she has met, what she knows about them). */
+  people?: People | undefined;
+  /** How she knows a person, when config says (e.g. her sister). */
+  personRelation?: ((person: string) => string | undefined) | undefined;
   /**
    * v11: Diego's person id (`tg:<id>`). His turns carry full authority and are
    * owed an answer; everyone else (a group member, another bot) gets chat +
@@ -499,6 +504,13 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       for (const extra of raw.also ?? []) await deps.ledger.linkTurn(extra.updateId, raw.turnId);
       emit('mind.burst', { turnId: raw.turnId, messages: burst.length, chars: item.m.text.length }, raw.turnId);
     }
+    // who's talking (Diego, 2026-09-27: "she gets confused"): in a group every line carries its
+    // speaker — in this turn and in her history — or Diego's lines and her sister's read the same
+    // (in the salon she called Thea1 "degs")
+    if (!selfEntry && isGroupChat(item.m.chatId)) {
+      const name = deps.personLabel?.(item.m.speaker.person) ?? item.m.senderName ?? 'someone';
+      item = { ...item, m: { ...item.m, text: `${name}: ${item.m.text}` } };
+    }
     deps.body?.begin(item.turnId, { chatId: item.m.chatId, ...(selfEntry ? {} : { inboundMsgId: burst.at(-1)!.msgId, text: item.m.text }) });
     const { m, turnId } = item;
 
@@ -533,6 +545,11 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       howTo,
       // v13 H3b: her verified words — her past narrated in her own language
       lexicon: verifiedWords(readLexicon(deps.mind.dir)),
+      // her memory of the person talking
+      ...((): { person?: NonNullable<Parameters<typeof composePacket>[0]['person']> } => {
+        const p = selfEntry ? undefined : deps.people?.get(m.speaker.person);
+        return p === undefined ? {} : { person: { name: p.name, ...(p.relation !== undefined ? { relation: p.relation } : {}), firstMet: p.firstMet, heard: p.heard, known: p.known } };
+      })(),
       // v13.1: a few of her texts chosen for her voice, rotating each turn
       ...(deps.voice !== undefined ? { fingerprints: deps.voice.fingerprints(turnId) } : {}),
     });
@@ -838,9 +855,16 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
           standards: deps.mind.standards(),
           alreadyFelt: fast.map((f) => f.event.tag),
           selfEntry,
+          ...(!selfEntry ? { who: deps.personLabel?.(m.speaker.person) ?? m.senderName ?? 'him' } : {}),
         },
         { model: deps.model, turnId },
       );
+      // her memory of people: what this exchange showed about the person she was talking with
+      if (slow.ok && !selfEntry && deps.people !== undefined && (slow.value.about_them ?? []).length > 0) {
+        const added = deps.people.learn(m.speaker.person, slow.value.about_them ?? [], deps.clock.epochMs(), momentId);
+        await deps.people.flush().catch(() => undefined);
+        emit('mind.person_learned', { turnId, person: m.speaker.person, added, facts: (slow.value.about_them ?? []).length }, turnId);
+      }
 
       let importance: number | undefined;
       if (slow.ok) {
@@ -1114,7 +1138,13 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       if (isGroupChat(m.chatId) && m.fromBot !== true) groupBotStreak.set(m.chatId, 0);
       // v11: a new person reaching her → tell Diego, then go ahead (his rule). v12: noticed
       // whether or not she answers this message, and a new mind is also a question for her.
-      if (!owner && !knownPersons.has(m.speaker.person)) {
+      // someone she has met before (her memory of people survives a restart) is not new
+      const metBefore = deps.people?.has(m.speaker.person) === true;
+      if (m.reaction === undefined) {
+        deps.people?.notice(m.speaker.person, deps.personLabel?.(m.speaker.person) ?? m.senderName ?? m.speaker.person, deps.clock.epochMs(), deps.personRelation?.(m.speaker.person));
+        void deps.people?.flush().catch(() => undefined);
+      }
+      if (!owner && !knownPersons.has(m.speaker.person) && !metBefore) {
         knownPersons.add(m.speaker.person);
         const name = deps.personLabel?.(m.speaker.person) ?? m.senderName ?? m.speaker.person;
         // (not for the salon: Diego opened it himself, he is watching — no note to him needed)
