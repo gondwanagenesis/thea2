@@ -24,6 +24,47 @@ export {
 } from './compose.js';
 export { appraiseSlow, slowEvents, appraiserUser, APPRAISER_SYSTEM, SlowAppraisalSchema, type SlowAppraisal, type SlowAppraiseInput } from './appraise.js';
 export { encodeLived, actsOf, inferFollowed, bestOption, applyOutcome, markShown, FOLLOW_THRESHOLD, RECONSOLIDATION_RHO, type EncodeInput } from './remember.js';
-export { wanderOnce, wanderJob, candidates, pickItem, habituation, freshness, dayKey, inQuietHours, ThoughtSchema, type Item, type WanderCfg, type WanderDeps } from './wander.js';
+export {
+  wanderOnce,
+  wanderJob,
+  candidates,
+  pickItem,
+  habituation,
+  freshness,
+  dayKey,
+  inQuietHours,
+  rollWander,
+  tryTextFirst,
+  ThoughtSchema,
+  THINKER_SYSTEM,
+  type Item,
+  type WanderCfg,
+  type WanderDeps,
+  type CuriositySeam,
+  type TextFirstDeps,
+} from './wander.js';
+export {
+  makeCuriosity,
+  questionValue,
+  restlessWeight,
+  invU,
+  topicOverlap,
+  topicTokens,
+  decayedStrength,
+  INVESTIGATOR_FRAME,
+  LEARNING_JUDGE_SYSTEM,
+  LearnSchema,
+  TWIN_SIM,
+  INTEREST_HALF_LIFE_MS,
+  type Curiosity,
+  type CuriosityDeps,
+  type CuriosityCfg,
+  type CuriosityMode,
+  type PursuitRequest,
+  type PursuitResult,
+  type LearnOutcome,
+  type ValueCtx,
+  type Learn,
+} from './curiosity.js';
 export { sleepOnce, sleepJob, SelfRewriteSchema, type SleepDeps } from './sleep.js';
 export { makeMindPipeline, UNDELIVERED_HEAD, type BodySeam, type MindPipeline, type MindPipelineDeps, type SelfEntryHandle } from './pipeline.js';

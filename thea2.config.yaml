@@ -99,6 +99,12 @@ mind:
   # golden rule 20: up to 8 texts she starts a day (the wait after an unanswered one doubles)
   textFirstPerDay: 8
   sleepHourLocal: 4
+  # v12 curiosity (docs/plans/v12-curious-for-her-own-sake.md): her question economy.
+  # on | off | novelty-only (the kill-test control). Per-day budgets for what she
+  # looks into on her own (cheap-door worker runs) and people she starts asking.
+  curiosity: on
+  investigationsPerDay: 6
+  asksPerDay: 3
 # v9 body (plan ~/.claude/plans/thea2-v9-parity.md): her senses and hands.
 # Only env NAMES here. THEA2_TTS_VOICE is her voice (the same one Thea1's voice
 # notes use), copied on-box; an absent optional key = that capability absent.

@@ -20,7 +20,7 @@ import { makeCamera } from './camera.js';
 import { makeJobs, type Jobs } from './jobs.js';
 import { makeWallet, type Wallet } from './wallet.js';
 import { makeReminders, type Reminders } from './reminders.js';
-import { castTools } from './cast.js';
+import { castTools, runWorker } from './cast.js';
 import { codeTools } from './code.js';
 import { handsTools, localShell, openFence, type Fence, type ShellRunner } from './hands.js';
 import { announceWorkshop, brokerWorkshop, workshopTools, type WorkshopCall } from './workshop.js';
@@ -128,6 +128,12 @@ export interface Body {
   bind(late: BodyLate): void;
   /** At boot, after bind: what happened while she was down (a workshop change that restarted her). Returns the job ids told. */
   wake(): string[];
+  /**
+   * v12 curiosity: her fork looks into something with her own hands (web, her
+   * memory, code, her workspace — never the tools that reach anyone), detached;
+   * `done` fires when it settles. The mind decides what she learned.
+   */
+  investigate(req: { id: string; system: string; brief: string }, done: (r: { text: string; tools: string[] } | { error: string }) => void): { ok: true } | { ok: false; reason: string };
   // ——— the seam the mind pipeline calls (structurally its BodySeam) ———
   perceive(m: InboundMsg): Promise<Perceived>;
   begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined; text?: string | undefined }): void;
@@ -143,6 +149,9 @@ export interface Body {
   /** Her own skill note closest in meaning to his message (cosine ≥ 0.35), if any. */
   skillFor(text: string): Promise<{ name: string; note: string } | undefined>;
 }
+
+/** v12: what her pursuits may use — the web, her memory, code, her workspace. Never what reaches anyone, never the workshop. */
+const WONDER_CLASSES: ReadonlySet<string> = new Set(['web', 'memory', 'code', 'hands']);
 
 const outcomeWords = (job: { kind: string; status: string; result?: string | undefined }): string =>
   job.kind === 'shell' || job.kind === 'workshop'
@@ -180,9 +189,10 @@ export const makeBody = (d: BodyDeps): Body => {
   const jobs = makeJobs({
     clock: d.clock,
     events: d.events,
-    // the workshop tells her itself how a change went (workshopWords), so its failures are not told twice
+    // the workshop tells her itself how a change went (workshopWords), and a pursuit of hers settles
+    // through what she learned (the mind) — so neither failure is told twice
     onFail: (job, error) => {
-      if (job.kind !== 'workshop') late?.selfEntry(`(the ${job.kind} you were making didn't come out: ${error.slice(0, 160)}. he may still be waiting for it.)`);
+      if (job.kind !== 'workshop' && job.kind !== 'wonder') late?.selfEntry(`(the ${job.kind} you were making didn't come out: ${error.slice(0, 160)}. he may still be waiting for it.)`);
     },
     // how the work landed goes back into the memory of the moment she started it
     // (if that moment is already written; otherwise the pipeline asks jobOutcome when it writes it)
@@ -198,6 +208,8 @@ export const makeBody = (d: BodyDeps): Body => {
   });
   const fal = d.fal ?? (d.cfg.falKey !== undefined ? makeFal(d.cfg.falKey, d.clock, d.fetchImpl) : undefined);
   const camera = fal !== undefined ? makeCamera({ fal, house, clock: d.clock }) : undefined;
+  /** The registry her tools live in (bound at register) — what her pursuits work with. */
+  let registryRef: ToolRegistry | undefined;
 
   return {
     house,
@@ -211,7 +223,30 @@ export const makeBody = (d: BodyDeps): Body => {
       late = l;
     },
     wake: () => announceWorkshop({ dir: workshopDir, clock: d.clock, selfEntry: (goal) => late?.selfEntry(goal) }),
+    investigate: (req, done) => {
+      const registry = registryRef;
+      if (registry === undefined || d.model === undefined || d.rng === undefined) return { ok: false, reason: 'her hands are not ready' };
+      const model = d.model;
+      const rng = d.rng;
+      const started = jobs.start('wonder', req.brief.slice(0, 120), `wonder:${req.id}`, async (jobId) => {
+        try {
+          const r = await runWorker(
+            { model: model(), registry, clock: d.clock, rng: rng.fork(jobId), tier: 'cheap', id: jobId, classes: WONDER_CLASSES, steps: 10, maxMs: 5 * 60_000 },
+            req.system,
+            req.brief,
+          );
+          done({ text: r.text, tools: r.tools });
+          return `${r.steps} step(s), ${r.tools.length} tool call(s)`;
+        } catch (e) {
+          const error = e instanceof Error ? e.message : String(e);
+          done({ error });
+          throw e;
+        }
+      });
+      return started.ok ? { ok: true } : { ok: false, reason: started.reason };
+    },
     register: (registry) => {
+      registryRef = registry;
       const turn = (id: string): TurnBodyCtx | undefined => turns.get(id);
       const tools = [
         ...bodyTools({ channel: d.channel, house, openai, mouth, clock: d.clock, ownerChatId: d.ownerChatId, turn, mood: d.mood, recordOutbound: d.recordOutbound }),

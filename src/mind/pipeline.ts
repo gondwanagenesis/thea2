@@ -29,6 +29,8 @@ import { composePacket, hourIn, V8_OUTPUT_CONTRACT } from './compose.js';
 import { appraiseSlow, slowEvents } from './appraise.js';
 import { actsOf, applyOutcome, bestOption, encodeLived, FOLLOW_THRESHOLD, markShown } from './remember.js';
 import { vecToArray } from './vocab.js';
+import { cosine } from './vectors.js';
+import { TWIN_SIM, type Curiosity } from './curiosity.js';
 import type { MindStore } from './store.js';
 import type { Concern, Line } from './types.js';
 
@@ -114,6 +116,8 @@ export interface MindPipelineDeps {
   ownerPerson?: string | undefined;
   /** v11: names/aliases that mean she is being addressed in a group (default ['thea']). */
   selfAliases?: readonly string[] | undefined;
+  /** v12: new minds become questions, people she has met move those questions on, and what she's been into is material. */
+  curiosity?: Pick<Curiosity, 'onNewMind' | 'onHeardFrom' | 'nowLines'> | undefined;
   timezone: string;
   /** Fraction of today's idle budget left (0..1) — energy reads it. */
   budgetLeft: () => number;
@@ -137,7 +141,8 @@ export interface MindPipeline {
   sweep(minAgeMs?: number): number;
   /** Boot: messages the ledger shows unanswered (a restart, a crash) become owed again. */
   adoptOwed(ms: readonly InboundMsg[]): void;
-  selfEntry(kind: 'heartbeat', goal: string): SelfEntryHandle;
+  /** A turn she starts. `chatId` (v12): where — default his DM; a group id makes it a turn in the group. */
+  selfEntry(kind: 'heartbeat', goal: string, chatId?: number): SelfEntryHandle;
   lastInboundAtMs(): number | undefined;
   isBusy(): boolean;
   drain(): Promise<void>;
@@ -273,7 +278,11 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       await deps.clock.waitUntil(deps.clock.epochMs() + Math.min(quiet - since, GATHER_CAP_MS));
     }
     const also: InboundMsg[] = [];
-    while (queue.length > 0 && queue[0]!.kind === undefined && queue[0]!.m.chatId === first.m.chatId) also.push(queue.shift()!.m);
+    // v12 fix: a burst is ONE person's messages. In a group, gathering by chat alone let a
+    // bot's message ride inside Diego's burst under his authority (and his inside a bot's).
+    while (queue.length > 0 && queue[0]!.kind === undefined && queue[0]!.m.chatId === first.m.chatId && queue[0]!.m.speaker.person === first.m.speaker.person) {
+      also.push(queue.shift()!.m);
+    }
     return also.length > 0 ? { ...first, also } : first;
   };
 
@@ -473,7 +482,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       lastHisAt: selfEntry ? st.lastHisAt : st.lastHisAt,
       who,
       selfEntry,
-      nowFacts: deps.body?.nowFacts?.() ?? [],
+      nowFacts: [...(deps.body?.nowFacts?.() ?? []), ...(deps.curiosity?.nowLines(now) ?? [])],
       howTo,
     });
     const hits = packet.lint();
@@ -576,14 +585,23 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     // to the FRONT of the queue and the next turn reads it together with the new
     // message (burst-gathered), with these words as [unsent] context — so she
     // answers the newest and nothing of his is left unanswered (the keeper).
-    const stale = !selfEntry && queue.some((q) => q.kind === undefined);
+    // v12 fix: "stale" means the person she is answering kept talking (same chat, same
+    // speaker). Any queued message used to count, so in a group another person's line
+    // stalled her reply — and when a turn she started herself sat between her re-run and
+    // that line, the re-run could never gather it and went stale forever (found in v12).
+    const sameVoice = (q: Queued): boolean => q.kind === undefined && q.m.chatId === m.chatId && q.m.speaker.person === raw.m.speaker.person;
+    const stale = !selfEntry && queue.some(sameVoice);
     if (stale) {
       live = null;
       carry = { bubbles: [...decision.bubbles], fromUpdateId: m.updateId, fromTurnId: turnId };
       for (const b of burst) inFlight.delete(b.updateId);
       const again = newId(deps.clock, deps.rng);
-      for (const b of burst) await deps.ledger.linkTurn(b.updateId, again);
-      queue.unshift({ m: raw.m, turnId: again, ...(raw.also !== undefined ? { also: raw.also } : {}) });
+      // fold what they said since into the re-run itself, so nothing can wedge between them
+      const folded = queue.filter(sameVoice);
+      for (const f of folded) queue.splice(queue.indexOf(f), 1);
+      const also = [...(raw.also ?? []), ...folded.flatMap((f) => [f.m, ...(f.also ?? [])])];
+      for (const b of [...burst, ...folded.flatMap((f) => [f.m, ...(f.also ?? [])])]) await deps.ledger.linkTurn(b.updateId, again);
+      queue.unshift({ m: raw.m, turnId: again, ...(also.length > 0 ? { also } : {}), ...(raw.authority !== undefined ? { authority: raw.authority } : {}) });
       deps.body?.end(turnId);
       settleSelfOutcome(turnId, 0);
       emit('mind.followed_newer', { turnId, requeued: burst.map((b) => b.updateId) }, turnId);
@@ -712,46 +730,69 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
           emit('mind.outcome', { turnId, momentId: prev.id, landed: slow.value.outcome_prev.landed, rpe: r?.rpe ?? null, followed: prev.followedFrom ?? null }, turnId);
         }
 
-        // Concerns: loops opened, touched, closed.
-        const newVecTexts: Array<{ id: string; what: string }> = [];
+        // Concerns: loops opened, touched, closed. v12: a new one that is really an open one
+        // again (same words, or ≥ TWIN_SIM in meaning) touches that one instead of adding a
+        // twin — five copies of the same blocker made her ruminate (plan v12 A4).
+        const opening = slow.value.concerns.filter((op) => op.op === 'open' || op.id === undefined || !deps.mind.concerns().some((c) => c.id === op.id));
+        let openVecs: Array<Float32Array | undefined> = [];
+        if (opening.length > 0) {
+          try {
+            openVecs = await deps.embedder.embed(opening.map((op) => op.what));
+          } catch (e) {
+            emit('incident.mind_embed_failed', { turnId, stage: 'concerns', error: asError(e).message }, turnId);
+          }
+        }
+        const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
         for (const op of slow.value.concerns) {
           const existing = op.id !== undefined ? deps.mind.concerns().find((c) => c.id === op.id) : undefined;
+          const agency = {
+            ...(op.next_self_step !== undefined && op.next_self_step.trim() !== '' ? { selfStep: op.next_self_step.trim() } : {}),
+            ...(op.blocked_on !== undefined && op.blocked_on.trim() !== '' ? { blockedOn: op.blocked_on.trim() } : {}),
+          };
           if (op.op === 'open' || existing === undefined) {
             if (op.op === 'close') continue;
-            const id = `c_${now}_${newId(deps.clock, deps.rng).slice(-6)}`;
+            const vec = openVecs[opening.indexOf(op)];
+            const twin = deps.mind.openConcerns().find((c) => {
+              if (norm(c.what) === norm(op.what)) return true;
+              const cv = deps.mind.concernVec(c.id);
+              return vec !== undefined && cv !== undefined && cosine(vec, cv) >= TWIN_SIM;
+            });
+            if (twin !== undefined) {
+              deps.mind.upsertConcern({ ...twin, ...agency, touched: now, importance: Math.max(twin.importance, op.importance ?? 5) });
+              emit('mind.question_twin', { id: twin.id, stage: 'appraisal' }, turnId);
+              continue;
+            }
+            const kind = op.kind ?? 'loop';
+            const id = `${kind === 'curiosity' ? 'q' : 'c'}_${now}_${newId(deps.clock, deps.rng).slice(-6)}`;
             deps.mind.upsertConcern({
               id,
               what: op.what,
-              kind: op.kind ?? 'loop',
-              about: op.about ?? 'diego',
+              kind,
+              about: op.about ?? (kind === 'curiosity' ? 'world' : 'diego'),
               ...(op.due_hours !== undefined ? { due: now + op.due_hours * 3600_000 } : {}),
               importance: op.importance ?? 5,
               status: 'open',
               created: now,
               touched: now,
               source: 'lived',
+              ...agency,
+              // v12: a gap the conversation opened becomes one of her questions
+              ...(kind === 'curiosity'
+                ? { born: 'gap' as const, knowability: op.knowability ?? 0.6, confidence: op.confidence ?? 0.3 }
+                : {}),
             });
-            newVecTexts.push({ id, what: op.what });
+            if (vec !== undefined) deps.mind.setConcernVec(id, vec);
+            if (kind === 'curiosity') emit('mind.question_born', { id, born: 'gap', about: op.about ?? 'world', what: op.what.slice(0, 120) }, turnId);
           } else {
             deps.mind.upsertConcern({
               ...existing,
+              ...agency,
               what: op.op === 'update' ? op.what : existing.what,
               ...(op.due_hours !== undefined ? { due: now + op.due_hours * 3600_000 } : {}),
               ...(op.importance !== undefined ? { importance: op.importance } : {}),
               status: op.op === 'close' ? 'closed' : 'open',
               touched: now,
             });
-          }
-        }
-        if (newVecTexts.length > 0) {
-          try {
-            const vs = await deps.embedder.embed(newVecTexts.map((x) => x.what));
-            newVecTexts.forEach((x, k) => {
-              const v = vs[k];
-              if (v !== undefined) deps.mind.setConcernVec(x.id, v);
-            });
-          } catch (e) {
-            emit('incident.mind_embed_failed', { turnId, stage: 'concerns', error: asError(e).message }, turnId);
           }
         }
       } else {
@@ -816,8 +857,10 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     void deps.mind.flush();
   };
 
-  const selfEntryFn = (kind: 'heartbeat', goal: string): SelfEntryHandle => {
-    const chatId = deps.allowedChatIds[0] ?? fail('mind/self-entry', 'no allowed chat for a self-initiated turn');
+  const selfEntryFn = (kind: 'heartbeat', goal: string, where?: number): SelfEntryHandle => {
+    const dm = deps.allowedChatIds[0] ?? fail('mind/self-entry', 'no allowed chat for a self-initiated turn');
+    // v12: a turn she starts in a group she lives in (to ask someone something); never a chat she isn't in
+    const chatId = where !== undefined && deps.allowedChatIds.includes(where) ? where : dm;
     const m: InboundMsg = {
       updateId: 0,
       msgId: 0,
@@ -825,6 +868,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       ts: deps.clock.epochMs(),
       text: goal,
       speaker: { channel: 'telegram', person: `tg:${chatId}` },
+      ...(isGroupChat(chatId) ? { senderName: 'the group' } : {}),
     };
     const turnId = newId(deps.clock, deps.rng);
     let settleSent!: (sent: number) => void;
@@ -885,17 +929,21 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       const owner = isOwnerMsg(m);
       // a human (or Diego) speaking in the group frees her to talk to the bots again
       if (isGroupChat(m.chatId) && m.fromBot !== true) groupBotStreak.set(m.chatId, 0);
+      // v11: a new person reaching her → tell Diego, then go ahead (his rule). v12: noticed
+      // whether or not she answers this message, and a new mind is also a question for her.
+      if (!owner && !knownPersons.has(m.speaker.person)) {
+        knownPersons.add(m.speaker.person);
+        const name = deps.personLabel?.(m.speaker.person) ?? m.senderName ?? m.speaker.person;
+        selfEntryFn('heartbeat', `(someone new just reached you${isGroupChat(m.chatId) ? ' in the group' : ''} — ${name}: "${m.text.slice(0, 160)}". you two haven't talked before.)`);
+        void deps.curiosity?.onNewMind({ person: m.speaker.person, name, chatId: m.chatId, said: m.text, bot: m.fromBot === true }).catch((e: unknown) => emit('incident.mind_curiosity_failed', { stage: 'new-mind', error: asError(e).message }));
+      } else if (!owner) {
+        deps.curiosity?.onHeardFrom(m.speaker.person);
+      }
       // v11: Diego is never ignored — his messages always engage her, DM or group.
       // In a group she follows everyone and may chime in on anything (she chooses
       // silent-or-reply inside the turn), but a light cap keeps her from flooding
       // the room or looping with another bot.
       if (isGroupChat(m.chatId) && !owner && !engagesGroup(m)) return undefined;
-      // v11: a new person reaching her → tell Diego, then go ahead (his rule).
-      if (!owner && !knownPersons.has(m.speaker.person)) {
-        knownPersons.add(m.speaker.person);
-        const name = deps.personLabel?.(m.speaker.person) ?? m.senderName ?? m.speaker.person;
-        selfEntryFn('heartbeat', `(someone new just reached you${isGroupChat(m.chatId) ? ' in the group' : ''} — ${name}: "${m.text.slice(0, 160)}". you two haven't talked before.)`);
-      }
       const turnId = newId(deps.clock, deps.rng);
       queue.push({ m, turnId, authority: owner ? 'owner' : 'other' });
       // only Diego's messages are owed a guaranteed answer; others are best-effort.

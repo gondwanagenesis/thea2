@@ -14,7 +14,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteText } from '../kernel/index.js';
 import { openVecFile, type VecFile } from './vectors.js';
-import type { Concern, MindState, Moment, SelfLine, ShownRow, Thought } from './types.js';
+import type { Concern, Interest, MindState, Moment, SelfLine, ShownRow, Thought } from './types.js';
 
 export interface Centroids {
   move: Record<string, number[]>;
@@ -99,7 +99,10 @@ export interface MindStore {
   state(): MindState;
   setState(patch: Partial<MindState>): void;
   logShown(row: ShownRow): void;
-  /** Persist moments/concerns/state if dirty (atomic rewrites). */
+  /** v12: what she has come to be into (earned from learning progress). */
+  interests(): readonly Interest[];
+  upsertInterest(i: Interest): void;
+  /** Persist moments/concerns/state/interests if dirty (atomic rewrites). */
   flush(): Promise<void>;
 }
 
@@ -116,6 +119,7 @@ export const openMindStore = (dir: string, dim: number): MindStore => {
   const standards: string[] = readJson<string[]>(p('standards.json'), []);
   const centroids: Centroids = readJson<Centroids>(p('centroids.json'), { move: {}, tone: {} });
   let state: MindState = { ...emptyMindState(), ...readJson<Partial<MindState>>(p('state.json'), {}) };
+  let interests: Interest[] = readJson<Interest[]>(p('interests.json'), []);
 
   const sit: VecFile = openVecFile(dir, 'sit', dim);
   const reply: VecFile = openVecFile(dir, 'reply', dim);
@@ -125,6 +129,7 @@ export const openMindStore = (dir: string, dim: number): MindStore => {
   let dirtyMoments = false;
   let dirtyConcerns = false;
   let dirtyState = false;
+  let dirtyInterests = false;
 
   return {
     dir,
@@ -182,7 +187,18 @@ export const openMindStore = (dir: string, dim: number): MindStore => {
     logShown: (row) => {
       fs.appendFileSync(p('shown.jsonl'), `${JSON.stringify(row)}\n`);
     },
+    interests: () => interests,
+    upsertInterest: (it) => {
+      const i = interests.findIndex((x) => x.id === it.id);
+      if (i >= 0) interests[i] = it;
+      else interests = [...interests, it];
+      dirtyInterests = true;
+    },
     flush: async () => {
+      if (dirtyInterests) {
+        dirtyInterests = false;
+        await atomicWriteText(p('interests.json'), JSON.stringify(interests, null, 1));
+      }
       if (dirtyMoments) {
         dirtyMoments = false;
         await atomicWriteText(p('moments.jsonl'), moments.map((m) => JSON.stringify(m)).join('\n') + '\n');

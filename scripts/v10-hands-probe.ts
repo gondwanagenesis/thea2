@@ -29,7 +29,9 @@ const arg = (n: string, d?: string): string | undefined => {
 };
 const SRC_VAR = arg('var', '/opt/thea2/var')!;
 const CONFIG = arg('config', 'thea2.config.yaml')!;
-const out = (s: string): void => process.stdout.write(`${s}\n`);
+const out = (s: string): void => {
+  process.stdout.write(`${s}\n`);
+};
 
 const main = async (): Promise<void> => {
   const cfg = loadConfig(CONFIG, process.env);

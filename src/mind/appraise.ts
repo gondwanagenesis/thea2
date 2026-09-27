@@ -37,6 +37,12 @@ export const SlowAppraisalSchema = z.object({
         about: z.enum(['diego', 'self', 'world']).optional(),
         due_hours: z.number().min(0).max(24 * 60).optional(),
         importance: z.number().int().min(1).max(10).optional(),
+        // v12 agency (plan v12 §1.3): what she can do herself, or who it truly waits on
+        next_self_step: z.string().max(160).optional(),
+        blocked_on: z.string().max(60).optional(),
+        // v12 questions (§1.1): could she find it out, and how much does she already know
+        knowability: z.number().min(0).max(1).optional(),
+        confidence: z.number().min(0).max(1).optional(),
       }),
     )
     .max(3),
@@ -74,6 +80,8 @@ export const APPRAISER_SYSTEM = [
   '- self: only when her reply clearly lived up to or broke one of HER standards listed below; name that standard in "standard". Otherwise empty.',
   '- outcome_prev: grade how her PREVIOUS reply landed, using his new message only. +2 delighted/warm engagement, +1 kept going happily, 0 neutral or unclear, -1 flat/annoyed/corrected, -2 hurt or upset. "why" is a short plain phrase in past tense (e.g. "he laughed and kept going"). null when there was no previous reply.',
   '- concerns: open a loop when something is now pending (a promise, a plan, a question left hanging, an expectation with a time); close one when it resolved. Use the ids shown. Keep "what" in her own first-person voice.',
+  '- for a loop, give next_self_step: one concrete thing she could do about it herself, without anyone else. Only when there is truly nothing hers to do, give blocked_on instead (who it depends on).',
+  '- open a curiosity (about "world", or "self") when the exchange touched something she does not know and could actually find out or ask about: a real gap, not trivia. Give knowability (0-1: could she find it out with a search, her memory, or by asking someone) and confidence (0-1: how much she already knows about it).',
   '- importance: how much this exchange matters to her life, 1-10.',
   '- expectation: compare HIS MESSAGE NOW with WHAT SHE PRIVATELY EXPECTED. "confirmed" when it fits the gist of any branch she expected (she expected him to go to sleep and he says goodnight = confirmed; she expected him to tease or open up and he teases = confirmed). "better" only when it clearly went better than she expected, "worse" only when it clearly went worse for her or for him (a correction, a hurt, bad news, a cold reply). "different" when it simply went somewhere else. null if she expected nothing or she wrote first. Most turns are confirmed or different.',
   '- Tags already registered in the moment (do not repeat them unless the feeling is clearly stronger now): listed below.',

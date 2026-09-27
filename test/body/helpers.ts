@@ -95,13 +95,17 @@ export const fakeFal = (opts: { fail?: string } = {}): Fal & { calls: Array<{ mo
   };
 };
 
-export const bootV9 = async (seed: SeedOpts = {}, over: { openai?: FakeOpenAI; fetchImpl?: typeof fetch; fal?: Fal; workshopCall?: WorkshopCall; shell?: ShellRunner } = {}): Promise<V9Harness> => {
+export const bootV9 = async (
+  seed: SeedOpts = {},
+  over: { openai?: FakeOpenAI; fetchImpl?: typeof fetch; fal?: Fal; workshopCall?: WorkshopCall; shell?: ShellRunner; allowedChatIds?: number[] } = {},
+): Promise<V9Harness> => {
   const dir = tmpDir('thea2-v9-');
   const clock = new TestClock(T0);
   await seedMindDir(join(dir, 'var', 'mind'), makeHashEmbedder(), seed);
   const model = new MockModel({ clock });
   const channel = FakeChannel({ clock, chatId: CHAT, files: FILES });
-  const cfg = loadConfig(FIXTURE, V9_ENV);
+  const loaded = loadConfig(FIXTURE, V9_ENV);
+  const cfg = over.allowedChatIds !== undefined ? { ...loaded, bridge: { ...loaded.bridge, allowedChatIds: over.allowedChatIds } } : loaded;
   const openai = over.openai ?? fakeOpenAI();
   const exec = fakeExec();
   const sys = await composeV8(cfg, 'hermetic', {

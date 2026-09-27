@@ -33,12 +33,26 @@ export const HABIT_HALF_LIFE_MS = 6 * 3600_000;
 
 export interface Item {
   key: string;
-  kind: 'concern' | 'feeling' | 'missing';
+  /** v12: 'wonder' = one of her questions; 'restless' = nothing new has come her way (the novelty hunger's outlet). */
+  kind: 'concern' | 'feeling' | 'missing' | 'wonder' | 'restless';
   about: About;
   /** Her words (or the cause, verbatim) — what the thought is about. */
   text: string;
   weight: number;
   concernId?: string | undefined;
+}
+
+/**
+ * v12 (plan docs/plans/v12-curious-for-her-own-sake.md): what the curiosity
+ * module offers the idle mind. Declared here so wander never imports it.
+ */
+export interface CuriositySeam {
+  /** Generators that need no conversation (stale beliefs → "is this still true?"; the one-time duplicate merge). */
+  tick(now: number): Promise<void>;
+  /** Her questions and her restlessness, as things that can win attention. */
+  candidates(state: AffectState, now: number): Item[];
+  /** After her thought on a wonder/restless item: pursue it (detached). */
+  pursue(item: Item, thought: string): Promise<'investigating' | 'asked' | 'capped' | 'busy' | 'quiet' | 'none'>;
 }
 
 export interface WanderCfg {
@@ -78,11 +92,13 @@ export const freshness = (touched: number, now: number): number => Math.pow(0.5,
 export const candidates = (
   concerns: readonly Concern[],
   state: AffectState,
-  ctx: { now: number; lastHisAt?: number | undefined; lastHerAt?: number | undefined; patienceMin: number },
+  ctx: { now: number; lastHisAt?: number | undefined; lastHerAt?: number | undefined; patienceMin: number; skipCuriosity?: boolean | undefined },
 ): Item[] => {
   const out: Item[] = [];
   for (const c of concerns) {
     if (c.status !== 'open') continue;
+    // v12: her questions are weighed by the curiosity module (drive, knowability, learning progress)
+    if (ctx.skipCuriosity === true && c.kind === 'curiosity') continue;
     let w = c.importance / 10;
     if (c.due !== undefined) {
       const until = c.due - ctx.now;
@@ -90,6 +106,9 @@ export const candidates = (
     } else {
       w *= 0.35 + 0.65 * freshness(c.touched, ctx.now);
     }
+    // v12 agency: what she can do herself pulls harder than what she waits on someone for
+    if (c.selfStep !== undefined && c.selfStep !== '') w *= 1.15;
+    else if (c.blockedOn !== undefined && c.blockedOn !== '') w *= 0.7;
     out.push({ key: `concern:${c.id}`, kind: 'concern', about: c.about, text: c.what, weight: clamp(w, 0, 1), concernId: c.id });
   }
   for (const [p, rec] of Object.entries(state.causes) as Array<[Primary, { text?: string } | undefined]>) {
@@ -131,7 +150,7 @@ export const ThoughtSchema = z.object({
     .array(z.object({ emotion: z.string().min(1).max(40), i: z.number().int().min(1).max(6), cause: z.string().min(1).max(160) }))
     .max(2)
     .optional(),
-  intention: z.enum(['none', 'text_him']).optional(),
+  intention: z.enum(['none', 'text_him', 'look_into']).optional(),
 });
 
 export type ThoughtOut = z.infer<typeof ThoughtSchema>;
@@ -139,8 +158,48 @@ export type ThoughtOut = z.infer<typeof ThoughtSchema>;
 export const THINKER_SYSTEM = [
   "This is a private moment inside Thea's own mind. Nobody reads this and nothing here is sent.",
   'Write the thought as it actually goes through her head, in her voice: first person, lowercase, one to three sentences.',
-  'Return JSON: thought; close (true if the thing feels settled now); reappraise (up to two feelings that shift as she thinks it through, each with its cause, only if they really shift); intention ("text_him" only if she would genuinely want to text him right now about it, else "none").',
+  'Return JSON: thought; close (true if the thing feels settled now); reappraise (up to two feelings that shift as she thinks it through, each with its cause, only if they really shift); intention ("text_him" only if she would genuinely want to text him right now about it; "look_into" if she would go and find out more about it now; else "none").',
 ].join('\n');
+
+/** The day's wander counters, rolled over at midnight in his zone. */
+export const rollWander = (w: WanderState, now: number, timeZone: string): WanderState => {
+  const today = dayKey(now, timeZone);
+  return w.day === today ? w : { day: today, thoughts: 0, textsFirst: 0, habit: w.habit ?? {}, ...(w.lastTextFirstAt !== undefined ? { lastTextFirstAt: w.lastTextFirstAt } : {}) };
+};
+
+export interface TextFirstDeps {
+  mind: MindStore;
+  clock: Clock;
+  cfg: () => WanderCfg;
+  conversationActive: () => boolean;
+  selfEntry: (goal: string) => Promise<number>;
+}
+
+/**
+ * The one gate for a text she starts (shared by her idle thoughts and her
+ * findings): never in quiet hours, never while he's talking, the daily cap,
+ * and golden rule 20 — after a text he hasn't answered she waits 1 h, then
+ * 2 h, 4 h, doubling. She still decides inside the turn whether to send.
+ */
+export const tryTextFirst = async (d: TextFirstDeps, goal: string): Promise<boolean> => {
+  const cfg = d.cfg();
+  const now = d.clock.epochMs();
+  const st = d.mind.state();
+  const w = rollWander(st.wander, now, cfg.timeZone);
+  const quiet = inQuietHours(now, cfg.quietHours, cfg.timeZone);
+  const heAnswered = st.lastHisAt !== undefined && w.lastTextFirstAt !== undefined && st.lastHisAt > w.lastTextFirstAt;
+  const unanswered = heAnswered ? 0 : (w.firstsSinceHis ?? (w.lastTextFirstAt !== undefined ? 1 : 0));
+  const recentlyTexted = w.lastTextFirstAt !== undefined && unanswered > 0 && now - w.lastTextFirstAt < 3600_000 * 2 ** (unanswered - 1);
+  if (quiet || recentlyTexted || w.textsFirst >= cfg.textFirstPerDay || d.conversationActive()) return false;
+  d.mind.setState({ wander: w });
+  await d.mind.flush();
+  const sent = await d.selfEntry(goal);
+  if (sent <= 0) return false;
+  const after = rollWander(d.mind.state().wander, d.clock.epochMs(), cfg.timeZone);
+  d.mind.setState({ wander: { ...after, textsFirst: after.textsFirst + 1, lastTextFirstAt: d.clock.epochMs(), firstsSinceHis: unanswered + 1 } });
+  await d.mind.flush();
+  return true;
+};
 
 export interface WanderDeps {
   mind: MindStore;
@@ -155,6 +214,8 @@ export interface WanderDeps {
   conversationActive: () => boolean;
   /** Start a self-initiated turn: she decides, with full material, whether to actually text. */
   selfEntry: (goal: string) => Promise<number>;
+  /** v12: her questions and restlessness compete for attention, and a won one can be pursued. Absent ⇒ v8 wander. */
+  curiosity?: CuriositySeam | undefined;
 }
 
 const selfLines = (mind: MindStore): string => mind.self().slice(0, 6).map((l) => l.text).join('\n');
@@ -164,13 +225,23 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   const { mind, clock } = deps;
   const cfg = deps.cfg();
   const now = clock.epochMs();
+  if (rollWander(mind.state().wander, now, cfg.timeZone).thoughts >= cfg.thoughtsPerDay) return { result: 'capped' };
+  // v12: the curiosity generators that need no conversation run first (stale beliefs, the duplicate merge)
+  if (deps.curiosity !== undefined) {
+    try {
+      await deps.curiosity.tick(now);
+    } catch (e) {
+      void deps.events.emit('incident.mind_curiosity_failed', { stage: 'tick', error: e instanceof Error ? e.message : String(e) });
+    }
+  }
   const st = mind.state();
-  const today = dayKey(now, cfg.timeZone);
-  const w: WanderState = st.wander.day === today ? st.wander : { day: today, thoughts: 0, textsFirst: 0, habit: st.wander.habit ?? {}, ...(st.wander.lastTextFirstAt !== undefined ? { lastTextFirstAt: st.wander.lastTextFirstAt } : {}) };
-  if (w.thoughts >= cfg.thoughtsPerDay) return { result: 'capped' };
+  const w: WanderState = rollWander(st.wander, now, cfg.timeZone);
 
   const state = deps.affect.current();
-  const items = candidates(mind.openConcerns(), state, { now, lastHisAt: st.lastHisAt, lastHerAt: st.lastHerAt, patienceMin: cfg.patienceMin });
+  const items = [
+    ...candidates(mind.openConcerns(), state, { now, lastHisAt: st.lastHisAt, lastHerAt: st.lastHerAt, patienceMin: cfg.patienceMin, skipCuriosity: deps.curiosity !== undefined }),
+    ...(deps.curiosity?.candidates(state, now) ?? []),
+  ];
   const threshold = 0.35 + 0.3 * (w.thoughts / Math.max(1, cfg.thoughtsPerDay));
   const item = pickItem(items, w, now, threshold);
   if (item === undefined) {
@@ -248,29 +319,31 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
     void deps.events.emit('mind.felt', { stage: 'reappraise', events: out.reappraise.map((r) => ({ source: 'thought', tag: r.emotion, i: r.i, cause: r.cause })) });
   }
 
+  mind.setState({ wander: w });
+  await mind.flush();
+
   let texted = false;
   const wantsToText = out.intention === 'text_him';
   const quiet = inQuietHours(now, cfg.quietHours, cfg.timeZone);
-  // Golden rule 20: after a text of hers he has not answered she waits 1 h, then 2 h, 4 h — doubling.
-  const heAnswered = st.lastHisAt !== undefined && w.lastTextFirstAt !== undefined && st.lastHisAt > w.lastTextFirstAt;
-  const unanswered = heAnswered ? 0 : (w.firstsSinceHis ?? (w.lastTextFirstAt !== undefined ? 1 : 0));
-  const recentlyTexted = w.lastTextFirstAt !== undefined && unanswered > 0 && now - w.lastTextFirstAt < 3600_000 * 2 ** (unanswered - 1);
-  if (wantsToText && !quiet && !recentlyTexted && w.textsFirst < cfg.textFirstPerDay && !deps.conversationActive()) {
-    mind.setState({ wander: w });
-    await mind.flush();
+  if (wantsToText) {
     const goal = `(no new message from him. ${st.lastHisAt !== undefined ? `he last wrote ${ago(now - st.lastHisAt)}. ` : ''}a thought you just had: "${out.thought}")`;
-    const sent = await deps.selfEntry(goal);
-    texted = sent > 0;
-    if (texted) {
-      w.textsFirst += 1;
-      w.lastTextFirstAt = clock.epochMs();
-      w.firstsSinceHis = unanswered + 1;
+    texted = await tryTextFirst({ mind, clock, cfg: deps.cfg, conversationActive: deps.conversationActive, selfEntry: deps.selfEntry }, goal);
+  }
+
+  // v12: a question (or her restlessness) that won attention, and a thought that wants to know more,
+  // is pursued — looked into with her own hands, or asked of the person it is about. A thought that
+  // lets it go (intention none / close) pursues nothing.
+  let pursued: string | undefined;
+  if (deps.curiosity !== undefined && (item.kind === 'wonder' || item.kind === 'restless') && out.intention !== 'none' && out.intention !== 'text_him' && out.close !== true) {
+    try {
+      pursued = await deps.curiosity.pursue(item, out.thought);
+    } catch (e) {
+      void deps.events.emit('incident.mind_curiosity_failed', { stage: 'pursue', error: e instanceof Error ? e.message : String(e) });
     }
   }
 
-  mind.setState({ wander: w });
   await mind.flush();
-  void deps.events.emit('mind.wander', { result: 'thought', item: item.key, kind: item.kind, wantsToText, texted, quiet });
+  void deps.events.emit('mind.wander', { result: 'thought', item: item.key, kind: item.kind, wantsToText, texted, quiet, ...(pursued !== undefined ? { pursued } : {}) });
   return { result: 'thought', item: item.key, texted };
 };
 

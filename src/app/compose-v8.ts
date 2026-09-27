@@ -24,13 +24,17 @@ import { openMessageLedger, openOffsetStore, telegramChannel, FakeChannel, type 
 import { startScheduler, type Job, type SchedulerHandle } from '../sched/index.js';
 import {
   hourIn,
+  makeCuriosity,
   makeMindPipeline,
   metabolism,
   openMindStore,
   sleepJob,
+  tryTextFirst,
   wanderJob,
+  type Curiosity,
   type MindPipeline,
   type MindStore,
+  type WanderCfg,
 } from '../mind/index.js';
 import { brokerShell, describeWhere, loadWhere, makeBody, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
@@ -104,6 +108,8 @@ export interface V8System {
   pipeline: MindPipeline;
   /** v9 body (absent on a text-only config). */
   body?: Body | undefined;
+  /** v12 curiosity (absent without a body, or when config says 'off'). */
+  curiosity?: Curiosity | undefined;
   sched: SchedulerHandle;
   jobNames: readonly string[];
   reconcile: () => Promise<void>;
@@ -310,6 +316,44 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     const w = mind.state().wander;
     return mindCfg.thoughtsPerDay === 0 ? 0 : Math.max(0, 1 - w.thoughts / mindCfg.thoughtsPerDay);
   };
+  const wanderCfg = (): WanderCfg => ({
+    thoughtsPerDay: mindCfg.thoughtsPerDay,
+    textFirstPerDay: mindCfg.textFirstPerDay,
+    quietHours: cfg.affect.quietHours,
+    timeZone: cfg.timezone,
+    patienceMin: metabolism(affect.current(), signature(affect.current(), COUPLING_BASELINES), {
+      hourLocal: hourIn(clock.epochMs(), cfg.timezone),
+      budgetLeft: budgetLeft(),
+    }).patienceMin,
+  });
+
+  // v12 curiosity (plan docs/plans/v12-curious-for-her-own-sake.md): a question economy.
+  // Needs her hands (the body) to pursue anything; 'off' in config = v8 wander unchanged.
+  // Its callbacks reach the pipeline late (it is built next) — they only run at runtime.
+  const curiosity: Curiosity | undefined =
+    body !== undefined && mindCfg.curiosity !== 'off'
+      ? makeCuriosity({
+          mind,
+          affect,
+          model,
+          embedder,
+          events,
+          clock,
+          rng: rng.fork('curiosity'),
+          cfg: () => ({
+            investigationsPerDay: mindCfg.investigationsPerDay,
+            asksPerDay: mindCfg.asksPerDay,
+            mode: mindCfg.curiosity === 'novelty-only' ? 'novelty-only' : 'on',
+            quietHours: cfg.affect.quietHours,
+            timeZone: cfg.timezone,
+          }),
+          conversationActive: () => conversationActive(),
+          investigate: (req, done) => body.investigate(req, done),
+          selfEntryIn: (chatId, goal) => pipeline.selfEntry('heartbeat', goal, chatId).sent,
+          tellHim: (goal) =>
+            tryTextFirst({ mind, clock, cfg: wanderCfg, conversationActive: () => conversationActive(), selfEntry: (g) => pipeline.selfEntry('heartbeat', g).sent }, goal),
+        })
+      : undefined;
 
   const pipeline = makeMindPipeline({
     model,
@@ -333,6 +377,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     personLabel,
     // v11: Diego is the person whose id matches his DM chat (in a Telegram DM, chatId == his user id).
     ownerPerson: `tg:${cfg.bridge.allowedChatIds[0] ?? 0}`,
+    ...(curiosity !== undefined ? { curiosity } : {}),
     ...(cfg.bridge.selfAliases !== undefined ? { selfAliases: cfg.bridge.selfAliases } : {}),
     timezone: cfg.timezone,
     budgetLeft,
@@ -429,18 +474,10 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         events,
         clock,
         rng: rng.fork('wander'),
-        cfg: () => ({
-          thoughtsPerDay: mindCfg.thoughtsPerDay,
-          textFirstPerDay: mindCfg.textFirstPerDay,
-          quietHours: cfg.affect.quietHours,
-          timeZone: cfg.timezone,
-          patienceMin: metabolism(affect.current(), signature(affect.current(), COUPLING_BASELINES), {
-            hourLocal: hourIn(clock.epochMs(), cfg.timezone),
-            budgetLeft: budgetLeft(),
-          }).patienceMin,
-        }),
+        cfg: wanderCfg,
         conversationActive,
         selfEntry: (goal) => pipeline.selfEntry('heartbeat', goal).sent,
+        ...(curiosity !== undefined ? { curiosity } : {}),
       }),
       sleepJob({ mind, model, events, clock, timeZone: cfg.timezone }, utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone)),
       ...(body !== undefined ? [remindersJob(body.reminders, clock, (goal) => void pipeline.selfEntry('heartbeat', goal))] : []),
@@ -486,6 +523,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     loopCfg,
     pipeline,
     ...(body !== undefined ? { body } : {}),
+    ...(curiosity !== undefined ? { curiosity } : {}),
     sched,
     jobNames: jobs.map((j) => j.name),
     reconcile: async () => {

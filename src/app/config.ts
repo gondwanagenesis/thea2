@@ -113,6 +113,10 @@ export interface MindConfig {
   thoughtsPerDay: number;
   textFirstPerDay: number;
   sleepHourLocal: number;
+  /** v12: 'on' | 'off' | 'novelty-only' (the kill-test control). */
+  curiosity: 'on' | 'off' | 'novelty-only';
+  investigationsPerDay: number;
+  asksPerDay: number;
 }
 
 export interface ConfigIssue {
@@ -336,6 +340,12 @@ const configSchema = z.strictObject({
       textFirstPerDay: z.number().int().min(0).max(20).default(3),
       /** Local hour (his zone) the nightly sleep pass runs. */
       sleepHourLocal: z.number().int().min(0).max(23).default(4),
+      /** v12 curiosity (plan v12): 'on', 'off', or the 'novelty-only' control for the kill tests. */
+      curiosity: z.enum(['on', 'off', 'novelty-only']).default('on'),
+      /** v12: things she may look into on her own per day (each a worker run on the cheap door). */
+      investigationsPerDay: z.number().int().min(0).max(40).default(6),
+      /** v12: people she may start asking about themselves per day. */
+      asksPerDay: z.number().int().min(0).max(20).default(3),
     })
     .optional(),
   /** v9 body (plan thea2-v9-parity.md). Present ⇒ senses + tools are wired. */
