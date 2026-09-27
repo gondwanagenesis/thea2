@@ -140,7 +140,7 @@ const fromThea2 = (): VoiceExample[] => {
   const mind = openMindStore(path.join(VAR, 'mind'), 1536);
   return mind
     .precedents()
-    .filter((m) => voiceScore(m) >= 2)
+    .filter((m) => voiceScore(m) >= 2 && !SEXUAL.test(m.his) && !PET.test(m.his))
     .map((m) => ({ m, hers: clean(m.hers) }))
     .filter((x): x is { m: (typeof x)['m']; hers: string[] } => x.hers !== undefined)
     .map(({ m, hers }) => ({ id: `thea2_${m.id}`, source: 'thea2' as const, his: cleanHis(m.his), hers }));
