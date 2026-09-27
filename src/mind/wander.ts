@@ -28,6 +28,9 @@ import { ago, hourIn } from './compose.js';
 import { cosine } from './vectors.js';
 import type { MindStore } from './store.js';
 import type { About, Concern, WanderState } from './types.js';
+import { COUPLING_BASELINES } from '../coupling/index.js';
+import { engineStamp, familyOf, type Family } from './readout.js';
+import { appendReport, feelingClaims } from './ledger.js';
 
 export const HABIT_HALF_LIFE_MS = 6 * 3600_000;
 
@@ -328,7 +331,16 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
     return { result: 'idle', item: item.key };
   }
 
-  mind.appendThought({ id: `t_${now}_${newId(clock, deps.rng).slice(-6)}`, ts: now, text: out.thought, about: item.about, itemKey: item.key, source: 'lived' });
+  const thoughtId = `t_${now}_${newId(clock, deps.rng).slice(-6)}`;
+  mind.appendThought({ id: thoughtId, ts: now, text: out.thought, about: item.about, itemKey: item.key, source: 'lived' });
+  // v13 Phase 0 — the MONITORED channel: a thought that says how she feels is filed beside what her
+  // engine held (scored, never fed back — her private thinking must not become a performance)
+  const thoughtClaims = feelingClaims(out.thought);
+  if (thoughtClaims.length > 0) {
+    const s = deps.affect.current();
+    const feltRecently = [...new Set(s.traces.habitWindow.filter((h) => now - h.t < 6 * 3600_000).map((h) => familyOf(h.tag)).filter((f): f is Family => f !== undefined))];
+    appendReport(mind.dir, { id: `rp_${thoughtId}`, ts: now, channel: 'thought', claims: thoughtClaims, text: out.thought, stamp: engineStamp(s, COUPLING_BASELINES, now), chat: `[on her mind] ${item.text}`, feltRecently });
+  }
   w.thoughts += 1;
   w.habit = { ...w.habit, [item.key]: now };
 
@@ -381,7 +393,8 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   }
 
   await mind.flush();
-  void deps.events.emit('mind.wander', { result: 'thought', item: item.key, kind: item.kind, wantsToText, texted, quiet, ...(pursued !== undefined ? { pursued } : {}) });
+  // v13 Phase 0: the item's words and the thought id, so the ledger can join what won to what she thought
+  void deps.events.emit('mind.wander', { result: 'thought', item: item.key, kind: item.kind, text: item.text.slice(0, 160), thoughtId, wantsToText, texted, quiet, ...(pursued !== undefined ? { pursued } : {}) });
   return { result: 'thought', item: item.key, texted };
 };
 

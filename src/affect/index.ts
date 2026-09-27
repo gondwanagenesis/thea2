@@ -146,6 +146,7 @@ export {
   SPECIFICITY,
   landmarkBlend,
   norm,
+  peakDeviation,
   topCause,
   weatherLine,
   type BlendWord,

@@ -96,6 +96,15 @@ describe('applyEvents — validate, catch up, land, persist, report', () => {
     expect(payload.moved['pleasure']).toBeGreaterThan(0);
   });
 
+  // v13 Phase 0 (the sincerity ledger): every feeling traceable — where it came from and why
+  it('the trail carries the source and each feeling’s cause', async () => {
+    const s = setup(fresh());
+    await s.store.applyEvents([emo('cherished', 10, 'he wrote me an owners manual', 'diego')], { source: 'appraisal' });
+    const payload = (await s.events()).filter((e) => e.kind === 'affect.applied')[0]!.payload as { source: string; causes: string[] };
+    expect(payload.source).toBe('appraisal');
+    expect(payload.causes).toEqual(['he wrote me an owners manual']);
+  });
+
   it('catches the engine up to now, and silenceTick is a legal no-op batch', async () => {
     const s = setup(fresh());
     await s.clock.advance(H(9));

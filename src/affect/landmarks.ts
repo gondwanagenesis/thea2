@@ -135,7 +135,7 @@ const phrase = (weight: number, regions: number, word: string): string => {
  * — the same norm() the landmark centres live on). Every dim the landmarks read
  * is a dial or primary, so walking dials + primaries covers the space.
  */
-const peakDeviation = (s: AffectState): number => {
+export const peakDeviation = (s: AffectState): number => {
   const keys = [...(Object.keys(s.dials) as Dial[]), ...(Object.keys(s.primaries) as Primary[])];
   return keys.reduce((max, k) => Math.max(max, Math.abs(norm(blendFeature(s, k), baselineOf(k)))), 0);
 };

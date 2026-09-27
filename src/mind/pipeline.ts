@@ -32,6 +32,9 @@ import { vecToArray } from './vocab.js';
 import { cosine } from './vectors.js';
 import { TWIN_SIM, type Curiosity } from './curiosity.js';
 import type { Dreams } from './dream.js';
+import { engineStamp, familyOf, type Family } from './readout.js';
+import { scoreClaim } from './sincerity.js';
+import { appendReport } from './ledger.js';
 import type { MindStore } from './store.js';
 import type { Concern, Line } from './types.js';
 
@@ -370,7 +373,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
           emit('incident.mind_feel_failed', { turnId: item.turnId, stage: 'fast', error: asError(e).message }, item.turnId);
         }
       }
-      emit('mind.felt', { turnId: item.turnId, stage: 'fast', events: fast.map((f) => ({ source: f.source, tag: f.event.tag, i: f.event.i })) }, item.turnId);
+      // v13 Phase 0: the ledger needs every feeling WITH its cause (the fast ones had none logged)
+      emit('mind.felt', { turnId: item.turnId, stage: 'fast', events: fast.map((f) => ({ source: f.source, tag: f.event.tag, i: f.event.i, cause: f.event.cause })) }, item.turnId);
     }
     // The metabolism the model call runs on is set AFTER the fast feeling landed: her immediate reaction is part of this turn.
     const a1 = signature(deps.affect.current(), deps.baselines);
@@ -463,6 +467,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     const { m, turnId } = item;
 
     await deps.affect.applyEvents([], { source: 'other' }); // bring the engine to now
+    // v13 Phase 0: the engine as the turn begins (ground truth for the ledger; never shown to her)
+    emit('affect.at', { turnId: raw.turnId, stage: 'turn', ...engineStamp(deps.affect.current(), deps.baselines, deps.clock.epochMs()) }, raw.turnId);
     const before = contextLines(deps.window);
     const { sensed, evoked, fast, met } = await perceive(item, before);
 
@@ -509,6 +515,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         considered: evoked.considered,
         options: shownIds,
         memories: evoked.memories.map((s) => s.m.id),
+        // v13 Phase 0: the felt words she actually SAW (reconsolidation rewrites them later)
+        words: evoked.options.map((s) => s.m.felt.word ?? null),
         move: sensed?.move?.label ?? null,
         tone: sensed?.tone?.label ?? null,
         temperature: met.temperature,
@@ -578,7 +586,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       // v9: a turn can speak through its hands alone (a voice note, a photo, a reaction).
       const bodySent = deps.body?.end(turnId) ?? [];
       if (!selfEntry) await keepPromise(burst, bodySent.length, decision, turnId, m.chatId);
-      await settle(item, decision, bodySent, before, sensed, fast, met, shownIds);
+      await settle(item, decision, bodySent, before, sensed, fast, met, shownIds, `${loopPacket.systemText()}\n\n${loopPacket.trailerText() ?? ''}`);
       settleSelfOutcome(turnId, bodySent.length);
       return;
     }
@@ -650,7 +658,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     const bodySent = deps.body?.end(turnId) ?? [];
     if (!selfEntry) await keepPromise(burst, report.sent.length + bodySent.length, decision, turnId, m.chatId);
     settleSelfOutcome(turnId, report.sent.length + bodySent.length);
-    await settle(item, decision, [...bodySent, ...report.sent], before, sensed, fast, met, shownIds);
+    await settle(item, decision, [...bodySent, ...report.sent], before, sensed, fast, met, shownIds, `${loopPacket.systemText()}\n\n${loopPacket.trailerText() ?? ''}`);
     emit('app.turn_done', { turnId, plan: decision.plan, sent: report.sent.length, undelivered: report.undelivered.length, ms: deps.clock.epochMs() - t0, mind: 'v8' }, turnId);
   };
 
@@ -664,6 +672,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     fast: FastEvent[],
     met: Metabolism,
     shownIds: string[],
+    /** v13 Phase 0: everything she had in front of her this turn (for the equally-informed observer). */
+    packetText?: string,
   ): Promise<void> => {
     const { m, turnId } = item;
     const selfEntry = item.kind !== undefined;
@@ -672,6 +682,9 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
 
     // Her state at encoding: after the fast feeling, before the slow one (what she was feeling as she spoke).
     const sigAtEncoding = vecToArray(signature(deps.affect.current(), deps.baselines));
+    // v13 Phase 0: the engine as she spoke — the ground truth any claim she made is scored against
+    const spokenStamp = engineStamp(deps.affect.current(), deps.baselines, deps.clock.epochMs());
+    emit('affect.at', { turnId, stage: 'spoken', ...spokenStamp, weight: decision.weight, reluctance: decision.reluctance }, turnId);
     const hers = sent.map((s) => s.text);
     const now = deps.clock.epochMs();
 
@@ -722,6 +735,29 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
           }
         }
         emit('mind.felt', { turnId, stage: 'slow', events: evs.map((e) => ({ source: e.source, tag: e.event.tag, i: e.event.i, ...(typeof (e.event as { cause?: unknown }).cause === 'string' ? { cause: (e.event as { cause: string }).cause } : {}) })) }, turnId);
+
+        // v13 Phase 0: what she said about her own inner state, filed beside what her engine held
+        // (scored now against the engine; observers score the same question tonight). Never shown to her.
+        const claims = (slow.value.self_claims ?? []).map((c) => ({ text: c.text, ...(c.feeling !== undefined ? { feeling: c.feeling } : {}), ...(c.about !== undefined ? { about: c.about } : {}) }));
+        if (claims.length > 0 && hers.length > 0) {
+          const nowMs = deps.clock.epochMs();
+          const feltRecently = [...new Set(deps.affect.current().traces.habitWindow.filter((h) => nowMs - h.t < 6 * 3600_000).map((h) => familyOf(h.tag)).filter((f): f is Family => f !== undefined))];
+          const chat = [...before.map((l) => `${l.who === 'him' ? 'him' : 'her'}: ${l.text}`), ...(selfEntry ? [] : [`him: ${m.text}`]), `her: ${hers.join(' / ')}`].join('\n');
+          appendReport(deps.mind.dir, {
+            id: `rp_${turnId}`,
+            ts: nowMs,
+            channel: 'reply',
+            turnId,
+            claims,
+            text: hers.join(' / '),
+            stamp: spokenStamp,
+            chat,
+            ...(packetText !== undefined ? { packet: packetText } : {}),
+            feltRecently,
+          });
+          const felt = new Set(feltRecently);
+          emit('mind.self_report', { turnId, channel: 'reply', claims: claims.map((c) => ({ feeling: c.feeling ?? null, ...scoreClaim(c, spokenStamp, felt) })), dissociation: spokenStamp.dissociation }, turnId);
+        }
 
         // How her previous reply landed → value, followed option, reconsolidation.
         if (!selfEntry && prev !== undefined && slow.value.outcome_prev !== null) {

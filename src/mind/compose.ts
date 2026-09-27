@@ -41,6 +41,8 @@ export const TELLING_PATTERNS: readonly RegExp[] = [
   /\b(?:lowercase|capitalize|capital letters)\b/i,
   /\b\d\.\d{2}\b/,
   /\b(?:valence|arousal|dominance|novelty|mastery|dial|ticker|coupling|precedent|exemplar)s?\b/i,
+  // v13 Phase 0: the ledger's scores are his window, never her mirror (a score in her packet is telling)
+  /\b(?:sincerity|hit@3|a_ext|a_eq|introspection score|dissociation subset|observer accuracy)\b/i,
 ];
 
 export interface LintHit {

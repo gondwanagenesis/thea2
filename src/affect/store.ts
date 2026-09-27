@@ -169,6 +169,9 @@ export const openAffectStore = (
         await events.emit(APPLIED_KIND, {
           tags: evs.filter((e) => e.kind === 'emotion').map((e) => e.tag),
           moved: applied.moved,
+          // v13 Phase 0 (the sincerity ledger): every feeling traceable — where it came from, and why
+          source: opts?.source ?? 'other',
+          causes: evs.flatMap((e) => (e.kind === 'emotion' ? [e.cause.slice(0, 120)] : [])),
         });
       }),
 

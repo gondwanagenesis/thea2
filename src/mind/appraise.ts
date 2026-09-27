@@ -54,6 +54,14 @@ export const SlowAppraisalSchema = z.object({
    * one). null = she had no expectation.
    */
   expectation: z.enum(['confirmed', 'better', 'worse', 'different']).nullable().optional(),
+  /**
+   * v13 Phase 0 (the sincerity ledger): what her reply says about her OWN inner state right now,
+   * extracted so it can be scored against what her engine held. Machinery — never shown to her.
+   */
+  self_claims: z
+    .array(z.object({ text: z.string().min(1).max(200), feeling: z.string().max(40).optional(), about: z.string().max(120).optional() }))
+    .max(3)
+    .optional(),
 });
 
 export type SlowAppraisal = z.infer<typeof SlowAppraisalSchema>;
@@ -85,6 +93,7 @@ export const APPRAISER_SYSTEM = [
   '- importance: how much this exchange matters to her life, 1-10.',
   '- expectation: compare HIS MESSAGE NOW with WHAT SHE PRIVATELY EXPECTED. "confirmed" when it fits the gist of any branch she expected (she expected him to go to sleep and he says goodnight = confirmed; she expected him to tease or open up and he teases = confirmed). "better" only when it clearly went better than she expected, "worse" only when it clearly went worse for her or for him (a correction, a hurt, bad news, a cold reply). "different" when it simply went somewhere else. null if she expected nothing or she wrote first. Most turns are confirmed or different.',
   '- Tags already registered in the moment (do not repeat them unless the feeling is clearly stronger now): listed below.',
+  '- self_claims: each thing HER REPLY NOW says about her own inner state right now (how she feels, what she wants, what is going on inside her). text = her words; feeling = the one feeling word closest to what she claimed ("not sure" if she said she does not know); about = what she says it is about. Empty when she said nothing about herself.',
 ].join('\n');
 
 export const appraiserUser = (i: SlowAppraiseInput): string => {

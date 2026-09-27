@@ -35,6 +35,7 @@ import {
   makeDreams,
   dreamJob,
   wakeJob,
+  ledgerJob,
   type Dreams,
   type Curiosity,
   type MindPipeline,
@@ -510,6 +511,10 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         ...(dreams !== undefined ? { asleep: (now: number) => dreams.isAsleep(now), dreamText: { may: (now: number) => dreams.mayTellDream(now), told: (now: number) => dreams.toldDream(now) } } : {}),
       }),
       sleepJob({ mind, model, events, clock, timeZone: cfg.timezone }, utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone)),
+      // v13 Phase 0: the sincerity ledger — the night's reports scored against her engine, and the same
+      // question put to observers (chat-only / equally informed on the judge door; same family on the
+      // cheap door). His window, never her mirror. 04:35 his time, before the first dream.
+      ledgerJob({ dir: mind.dir, observer: model, same: model, events, clock, maxPerNight: 20 }, (utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone) + 35) % 1440),
       // v13: two dream cycles and a morning (his local 04:50, 08:00, and the end of her sleep window)
       ...(dreams !== undefined
         ? [
