@@ -276,11 +276,32 @@ export const MOUTH_SYSTEM = [
   'Her texting is in the examples, not in rules: copy their length, rhythm, lowercase, the missing final periods, how they break into bubbles. Never add a joke, a bit or a nickname the draft does not have.',
   // (Diego, 2026-09-27: "i still want the things i like with more emojis, and i really like the modern gen z online culture emojis") — the tic was one emoji on everything, not emoji
   'Emoji carry feeling for her, the way her generation texts: 😭 laughing too hard or overwhelmed, 💀 dead (it is so funny), 🫠 melting or embarrassed, 🥹 touched, 🙏 please or thank you, ✨ emphasis or sarcasm, 👀 intrigued, 🫡 on it, 🤡 self-own, 💅 unbothered, 😌 satisfied, 🙃 ironic, 😤 playful huff, 🫶 fondness, 🥲 bittersweet, 🤭 oops or giggle, 🧍 awkward, and now and then a kaomoji like (´･ω･`). Put one where a feeling lands, vary them, often none; never the same one on every message.',
-  'Usually shorter than the draft: cut padding and anything said twice, keep every point. 1 to 4 bubbles.',
+  'Type it in the shape under [this time]: that many bubbles, about that many words. Keep what matters most and every question or promise; a smaller thing can wait, she will say it another time.',
   'Never a declaration of love. Never comment on the draft. Return JSON {bubbles: [...]}.',
 ].join('\n');
 
-export const mouthUser = (examples: readonly VoiceExample[], his: string | undefined, draft: readonly string[]): string =>
+/**
+ * The shape of this reply (Diego, 2026-09-27: "she sends lots of bubbles … a lot of text each time …
+ * can't she vary the number?"). Thea1's rhythm: about half her turns are ONE message, most of the rest
+ * two or three, now and then a run of four. Drawn per reply (like Thea1's style dice), never longer
+ * than what she had to say.
+ */
+export interface Shape {
+  bubbles: number;
+  words: number;
+}
+
+export const shapeDice = (rng: Rng, draftWords: number): Shape => {
+  const r = rng.float();
+  let bubbles = r < 0.45 ? 1 : r < 0.75 ? 2 : r < 0.9 ? 3 : 4;
+  if (draftWords < 15) bubbles = Math.min(bubbles, 2);
+  const span: Record<number, [number, number]> = { 1: [6, 20], 2: [14, 32], 3: [22, 45], 4: [30, 60] };
+  const [lo, hi] = span[bubbles]!;
+  const words = Math.min(lo + Math.floor(rng.float() * (hi - lo + 1)), Math.max(4, draftWords));
+  return { bubbles, words };
+};
+
+export const mouthUser = (examples: readonly VoiceExample[], his: string | undefined, draft: readonly string[], shape?: Shape): string =>
   [
     '[how she texts: real messages]',
     ...examples.map((e) => `${e.his !== '' ? `him: ${e.his}\n` : ''}her: ${e.hers.join(' / ')}`),
@@ -288,6 +309,7 @@ export const mouthUser = (examples: readonly VoiceExample[], his: string | undef
     ...(his !== undefined && his !== '' ? [`[what was just said to her]\n${his.slice(0, 600)}`, ''] : []),
     '[her draft]',
     ...draft.map((b) => `- ${b}`),
+    ...(shape !== undefined ? ['', `[this time]\n${shape.bubbles === 1 ? 'one bubble' : `${shape.bubbles} bubbles`}, about ${shape.words} words in all.`] : []),
   ].join('\n');
 
 export interface VoiceDeps {
@@ -313,6 +335,8 @@ export interface Dressed {
   redone: boolean;
   /** Which layer typed it (the mouth: every reply; the redo: only a far-off one). */
   by?: 'mouth' | 'redo' | undefined;
+  /** The shape drawn for this reply (bubbles, words), when the mouth typed it. */
+  shape?: Shape | undefined;
   /** Why a rewrite was thrown away, if it was. */
   rejected?: string | undefined;
 }
@@ -363,13 +387,15 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       // the mouth: every reply of more than a few words, typed from her nearest real messages
       let system = REDO_SYSTEM;
       let user: string | undefined;
+      let shape: Shape | undefined;
       const cor = mode === 'mouth' ? getCorpus() : undefined;
       if (cor !== undefined && d.embedder !== undefined && wordsIn(bubbles.join(' ')) > 3) {
         try {
           const [q] = await d.embedder.embed([bubbles.join('\n')]);
           if (q !== undefined) {
             system = MOUTH_SYSTEM;
-            user = mouthUser(nearestExamples(cor, q), ctx.his, bubbles);
+            shape = shapeDice(d.rng.fork(`shape:${ctx.turnId}`), wordsIn(bubbles.join(' ')));
+            user = mouthUser(nearestExamples(cor, q), ctx.his, bubbles, shape);
           }
         } catch {
           user = undefined; // no mouth this time: the redo rule below still applies
@@ -413,10 +439,12 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       const redo = out.join('\n');
       const lost = precisionTokens(draft).filter((t) => !redo.includes(t));
       if (lost.length > 0) return { ...base, rejected: `lost ${lost.slice(0, 3).join(' ')}` };
-      if (wordsIn(redo) < wordsIn(draft) * 0.35) return { ...base, rejected: 'dropped content' };
+      // (a reply shaped short may say less — down to most of its word budget — but never almost nothing)
+      const floor = shape !== undefined ? Math.min(wordsIn(draft) * 0.35, shape.words * 0.6) : wordsIn(draft) * 0.35;
+      if (wordsIn(redo) < floor) return { ...base, rejected: 'dropped content' };
       if (LOVE_DECLARATION.test(redo) && !LOVE_DECLARATION.test(draft)) return { ...base, rejected: 'love' };
       const final = dress(out, names);
-      return { bubbles: final, changed: true, faults, redone: true, by: system === MOUTH_SYSTEM ? 'mouth' : 'redo' };
+      return { bubbles: final, changed: true, faults, redone: true, by: system === MOUTH_SYSTEM ? 'mouth' : 'redo', ...(shape !== undefined ? { shape } : {}) };
   };
 
   return {

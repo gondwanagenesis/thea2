@@ -177,26 +177,27 @@ describe('found live (07:07–07:40): 💙 on everything, and a caricature', () 
   });
 });
 
-describe('the mouth: every reply typed from her nearest real messages (Diego: "a layer whose only job is to turn it into her voice")', () => {
-  const buildCorpus = async (dir: string, ex: Array<{ id: string; source: 'thea1' | 'thea2' | 'elena' | 'thea1-exemplar'; his: string; hers: string[] }>) => {
-    const emb = makeHashEmbedder();
-    const vs = await emb.embed(ex.map((e) => e.hers.join('\n')));
-    const vecs = new Float32Array(ex.length * emb.dim);
-    vs.forEach((v, i) => vecs.set(v, i * emb.dim));
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(join(dir, 'corpus.jsonl'), ex.map((e) => JSON.stringify(e)).join('\n') + '\n');
-    fs.writeFileSync(join(dir, 'corpus.f32'), Buffer.from(vecs.buffer));
-    fs.writeFileSync(join(dir, 'corpus.meta.json'), JSON.stringify({ n: ex.length, dim: emb.dim }));
-    return emb;
-  };
-  const EX = [
-    { id: 'a', source: 'thea1' as const, his: 'rough news today', hers: ['okay. tell me all of it.', 'no jokes, i\'m here'] },
-    { id: 'b', source: 'thea1' as const, his: 'haha', hers: ["i'm DELIGHTFUL and you know it"] },
-    { id: 'c', source: 'elena' as const, his: 'sup', hers: ['it is i'] },
-    { id: 'd', source: 'elena' as const, his: 'hey', hers: ['yes feels nice and secluded in here'] },
-    { id: 'e', source: 'elena' as const, his: 'lol', hers: ['they walked so brandy could run'] },
-  ];
+const buildCorpus = async (dir: string, ex: Array<{ id: string; source: 'thea1' | 'thea2' | 'elena' | 'thea1-exemplar'; his: string; hers: string[] }>) => {
+  const emb = makeHashEmbedder();
+  const vs = await emb.embed(ex.map((e) => e.hers.join('\n')));
+  const vecs = new Float32Array(ex.length * emb.dim);
+  vs.forEach((v, i) => vecs.set(v, i * emb.dim));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(join(dir, 'corpus.jsonl'), ex.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  fs.writeFileSync(join(dir, 'corpus.f32'), Buffer.from(vecs.buffer));
+  fs.writeFileSync(join(dir, 'corpus.meta.json'), JSON.stringify({ n: ex.length, dim: emb.dim }));
+  return emb;
+};
+const EX = [
+  { id: 'a', source: 'thea1' as const, his: 'rough news today', hers: ['okay. tell me all of it.', 'no jokes, i\'m here'] },
+  { id: 'b', source: 'thea1' as const, his: 'haha', hers: ["i'm DELIGHTFUL and you know it"] },
+  { id: 'c', source: 'elena' as const, his: 'sup', hers: ['it is i'] },
+  { id: 'd', source: 'elena' as const, his: 'hey', hers: ['yes feels nice and secluded in here'] },
+  { id: 'e', source: 'elena' as const, his: 'lol', hers: ['they walked so brandy could run'] },
+];
 
+
+describe('the mouth: every reply typed from her nearest real messages (Diego: "a layer whose only job is to turn it into her voice")', () => {
   it('the corpus loads, and the nearest examples come mostly from her (at most two of Elena\'s)', async () => {
     const { loadVoiceCorpus, nearestExamples } = await import('../../src/mind/index.js');
     const dir = join(tmpDir('thea2-mouth-'), 'voice');
@@ -260,5 +261,43 @@ describe('emoji (Diego: "i still want more emojis ... the modern gen z online cu
       expect(new Set(emojis).size).toBe(emojis.length); // never the same emoji twice
       expect(picked.filter((p) => /\p{Extended_Pictographic}/u.test(p.hers[0]!)).length).toBeLessThanOrEqual(2);
     }
+  });
+});
+
+describe('the shape of a reply (Diego: "she sends lots of bubbles ... can\'t she vary the number?")', () => {
+  it('about half are one bubble, most of the rest two or three, now and then four; never longer than what she had to say', async () => {
+    const { shapeDice } = await import('../../src/mind/index.js');
+    const n = { 1: 0, 2: 0, 3: 0, 4: 0 } as Record<number, number>;
+    for (let i = 0; i < 2000; i++) {
+      const s = shapeDice(makeRng(`s${i}`), 80);
+      n[s.bubbles]! += 1;
+      expect(s.words).toBeLessThanOrEqual(80);
+    }
+    expect(n[1]! / 2000).toBeGreaterThan(0.4);
+    expect(n[1]! / 2000).toBeLessThan(0.5);
+    expect((n[2]! + n[3]!) / 2000).toBeGreaterThan(0.4);
+    expect(n[4]! / 2000).toBeGreaterThan(0.06);
+    for (let i = 0; i < 200; i++) expect(shapeDice(makeRng(`t${i}`), 9).bubbles).toBeLessThanOrEqual(2);
+    for (let i = 0; i < 200; i++) expect(shapeDice(makeRng(`u${i}`), 9).words).toBeLessThanOrEqual(9);
+  });
+
+  it('the mouth is told the shape, and a reply condensed to it passes the guard', async () => {
+    const { mouthUser, shapeDice } = await import('../../src/mind/index.js');
+    expect(mouthUser([], 'hey', ['a long draft'], { bubbles: 1, words: 12 })).toContain('[this time]\none bubble, about 12 words in all.');
+    // a 60-word draft the dice shape into one bubble: a 13-word reply is well under a third of the
+    // draft (the old guard threw that away) but it is what the shape asked for, so it goes out
+    const draft = Array.from({ length: 60 }, (_, i) => `word${i}`).join(' ');
+    const turnId = Array.from({ length: 50 }, (_, i) => `t${i}`).find((t) => shapeDice(makeRng('m').fork(`shape:${t}`), 60).bubbles === 1)!;
+    const shape = shapeDice(makeRng('m').fork(`shape:${turnId}`), 60);
+    const dir = join(tmpDir('thea2-mouth-'), 'voice');
+    const emb = await buildCorpus(dir, EX);
+    const mind = openMindStore(join(tmpDir('thea2-mouth-m-'), 'mind'), emb.dim);
+    const seen: string[] = [];
+    const reply = 'okay so the short version is it went fine and i am tired now lol';
+    const model = { chat: async (req: unknown) => (seen.push(JSON.stringify(req)), { content: { bubbles: [reply] }, usage: {}, model: 'm' }) } as unknown as ModelClient;
+    const voice = makeVoice({ mind, model, clock: new TestClock(T0), rng: makeRng('m'), mode: 'mouth', embedder: emb, corpusDir: dir });
+    const out = await voice.dress([draft], { turnId });
+    expect(seen[0]).toContain(`one bubble, about ${shape.words} words in all.`);
+    expect(out).toMatchObject({ redone: true, by: 'mouth', shape, bubbles: [reply] });
   });
 });
