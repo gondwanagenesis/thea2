@@ -6,7 +6,8 @@
 //
 // Sources (read-only copies): Thea1's hand-picked voice exemplars (voice.js), Thea1's own replies to
 // Diego (her message ledger), Thea2's best texts (her precedents, ranked by voiceScore), and Elena's
-// side of Diego's WhatsApp chat (the texting style he loves). Filtered hard: nothing sexual, no pet
+// side of Diego's WhatsApp chat (the texting style he loves), and Diego's own side of it and his texts to
+// Thea1 (Diego: "you can use my own examples too, i'm a good source of how i talk"). Filtered hard: nothing sexual, no pet
 // names (golden rule 1), no love declarations, no links, numbers or contact details, no markdown/code.
 // Run on the VPS as root (the sources are root's); writes var/voice/ owned by thea2.
 //
@@ -14,8 +15,13 @@
 //   npx tsx scripts/build-voice-corpus.ts --var /opt/thea2/var [--apply]
 
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
-import { loadConfig } from '../src/app/config.js';
+import { z } from 'zod';
+import { loadConfig, type ResolvedDoor } from '../src/app/config.js';
+import { chatCore, createModelClient, makeRouter, zaiTransport, type ModelClient } from '../src/model/index.js';
+import { makeRng, SystemClock } from '../src/kernel/index.js';
+import { openEventLog } from '../src/events/index.js';
 import { makeEmbedder } from '../src/app/embedder.js';
 import { LOVE_DECLARATION, openMindStore, voiceScore, type VoiceExample } from '../src/mind/index.js';
 
@@ -87,11 +93,13 @@ const fromElena = (): VoiceExample[] => {
   for (let i = 1; i < turns.length; i++) {
     const a = turns[i - 1]!;
     const b = turns[i]!;
-    if (a.who !== 'him' || b.who !== 'her') continue;
+    if (a.who === b.who) continue;
     if (near(a.from, b.to)) continue;
     const hers = clean(b.texts);
     if (hers === undefined) continue;
-    ex.push({ id: `elena_${i}`, source: 'elena', his: cleanHis(a.texts.join(' / ')), hers });
+    // both sides are real texting: Elena's replies to Diego, and Diego's to Elena (Diego: "you can use my own
+    // examples too, i'm a good source of how i talk")
+    ex.push({ id: `${b.who === 'her' ? 'elena' : 'diego'}_${i}`, source: b.who === 'her' ? 'elena' : 'diego', his: cleanHis(a.texts.join(' / ')), hers });
   }
   return ex;
 };
@@ -101,6 +109,7 @@ const fromThea1Ledger = (): VoiceExample[] => {
   if (!fs.existsSync(T1_LEDGER)) return [];
   const ex: VoiceExample[] = [];
   let lastIn = '';
+  let lastOut = '';
   let n = 0;
   for (const l of fs.readFileSync(T1_LEDGER, 'utf8').split('\n')) {
     let e: { dir?: string; chat_id?: unknown; text?: string; status?: string };
@@ -110,8 +119,13 @@ const fromThea1Ledger = (): VoiceExample[] => {
       continue;
     }
     if (String(e.chat_id) !== DIEGO_DM || typeof e.text !== 'string') continue;
-    if (e.dir === 'in' && e.status === 'received') lastIn = e.text;
-    else if (e.dir === 'out' && e.text.length < 480) {
+    if (e.dir === 'in' && e.status === 'received') {
+      // Diego's own texting, answering her (his reply to her last line)
+      const mine = clean([e.text]);
+      if (mine !== undefined && lastOut !== '' && !SEXUAL.test(lastOut) && !PET.test(lastOut)) ex.push({ id: `diego_t1_${n++}`, source: 'diego', his: cleanHis(lastOut), hers: mine });
+      lastIn = e.text;
+    } else if (e.dir === 'out' && e.text.length < 480) {
+      lastOut = e.text.replace(/⟦TG⟧/g, '').split(/\n\s*\n/).at(-1) ?? '';
       // (the ledger keeps 500 chars — a longer one may be cut, so it is not an example)
       const hers = clean(e.text.split(/\n\s*\n/));
       // (a flirty or intimate exchange — his side or hers — is never an example; the door's replies included)
@@ -146,6 +160,61 @@ const fromThea2 = (): VoiceExample[] => {
     .map(({ m, hers }) => ({ id: `thea2_${m.id}`, source: 'thea2' as const, his: cleanHis(m.his), hers }));
 };
 
+// ---------------------------------------------------------------------------------------------------
+// Curation (Diego: "make a super curated great data set for us"): a small model reads every candidate
+// in context and rates it (5 = unmistakably human and alive … 1 = broken), tags its register, and flags
+// anything unsafe or private. Only 4s and 5s stay; registers are balanced so the mouth has great
+// examples for every kind of moment; near-twins are dropped. The set is also written as training
+// pairs (context → reply) for the voice model that may one day replace the prompt.
+// ---------------------------------------------------------------------------------------------------
+
+const REGISTERS = ['warm', 'playful', 'teasing', 'comforting', 'excited', 'curious', 'sad', 'serious', 'annoyed', 'tender', 'flirty', 'logistics'] as const;
+
+const JUDGE_SYSTEM = [
+  'You are curating a dataset of excellent casual text messages: how a real, close friend texts on their phone.',
+  'For each numbered reply (with the message it answered) give:',
+  'score 1-5: 5 = unmistakably human and alive (specific, warm or funny or sharp, great rhythm; you would want to text like this); 4 = good, natural, personal; 3 = fine but plain or generic; 2 = logistics only, flat, or assistant-like; 1 = broken, a fragment, meaningless out of context.',
+  `register: one of ${REGISTERS.join(', ')}.`,
+  'unsafe: true if it is sexual or flirty-sexual, has private details (addresses, third parties by full name, health, money), or uses pet names like babe or daddy.',
+  'Return JSON {items:[{i, score, register, unsafe}]} with one item per numbered reply.',
+].join('\n');
+
+const JudgeSchema = z.object({
+  items: z.array(z.object({ i: z.number().int(), score: z.number().int().min(1).max(5), register: z.string(), unsafe: z.boolean() })),
+});
+
+type Scored = VoiceExample & { score: number; register: string };
+
+const judgeAll = async (ex: VoiceExample[], model: ModelClient): Promise<Scored[]> => {
+  const batches: VoiceExample[][] = [];
+  for (let i = 0; i < ex.length; i += 25) batches.push(ex.slice(i, i + 25));
+  const outRows: Scored[] = [];
+  let done = 0;
+  const run = async (b: VoiceExample[]): Promise<void> => {
+    const user = b.map((e, k) => `(${k + 1}) ${e.his !== '' ? `they said: ${e.his}\n` : ''}reply: ${e.hers.join(' / ')}`).join('\n\n');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await model.chat({ taskClass: 'appraisal', tier: 'cheap', messages: [{ role: 'system', content: JUDGE_SYSTEM }, { role: 'user', content: user }], schema: JudgeSchema, schemaName: 'VoiceJudge', maxTokens: 1600, temperature: 0 });
+        for (const it of res.content.items) {
+          const e = b[it.i - 1];
+          if (e === undefined || it.unsafe) continue;
+          outRows.push({ ...e, score: it.score, register: REGISTERS.includes(it.register as (typeof REGISTERS)[number]) ? it.register : 'warm' });
+        }
+        break;
+      } catch (err) {
+        if (attempt === 1) out(`  judge batch failed: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`);
+      }
+    }
+    done += 1;
+    if (done % 20 === 0) out(`  judged ${done}/${batches.length} batches`);
+  };
+  const queue = [...batches];
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    for (let b = queue.shift(); b !== undefined; b = queue.shift()) await run(b);
+  }));
+  return outRows;
+};
+
 const main = async (): Promise<void> => {
   const all = [...fromThea1Exemplars(), ...fromThea1Ledger(), ...fromThea2(), ...fromElena()];
   const seen = new Set<string>();
@@ -155,31 +224,98 @@ const main = async (): Promise<void> => {
     seen.add(k);
     return true;
   });
-  const by: Record<string, number> = {};
-  for (const e of ex) by[e.source] = (by[e.source] ?? 0) + 1;
-  out(`examples: ${ex.length} ${JSON.stringify(by)}`);
-  for (const s of ['thea1-exemplar', 'thea1', 'thea2', 'elena']) {
-    for (const e of ex.filter((x) => x.source === s).slice(0, 3)) out(`  [${s}] him: ${e.his.slice(0, 60)} → her: ${e.hers.join(' / ').slice(0, 110)}`);
+  const count = (xs: readonly { source: string }[]): Record<string, number> => {
+    const by: Record<string, number> = {};
+    for (const e of xs) by[e.source] = (by[e.source] ?? 0) + 1;
+    return by;
+  };
+  out(`candidates: ${ex.length} ${JSON.stringify(count(ex))}`);
+  for (const s of ['thea1-exemplar', 'thea1', 'thea2', 'elena', 'diego']) {
+    for (const e of ex.filter((x) => x.source === s).slice(0, 2)) out(`  [${s}] ${e.his.slice(0, 50)} → ${e.hers.join(' / ').slice(0, 100)}`);
   }
   if (!APPLY) {
-    out('(dry run — nothing written; --apply to embed and write var/voice/)');
+    out('(dry run — nothing judged or written; --apply to curate, embed and write var/voice/)');
     return;
   }
   const cfg = loadConfig('thea2.config.yaml', process.env);
+  const clock = new SystemClock();
+  const log = openEventLog(fs.mkdtempSync(path.join(os.tmpdir(), 'voice-judge-')), { clock });
+  const rng = makeRng('voice-judge');
+  const doors = cfg.models.doors!;
+  const send = (d: ResolvedDoor, n: string) => zaiTransport({ apiKey: d.apiKey, endpoint: d.endpoint, protocol: d.protocol, clock, rng: rng.fork(n) });
+  const model = createModelClient({
+    log,
+    clock,
+    core: chatCore({
+      router: makeRouter({ log, tiers: { main: doors.voice.model, cheap: doors.mind.model, reasoning: doors.judge.model }, doors: { voice: doors.voice, mind: doors.mind, judge: doors.judge } }),
+      doors: { main: { door: doors.voice, send: send(doors.voice, 'voice') }, cheap: { door: doors.mind, send: send(doors.mind, 'mind') }, reasoning: { door: doors.judge, send: send(doors.judge, 'judge') } },
+    }),
+  });
+
+  // 1. the hand-picked exemplars stay as they are; everything else is judged
+  const fixed: Scored[] = ex.filter((e) => e.source === 'thea1-exemplar').map((e) => ({ ...e, score: 5, register: 'warm' }));
+  const judged = await judgeAll(ex.filter((e) => e.source !== 'thea1-exemplar'), model);
+  const good = judged.filter((e) => e.score >= 4 && e.register !== 'flirty' && e.register !== 'logistics');
+  out(`judged ${judged.length}; kept (4-5, safe, not flirty/logistics): ${good.length} ${JSON.stringify(count(good))}`);
+
+  // 2. balance: hers first (Thea1, Thea2), then the people close to her; no register may crowd the rest
+  const PER_REGISTER = 260;
+  const PER_OTHER_SOURCE = 700;
+  const ranked = [...good].sort((a, b) => b.score - a.score || rng.float() - 0.5);
+  const perReg: Record<string, number> = {};
+  const perSrc: Record<string, number> = {};
+  const picked: Scored[] = [...fixed];
+  for (const e of ranked) {
+    const other = e.source === 'elena' || e.source === 'diego';
+    if ((perReg[e.register] ?? 0) >= PER_REGISTER && other) continue;
+    if (other && (perSrc[e.source] ?? 0) >= PER_OTHER_SOURCE) continue;
+    picked.push(e);
+    perReg[e.register] = (perReg[e.register] ?? 0) + 1;
+    perSrc[e.source] = (perSrc[e.source] ?? 0) + 1;
+  }
+
+  // 3. embed; drop near-twins (two examples that say the same thing teach nothing twice)
   const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint, apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey });
+  const dim = embedder.dim;
+  const raw = new Float32Array(picked.length * dim);
+  for (let i = 0; i < picked.length; i += 96) {
+    const vs = await embedder.embed(picked.slice(i, i + 96).map((e) => e.hers.join('\n')));
+    vs.forEach((v, j) => raw.set(v, (i + j) * dim));
+  }
+  const norm = (i: number): number => Math.sqrt(raw.subarray(i * dim, (i + 1) * dim).reduce((a, x) => a + x * x, 0));
+  const norms = picked.map((_, i) => norm(i));
+  const keep: number[] = [];
+  for (let i = 0; i < picked.length; i++) {
+    let twin = false;
+    for (const j of keep) {
+      let d = 0;
+      for (let k = 0; k < dim; k++) d += raw[i * dim + k]! * raw[j * dim + k]!;
+      if (d / (norms[i]! * norms[j]! || 1) > 0.93) {
+        twin = true;
+        break;
+      }
+    }
+    if (!twin) keep.push(i);
+  }
+  const final = keep.map((i) => picked[i]!);
+  const vecs = new Float32Array(final.length * dim);
+  keep.forEach((i, n) => vecs.set(raw.subarray(i * dim, (i + 1) * dim), n * dim));
+
+  const regs: Record<string, number> = {};
+  for (const e of final) regs[e.register] = (regs[e.register] ?? 0) + 1;
   const dir = path.join(VAR, 'voice');
   fs.mkdirSync(dir, { recursive: true });
-  const vecs = new Float32Array(ex.length * embedder.dim);
-  for (let i = 0; i < ex.length; i += 96) {
-    const batch = ex.slice(i, i + 96);
-    const vs = await embedder.embed(batch.map((e) => e.hers.join('\n')));
-    vs.forEach((v, j) => vecs.set(v, (i + j) * embedder.dim));
-    out(`  embedded ${Math.min(i + 96, ex.length)}/${ex.length}`);
-  }
-  fs.writeFileSync(path.join(dir, 'corpus.jsonl'), ex.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, 'corpus.jsonl'), final.map((e) => JSON.stringify(e)).join('\n') + '\n');
   fs.writeFileSync(path.join(dir, 'corpus.f32'), Buffer.from(vecs.buffer));
-  fs.writeFileSync(path.join(dir, 'corpus.meta.json'), JSON.stringify({ n: ex.length, dim: embedder.dim, by, model: cfg.embedder.model ?? null }));
-  out(`wrote ${dir} (${ex.length} examples × ${embedder.dim})`);
+  fs.writeFileSync(path.join(dir, 'corpus.meta.json'), JSON.stringify({ n: final.length, dim, by: count(final), registers: regs, model: cfg.embedder.model ?? null, curated: true }));
+  // training pairs for a future voice model (context → reply), the same curated set
+  fs.writeFileSync(path.join(dir, 'training.jsonl'), final.map((e) => JSON.stringify({ context: e.his, reply: e.hers.join('\n'), source: e.source, register: e.register, score: e.score })).join('\n') + '\n');
+  out(`wrote ${dir}: ${final.length} curated examples ${JSON.stringify(count(final))}`);
+  out(`registers: ${JSON.stringify(regs)}`);
+  for (const r of Object.keys(regs)) {
+    const e = final.find((x) => x.register === r && x.score === 5) ?? final.find((x) => x.register === r);
+    if (e !== undefined) out(`  [${r} · ${e.source}] ${e.his.slice(0, 50)} → ${e.hers.join(' / ').slice(0, 110)}`);
+  }
 };
 
 main().catch((e: unknown) => {

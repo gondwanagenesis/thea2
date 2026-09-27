@@ -205,7 +205,7 @@ describe('the mouth: every reply typed from her nearest real messages (Diego: "a
     const [q] = await emb.embed(['tell me all of it, i am here']);
     const near = nearestExamples(c, q!, 5);
     expect(near[0]!.id).toBe('a');
-    expect(near.filter((e) => e.source === 'elena').length).toBeLessThanOrEqual(2);
+    expect(near.filter((e) => e.source === 'elena' || e.source === 'diego').length).toBeLessThanOrEqual(3);
     expect(loadVoiceCorpus(join(dir, 'nope'))).toBeUndefined();
   });
 

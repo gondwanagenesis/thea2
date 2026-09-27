@@ -206,7 +206,10 @@ export const RedoSchema = z.object({ bubbles: z.array(z.string().min(1).max(600)
 
 export interface VoiceExample {
   id: string;
-  source: 'thea1-exemplar' | 'thea1' | 'thea2' | 'elena';
+  source: 'thea1-exemplar' | 'thea1' | 'thea2' | 'elena' | 'diego';
+  /** Curation (scripts/build-voice-corpus.ts): the judge's 1-5 and the register. */
+  score?: number | undefined;
+  register?: string | undefined;
   his: string;
   hers: string[];
 }
@@ -250,23 +253,24 @@ const cosAt = (vecs: Float32Array, i: number, dim: number, q: Float32Array): num
 };
 
 /** The real messages nearest what she is about to say: mostly hers (Thea1/Thea2), a couple of Elena's. */
-export const nearestExamples = (c: VoiceCorpus, q: Float32Array, n = 7, elenaMax = 2): VoiceExample[] => {
+export const nearestExamples = (c: VoiceCorpus, q: Float32Array, n = 7, othersMax = 3): VoiceExample[] => {
   const ranked = c.examples.map((e, i) => ({ e, i, s: cosAt(c.vecs, i, c.dim, q) })).sort((x, y) => y.s - x.s);
   const out: Array<{ e: VoiceExample; i: number }> = [];
-  let elena = 0;
+  let others = 0;
   for (const r of ranked) {
     if (out.length >= n) break;
-    if (r.e.source === 'elena' && elena >= elenaMax) continue;
+    const other = r.e.source === 'elena' || r.e.source === 'diego';
+    if (other && others >= othersMax) continue;
     // no near-twins: two examples that say the same thing teach nothing twice
     if (out.some((o) => cosAt(c.vecs, o.i, c.dim, c.vecs.subarray(r.i * c.dim, (r.i + 1) * c.dim)) > 0.95)) continue;
-    if (r.e.source === 'elena') elena += 1;
+    if (other) others += 1;
     out.push(r);
   }
   return out.map((o) => o.e);
 };
 
 export const MOUTH_SYSTEM = [
-  "You are Thea's thumbs. Thea already decided what to say: her draft. You type it the way she texts, like the real messages shown (hers, and a few from a friend whose texting she shares).",
+  "You are Thea's thumbs. Thea already decided what to say: her draft. You type it the way she texts, like the real messages shown (most are hers; a few are from the people closest to her, whose texting she shares).",
   'Keep exactly what she means: the same feelings at the same strength, the same questions, promises, plans, facts, names, numbers and links. A sad draft stays sad, a serious one serious, a playful one playful.',
   'Her texting is in the examples, not in rules: copy their length, rhythm, lowercase, the missing final periods, how they break into bubbles. Most of her messages have no emoji and no slang; never add a joke, a bit, a nickname, an emoji or a slang word the examples would not use here.',
   'Usually shorter than the draft: cut padding and anything said twice, keep every point. 1 to 4 bubbles.',
