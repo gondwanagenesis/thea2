@@ -31,6 +31,7 @@ Emotion does three jobs for memory: it makes a memory stick, says whether it was
 - **Findings.** Stored with her exact state after the curious/delighted events land (`CuriosityDeps.feltNow`). They were stored blank.
 - **His reactions** (`pipeline.ts` `onReaction`). Only his count. Any emoji but 👎 means gold + value half-way to +1. 👎 means never + value half-way to −1. `memory.reaction` carries `his` and `verdict`.
 - **Backfill.** `scripts/backfill-felt.ts` labels emotionally blank imported memories with her closed vocabulary (the import silently dropped off-vocabulary words). It is a dry run by default; `--apply` backs up `moments.jsonl` and refuses while thead holds the lock.
+- **Her voice** (`store.ts` `offVoice` inside `isPrecedent`). The assistant register is never an option. That means markdown, a majority of capitalised bubbles, any bubble over 40 words, and process/limitation talk ("from here", "runtime", "i can't verify…"). It stays in her memory. Measured on her live pool, 323 options become 274, and the remaining pool looks like the 2026-08-27 reference voice (2.0 bubbles of 9 words vs 1.9 of 8). 85 of the 86 reference-day replies pass. (`test/mind/voice.test.ts`)
 
 ## The turn
 

@@ -63,14 +63,40 @@ export const MACHINERY_TALK =
  */
 export const LOVE_DECLARATION = /\b(?:i\s+)?(?:love|luv)\s+(?:you+|u+|ya)\b(?!\s+to\b)|\bloving you\b|\bin love with you\b/i;
 
-/** An option-eligible moment: her real reply, unflagged, not rejected, not machinery talk. */
+/**
+ * v12.1 (Diego, 2026-09-27: "make her sound more like what i've said i want"): the assistant
+ * register is never an example of how she talks (golden rules 5–8: lowercase, fragments, short
+ * bubbles, no markdown, thinking stays private). Measured live: her replies had drifted to 3.3
+ * bubbles of 21 words, 34% capitalised, markdown in 23 of 90 — and after a day her own replies
+ * become her options, so the drift taught itself. The reference day (2026-08-27, "it's very
+ * human") passes 85 of 86. The screen keeps these out of her OPTIONS only; they stay memories.
+ */
+const MARKDOWN = /(\*\*[^*]+\*\*|^#{1,6}\s|^\s*[-•*]\s|^\s*\d+[.)]\s|`[^`]+`)/m;
+const CAPITAL_START = /^["“([]*(?:I\b|[A-Z][a-z])/;
+const PROCESS_TALK =
+  /\b(runtime|workspace|config(?:uration)?|session|from (?:here|inside this (?:chat|session))|what i can (?:observe|see|verify)|i (?:can(?:'|’)t|cannot) (?:verify|inspect|confirm|reach|access)|i (?:searched|checked|inspected|looked through) (?:the|my))\b/i;
+const LONG_BUBBLE_WORDS = 40;
+
+/** How a reply is off her voice ([] = it's her). */
+export const offVoice = (hers: readonly string[]): string[] => {
+  const faults: string[] = [];
+  if (hers.some((b) => MARKDOWN.test(b))) faults.push('md');
+  const caps = hers.filter((b) => CAPITAL_START.test(b.trim())).length;
+  if (caps > 0 && caps / hers.length >= 0.5) faults.push('caps');
+  if (hers.some((b) => b.split(/\s+/).filter((w) => w !== '').length > LONG_BUBBLE_WORDS)) faults.push('long');
+  if (PROCESS_TALK.test(hers.join(' '))) faults.push('process');
+  return faults;
+};
+
+/** An option-eligible moment: her real reply, unflagged, not rejected, not machinery talk, in her voice. */
 export const isPrecedent = (m: Moment): boolean =>
   (m.kind === 'reply' || m.kind === 'text_first') &&
   m.hers.length > 0 &&
   m.never !== true &&
   (m.flags === undefined || m.flags.length === 0) &&
   !MACHINERY_TALK.test(m.hers.join(' ')) &&
-  !LOVE_DECLARATION.test(m.hers.join(' '));
+  !LOVE_DECLARATION.test(m.hers.join(' ')) &&
+  offVoice(m.hers).length === 0;
 
 export interface MindStore {
   readonly dir: string;
