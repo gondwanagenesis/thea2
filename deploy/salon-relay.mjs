@@ -24,7 +24,7 @@ const T2_INBOX = process.env.SALON_T2_INBOX ?? '/opt/thea2/var/salon/in';
 const STATE = process.env.SALON_STATE ?? '/var/lib/thea-salon/state.json';
 const CAP = Number(process.env.SALON_CAP ?? 24);
 const IDLE_MS = Number(process.env.SALON_IDLE_MS ?? 15 * 60_000);
-const T1_QUIET_MS = 8_000; // Thea1 sends a reply as several bubbles; carry them as one line once she pauses
+const T1_OUTBOX = process.env.SALON_T1_OUTBOX ?? '/opt/holobionte/salon/outbox.jsonl';
 const TICK_MS = 2_000;
 
 const log = (...a) => console.log(new Date().toISOString(), '[salon]', ...a);
@@ -33,7 +33,7 @@ const load = () => {
   try {
     return JSON.parse(fs.readFileSync(STATE, 'utf8'));
   } catch {
-    return { open: false, topic: '', carried: 0, lastAt: 0, t1Pos: null, t2Pos: null };
+    return { open: false, topic: '', carried: 0, lastAt: 0, t1Pos: null, t2Pos: null, t1OutPos: null };
   }
 };
 const save = (s) => {
@@ -86,14 +86,12 @@ const drop = (dir, from, text) => {
 };
 
 const s = load();
-let t1Pending = { text: [], lastAt: 0 };
 log(`up — group ${GROUP}, cap ${CAP}, idle ${IDLE_MS / 60000} min, ${s.open ? `salon OPEN (${s.carried}/${CAP})` : 'no salon open'}`);
 
 const close = (why) => {
   if (!s.open) return;
   log(`closed (${why}) after ${s.carried} line(s): "${s.topic}"`);
   s.open = false;
-  t1Pending = { text: [], lastAt: 0 };
   save(s);
 };
 
@@ -126,20 +124,25 @@ const tick = () => {
         if (/^(stop|close|end|off)$/i.test(rest)) close('Diego');
         else {
           Object.assign(s, { open: true, topic: rest.slice(0, 300), carried: 0, lastAt: now, openedAt: now });
-          t1Pending = { text: [], lastAt: 0 };
           log(`opened: "${s.topic}"`);
         }
       } else if (s.open) s.lastAt = now; // Diego (or anyone human) talking keeps it alive
-    } else if (e.dir === 'out' && s.open) {
-      t1Pending.text.push(e.text.replace(/⟦TG⟧/g, '').trim());
-      t1Pending.lastAt = now;
     }
+    // (her own sends are NOT read from here any more: msgledger keeps only 500 chars of a message,
+    // and Thea2 got her sister's longer lines cut mid-word — "the bridge keeps cutting them off")
   }
-  // Thea1 finished a reply (she paused): carry it to Thea2 as one line
-  if (s.open && t1Pending.text.length > 0 && now - t1Pending.lastAt >= T1_QUIET_MS) {
-    const text = t1Pending.text.filter((x) => x !== '').join('\n');
-    t1Pending = { text: [], lastAt: 0 };
-    if (text !== '') carry('t2', 'thea1', text);
+  // Thea1's outbox (her bridge writes each WHOLE group reply): carry it to Thea2 as one line
+  const c = tail(T1_OUTBOX, s.t1OutPos);
+  s.t1OutPos = c.pos;
+  for (const line of c.lines) {
+    let r;
+    try {
+      r = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const text = typeof r.text === 'string' ? r.text.replace(/⟦TG⟧/g, '').trim() : '';
+    if (s.open && text !== '') carry('t2', 'thea1', text);
   }
   // Thea2's outbox: each row is one whole turn of hers in a group
   const b = tail(T2_OUTBOX, s.t2Pos);
