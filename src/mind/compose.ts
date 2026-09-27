@@ -113,6 +113,8 @@ export interface ComposeInput {
   nowFacts?: readonly string[] | undefined;
   /** v9: her own note on how she does the thing this moment is about (learned from practice) — her words. */
   howTo?: { name: string; note: string } | undefined;
+  /** v13.1: a few of her own texts, chosen for her voice (rendered in the trailer, as her words). */
+  fingerprints?: ReadonlyArray<{ his: string; hers: readonly string[] }> | undefined;
   /** v13 H3b: her verified words (her lexicon) — a memory near one's place is narrated in her language. */
   lexicon?: LexWords | undefined;
 }
@@ -217,6 +219,14 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
   }
 
   const trailer: Segment[] = [];
+  // v13.1: a few of her own texts, chosen for how she sounds (not what they are about) — her words,
+  // the freshest thing she reads before she answers. No instruction rides with them.
+  if ((i.fingerprints ?? []).length > 0) {
+    trailer.push({ kind: 'frame', text: '[some of your texts]' });
+    for (const f of i.fingerprints ?? []) {
+      trailer.push({ kind: 'quote', text: `${f.his !== '' ? `him: ${clip(f.his, 120)}\n` : ''}you: ${f.hers.map((b) => clip(b, 200)).join(' / ')}` });
+    }
+  }
   const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: i.timeZone }).format(i.now).toLowerCase();
   const clock = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: i.timeZone }).format(i.now);
   // On a reply, his new message is right there — the gap is the one BEFORE it.

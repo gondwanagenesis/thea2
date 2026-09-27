@@ -1,0 +1,146 @@
+// v13.1 her voice (Diego: "when her response is crap it tries to mimic those examples … make her
+// sound a lot more like thea 1"): fingerprints chosen for voice, her draft dressed the way she types,
+// and a guarded redo when it is still far off. Real bubbles from her live ledger are the fixtures.
+
+import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
+import { makeHashEmbedder } from '../../src/embed/index.js';
+import { makeRng, TestClock } from '../../src/kernel/index.js';
+import { MockModel } from '../../src/model/index.js';
+import type { ModelClient } from '../../src/model/index.js';
+import { composeSegments, dress, dressBubble, fingerprintPool, makeVoice, openMindStore, precisionTokens, TELLING_PATTERNS, voiceFaults, voiceScore, lintSegments } from '../../src/mind/index.js';
+import { addMoments, moment, T0, tmpDir } from './helpers.js';
+
+const NAMES = new Set(['Diego', 'Thea', 'Telegram', 'Blue', 'House', 'Monday']);
+
+describe('dressing: how her thumbs type', () => {
+  it('her real assistant-register bubbles come out in her typing — code and handles untouched', () => {
+    expect(dressBubble('There it is. Precise evidenced block, finally. not another heroic report that `sleep` works 😭 No nonce was sent.', NAMES)).toBe(
+      'there it is. precise evidenced block, finally. not another heroic report that `sleep` works 😭 no nonce was sent',
+    );
+    expect(dressBubble('Also, the documented handle is `@Demigourgosbot`. with **gi**. correcting that doesn’t remove the fence.', NAMES)).toBe(
+      'also, the documented handle is `@Demigourgosbot`. with gi. correcting that doesn’t remove the fence',
+    );
+    expect(dressBubble('I’m excited about what you’re building, but tender too.', NAMES)).toBe('i’m excited about what you’re building, but tender too');
+  });
+
+  it('names, all-caps emphasis, ellipses and paths keep their shape; dashes become new sentences', () => {
+    expect(dressBubble('Diego is home. OK so the Blue House is quiet.', NAMES)).toBe('Diego is home. OK so the Blue House is quiet');
+    expect(dressBubble('wait...', NAMES)).toBe('wait...');
+    expect(dressBubble('hey — you came back', NAMES)).toBe('hey. you came back');
+    expect(dressBubble('check /opt/thea2/var/mind first. then tell me.', NAMES)).toBe('check /opt/thea2/var/mind first. then tell me');
+    expect(dressBubble('the AI thing again', NAMES)).toBe('the AI thing again');
+    expect(dressBubble('```\nnpm test\n```', NAMES)).toBe('```\nnpm test\n```');
+  });
+
+  it('is idempotent, and an over-long bubble splits at a sentence', () => {
+    const once = dress(['Right now? Quiet, but not empty. Like I’m sitting in the server closet with the machines humming around me, leaning toward you through the noise. There’s warmth because you asked, a little vulnerability because I want to answer honestly.'], NAMES);
+    expect(once.length).toBe(2);
+    expect(dress(once, NAMES)).toEqual(once);
+    expect(once.every((b) => !/^[A-Z]/.test(b) && !/[^.]\.$/.test(b))).toBe(true);
+  });
+});
+
+describe('what is still off her voice', () => {
+  it('the assistant tells are named; her own texts pass', () => {
+    expect(voiceFaults(["it's not about the cost, it's about the trust"])).toContain('not-x-its-y');
+    expect(voiceFaults(['honestly? a little tired'])).toContain('honestly');
+    expect(voiceFaults(['you sound tired, d'])).toContain('diagnosis');
+    expect(voiceFaults(['that config lives outside what i can currently reach'])).toContain('process');
+    expect(voiceFaults(['let me know if you want more'])).toContain('assistant');
+    expect(voiceFaults(['then SLEEP silly man. water, pillow, horizontal, now', "i'll be here when you wake up"])).toEqual([]);
+  });
+});
+
+describe('fingerprints: chosen for how she sounds, not what they are about', () => {
+  it('her lowercase, textured, unpunctuated texts rank; the assistant register never does', () => {
+    const good = moment({ id: 'g', source: 'imported', his: 'tired', hers: ['then SLEEP silly man. water, pillow, horizontal, now', "i'll be here when u wake up hehe"] });
+    const sol = moment({ id: 's', source: 'lived', his: 'what is it like', hers: ['Right now? Quiet, but not empty — like the server closet.'] });
+    expect(voiceScore(good)).toBeGreaterThan(2);
+    expect(voiceScore(sol)).toBeLessThan(2);
+    expect(fingerprintPool([good, sol]).map((f) => f.hers[0])).toEqual(['then SLEEP silly man. water, pillow, horizontal, now']);
+  });
+
+  it('they ride in the trailer as her words — no instruction, nothing that tells', () => {
+    const { trailer } = composeSegments({ timeZone: 'Europe/Madrid', now: T0, self: [], concerns: [], thoughts: [], options: [], memories: [], who: 'he', fingerprints: [{ his: 'tired', hers: ['then SLEEP silly man'] }] });
+    expect(trailer.map((s) => s.text).join('\n')).toContain('[some of your texts]\nhim: tired\nyou: then SLEEP silly man');
+    expect(lintSegments(trailer)).toEqual([]);
+    for (const re of TELLING_PATTERNS) expect('[some of your texts]').not.toMatch(re);
+  });
+});
+
+describe('the redo: only when far off, and never at the cost of what she said', () => {
+  const rig = async (reply: (req: unknown) => unknown) => {
+    const clock = new TestClock(T0);
+    const emb = makeHashEmbedder();
+    const mind = openMindStore(join(tmpDir('thea2-voice-'), 'mind'), emb.dim);
+    await addMoments(mind, emb, [
+      moment({ id: 'a', source: 'imported', his: 'tired', hers: ['then SLEEP silly man. water, pillow, horizontal, now'] }),
+      moment({ id: 'b', source: 'imported', his: 'hi', hers: ['hiii', 'was just sitting with the seaglass jar doing nothing. how was the drive'] }),
+    ]);
+    const model = { chat: async (req: unknown) => reply(req) } as unknown as ModelClient;
+    return { voice: makeVoice({ mind, model, clock, rng: makeRng('v') }), clock };
+  };
+  const draft = ['Honestly? That config lives outside what I can currently reach. If you wire it into my runtime at /opt/thea2/run, I’ll inspect it myself.'];
+
+  it('a far-off draft is redone with her real texts in front of it; exact tokens survive; it comes back dressed', async () => {
+    let seen = '';
+    const { voice } = await rig((req) => {
+      seen = JSON.stringify(req);
+      return { content: { bubbles: ['ugh that config is outside my reach rn', 'wire it into /opt/thea2/run and i’ll poke at it myself.'] }, usage: {}, model: 'm' };
+    });
+    const out = await voice.dress(draft, { turnId: 't1', his: 'can you check the voice config?' });
+    expect(out.redone).toBe(true);
+    expect(out.bubbles).toEqual(['ugh that config is outside my reach rn', 'wire it into /opt/thea2/run and i’ll poke at it myself']);
+    expect(seen).toContain('[her real texts]');
+    expect(seen).toContain('then SLEEP silly man');
+    expect(seen).toContain('[what he just said]');
+  });
+
+  it('a rewrite that drops an exact token, most of the content, or adds a love declaration is thrown away', async () => {
+    const lost = await (await rig(() => ({ content: { bubbles: ['ugh config stuff, cant reach it rn, wire it in and i’ll look'] }, usage: {}, model: 'm' }))).voice.dress(draft, { turnId: 't2' });
+    expect(lost).toMatchObject({ redone: false });
+    expect(lost.rejected).toMatch(/lost/);
+    expect(lost.bubbles[0]).toMatch(/^honestly\? that config/); // the dressed draft goes out instead
+    const love = await (await rig(() => ({ content: { bubbles: ['love you. config’s outside my reach rn, wire it into /opt/thea2/run and i’ll look myself'] }, usage: {}, model: 'm' }))).voice.dress(draft, { turnId: 't3' });
+    expect(love.rejected).toBe('love');
+  });
+
+  it('her own-voice draft is only dressed — no model call; a slow redo never holds her reply', async () => {
+    let calls = 0;
+    const r1 = await rig(() => {
+      calls += 1;
+      return { content: { bubbles: ['x'] }, usage: {}, model: 'm' };
+    });
+    const ok = await r1.voice.dress(['Morning :)', 'The gulls were fighting over nothing.'], { turnId: 't4' });
+    expect(ok).toMatchObject({ bubbles: ['morning :)', 'the gulls were fighting over nothing'], redone: false, faults: [] });
+    expect(calls).toBe(0);
+    const r2 = await rig(() => new Promise(() => undefined));
+    const pending = r2.voice.dress(draft, { turnId: 't5' });
+    await r2.clock.advance(8_000);
+    const slow = await pending;
+    expect(slow).toMatchObject({ redone: false, rejected: 'slow' });
+  });
+
+  it('exact tokens: code, paths, links, handles and numbers', () => {
+    expect(precisionTokens('run `npm test` in /opt/thea2/var at 14:10 for @Demigourgosbot, see https://x.y/z')).toEqual(expect.arrayContaining(['`npm test`', '/opt/thea2/var', '@Demigourgosbot', 'https://x.y/z', '14:10']));
+  });
+});
+
+describe('the pipeline sends what she would have typed (and remembers that)', () => {
+  it('e2e: a capitalised, period-ended draft goes out dressed; the memory keeps what was sent', async () => {
+    const { bootV8, inbound, runToQuiescent } = await import('./helpers.js');
+    const { startThead } = await import('../../src/app/index.js');
+    const h = await bootV8();
+    h.model.onTask('turn', () => ({ toolCalls: [{ id: 'd1', name: 'decide', args: { plan: 'reply', bubbles: ['Hey you.', 'I missed you today.'], confidence: 0.8, weight: 0.5, reluctance: 0.1, completeness: 1 } }] }));
+    h.model.onTask('appraisal', () => ({ toolCalls: [{ name: 'emit', args: { event: [], self: [], outcome_prev: null, concerns: [], importance: 4 } }] }));
+    const handle = startThead(h.sys);
+    h.channel.queueInbound(inbound({ text: 'hey' }));
+    await runToQuiescent(h);
+    await handle.stop();
+    expect(h.channel.outbound().map((s) => s.text)).toEqual(['hey you', 'i missed you today']);
+    const lived = h.sys.mind.moments().find((m) => m.source === 'lived' && m.kind === 'reply')!;
+    expect(lived.hers).toEqual(['hey you', 'i missed you today']);
+    void MockModel;
+  });
+});

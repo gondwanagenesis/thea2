@@ -28,7 +28,7 @@ measured from a real human corpus — Elena's 7,476 messages and Diego's 12,533 
 into canon scene by scene.
 
 <!-- gen:tests-count:start -->
-**1855 test declarations in 173 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
+**1878 test declarations in 175 test files** (static count of `it()`/`test()` across `test/**/*.test.ts`; `npx vitest list` gives the exact live number). Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.
 <!-- gen:tests-count:end -->
 
 <!-- gen:doors:start -->
@@ -36,9 +36,9 @@ into canon scene by scene.
 
 | Door | Model | Protocol | Endpoint | Effort | Forcing |
 |---|---|---|---|---|---|
-| voice | gpt-5.6-sol | openai | https://api.openai.com/v1 | - | tool_choice |
-| voiceFallback | glm-5.3 | openai | https://api.neuralwatt.com/v1 | low | tool_choice |
-| mind | gpt-5.6-luna | openai | https://api.openai.com/v1 | - | tool_choice |
+| voice | glm-5.3-flash | openai | https://api.neuralwatt.com/v1 | - | tool_choice |
+| voiceFallback | gpt-5.6-sol | openai | https://api.openai.com/v1 | - | tool_choice |
+| mind | glm-5.3-flash | openai | https://api.neuralwatt.com/v1 | - | tool_choice |
 | judge | kimi-k3 | openai | https://api.neuralwatt.com/v1 | none | tool_choice |
 
 Computed from code by `scripts/docs-check.ts` — never edit by hand; regenerate with `npx tsx scripts/docs-check.ts --fix` or update the code.

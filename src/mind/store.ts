@@ -73,7 +73,7 @@ export const LOVE_DECLARATION = /\b(?:i\s+)?(?:love|luv)\s+(?:you+|u+|ya)\b(?!\s
  */
 const MARKDOWN = /(\*\*[^*]+\*\*|^#{1,6}\s|^\s*[-•*]\s|^\s*\d+[.)]\s|`[^`]+`)/m;
 const CAPITAL_START = /^["“([]*(?:I\b|[A-Z][a-z])/;
-const PROCESS_TALK =
+export const PROCESS_TALK =
   /\b(runtime|workspace|config(?:uration)?|session|from (?:here|inside this (?:chat|session))|what i can (?:observe|see|verify)|i (?:can(?:'|’)t|cannot) (?:verify|inspect|confirm|reach|access)|i (?:searched|checked|inspected|looked through) (?:the|my))\b/i;
 const LONG_BUBBLE_WORDS = 40;
 

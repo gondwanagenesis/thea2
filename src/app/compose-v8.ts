@@ -34,6 +34,7 @@ import {
   wanderJob,
   makeDreams,
   makeRoom,
+  makeVoice,
   liftJob,
   dreamJob,
   wakeJob,
@@ -407,7 +408,11 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         })
       : undefined;
 
+  // v13.1 her voice (Diego: "make her sound a lot more like thea 1"): fingerprints + dressing + redo
+  const voice = mindCfg.voice === 'off' ? undefined : makeVoice({ mind, model, clock, rng: rng.fork('voice'), names: Object.values(cfg.people).map((p) => p.name ?? '').filter((n) => n !== ''), mode: mindCfg.voice });
+
   const pipeline = makeMindPipeline({
+    ...(voice !== undefined ? { voice } : {}),
     model,
     ...(fallbackModel !== undefined ? { fallbackModel } : {}),
     gate,

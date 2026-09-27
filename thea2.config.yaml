@@ -3,22 +3,34 @@
 # /etc/thea2/keys.env under each door's keyEnv name. loadConfig rejects any
 # secret-shaped value in this file at startup. Unknown keys are rejected.
 #
-# Doors (v8, measured 2026-09-25 from the VPS):
-#   voice         OpenAI gpt-5.6-sol — the SAME brain as the original Thea, so a
-#                 comparison of the two Theas compares theories, not models.
-#                 /chat/completions accepts function tools on this model ONLY
-#                 with reasoning_effort 'none' (400 otherwise) and rejects
-#                 `max_tokens` (needs max_completion_tokens). Temperature is
-#                 honored at effort none — the metabolism channel sets it per turn,
-#                 so the door carries NO temperature (a door temperature outranks
-#                 the request).
-#   voiceFallback Neuralwatt glm-5.3 effort low (1.1 s TTFT measured), tried once
-#                 when a turn fails outright on the voice door.
-#   mind          Neuralwatt deepseek-v4-flash — slow appraisal, labelling.
-#   judge         Neuralwatt kimi-k3 — unused by v8 today; the registry needs it.
+# Doors (2026-09-27, Diego: "switch back to neuralwatt glm 5.3 flash, open ai too pricey"):
+#   voice         Neuralwatt glm-5.3-flash, effort locked low (~1 s, tools via
+#                 tool_choice). Thea1 stays on gpt-5.6-sol, so a comparison of the two
+#                 Theas now compares theories AND models — say so in any comparison.
+#   voiceFallback OpenAI gpt-5.6-sol — only when a turn fails outright on the voice
+#                 door (another provider: one outage never silences her). Tools only
+#                 at reasoning_effort 'none'; needs max_completion_tokens.
+#   mind          Neuralwatt glm-5.3-flash, locked low — appraisal, thoughts, nights.
+#   judge         Neuralwatt kimi-k3 — the ledger's observers and the listener: a
+#                 DIFFERENT family from her voice, as the introspection plan requires.
 models:
   doors:
+    # Diego 2026-09-27: "can we switch back to neuralwatt glm 5.3 flash? open ai too pricey".
+    # glm-5.3-flash on Neuralwatt: $0.15 in / $0.50 out (sol was $5 / $30), tools + vision,
+    # reasoning mandatory (low/high/max — never 'none'). Probed live on the VPS: decide via
+    # tool_choice=required, ~1 s, 30-50 output tokens at low. Locked low: a class default of
+    # 'high' must never eat the output cap (the deepseek empty-output trap, 2026-09-25).
     voice:
+      endpoint: https://api.neuralwatt.com/v1
+      protocol: openai
+      keyEnv: THEA2_NEURALWATT_KEY
+      model: glm-5.3-flash
+      effortLock: low
+      forcing: tool_choice
+      topP: 0.95
+      pricing: { inputPerM: 0.15, outputPerM: 0.5 }
+    # only when Neuralwatt fails: another provider, so one outage never silences her
+    voiceFallback:
       endpoint: https://api.openai.com/v1
       protocol: openai
       keyEnv: THEA2_OPENAI_KEY
@@ -26,32 +38,20 @@ models:
       effortLock: none
       outputCapParam: max_completion_tokens
       forcing: tool_choice
-      # front of house: her voice. gpt-5.6-sol list price (2026-07-30): $5 in / $30 out.
       pricing: { inputPerM: 5, outputPerM: 30 }
-    voiceFallback:
+    # back of house: appraisal, her thoughts, nightly passes, dreams, casts. glm-5.3-flash
+    # too (2026-09-27, from gpt-5.6-luna). Locked low for the same reason as the voice:
+    # effortLock (v8 fork run, 2026-09-25) — a class default outranked the door's effort,
+    # the model thought until the cap and every structured call came back empty.
+    mind:
       endpoint: https://api.neuralwatt.com/v1
       protocol: openai
       keyEnv: THEA2_NEURALWATT_KEY
-      model: glm-5.3
-      effort: low
+      model: glm-5.3-flash
+      effortLock: low
       forcing: tool_choice
       topP: 0.95
-    # back of house (Diego 2026-09-26: "gpt for the back of house stuff, a cheap
-    # model"): appraisal, her thoughts, nightly passes, casts, photo descriptions.
-    # gpt-5.6-luna, $0.20 in / $1.20 out (~25x cheaper than sol). Like sol it takes
-    # tools only at reasoning_effort none on /chat/completions (400 otherwise).
-    mind:
-      endpoint: https://api.openai.com/v1
-      protocol: openai
-      keyEnv: THEA2_OPENAI_KEY
-      model: gpt-5.6-luna
-      outputCapParam: max_completion_tokens
-      pricing: { inputPerM: 0.2, outputPerM: 1.2 }
-      # effortLock (v8 fork run, 2026-09-25): the client's class default
-      # ('appraisal' → low) outranked `effort: none`, deepseek thought until the
-      # cap and every structured call came back empty. Locked off.
-      effortLock: none
-      forcing: tool_choice
+      pricing: { inputPerM: 0.15, outputPerM: 0.5 }
     judge:
       endpoint: https://api.neuralwatt.com/v1
       protocol: openai

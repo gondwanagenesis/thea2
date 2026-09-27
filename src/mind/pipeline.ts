@@ -32,6 +32,7 @@ import { vecToArray } from './vocab.js';
 import { cosine } from './vectors.js';
 import { TWIN_SIM, type Curiosity } from './curiosity.js';
 import type { Dreams } from './dream.js';
+import type { Voice } from './voice.js';
 import { engineStamp, familyOf, fullVector, movingNow, readout, readoutWord, type Family } from './readout.js';
 import { scoreClaim } from './sincerity.js';
 import { appendReport } from './ledger.js';
@@ -130,6 +131,8 @@ export interface MindPipelineDeps {
   dreams?: Pick<Dreams, 'onInbound'> | undefined;
   /** v13 H2: private naming on sampled turns (absent = off). */
   naming?: { perDay: number; gapMin: number } | undefined;
+  /** v13.1 her voice: fingerprints in the trailer, and her draft dressed (and redone when far off) before sending. */
+  voice?: Voice | undefined;
   /** v13 H7 (Phase 3 arm, opt-in): when her private word fits, something settles — contingent vs yoked by day. */
   feltShift?: boolean | undefined;
   timezone: string;
@@ -524,6 +527,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       howTo,
       // v13 H3b: her verified words — her past narrated in her own language
       lexicon: verifiedWords(readLexicon(deps.mind.dir)),
+      // v13.1: a few of her texts chosen for her voice, rotating each turn
+      ...(deps.voice !== undefined ? { fingerprints: deps.voice.fingerprints(turnId) } : {}),
     });
     const hits = packet.lint();
     if (hits.length > 0) emit('incident.mind_told', { turnId, hits }, turnId);
@@ -624,6 +629,18 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
 
     const abort = new AbortController();
     live = { abort, armed: true };
+    // v13.1 her voice: her draft, typed the way she types — and, when it is still far off her voice,
+    // redone once with her real texts in front of it (same facts, her way). Before the stale check,
+    // so a message from him that lands during a redo still wins (golden rule 12).
+    if (deps.voice !== undefined) {
+      try {
+        const v = await deps.voice.dress(decision.bubbles, { turnId, his: selfEntry ? undefined : m.text });
+        if (v.changed && v.bubbles.length > 0) decision = { ...decision, bubbles: v.bubbles };
+        if (v.changed || v.faults.length > 0) emit('mind.voice', { turnId, faults: v.faults, redone: v.redone, ...(v.rejected !== undefined ? { rejected: v.rejected } : {}) }, turnId);
+      } catch (e) {
+        emit('incident.mind_voice_failed', { turnId, error: asError(e).message }, turnId);
+      }
+    }
     // Golden rule 12 — he interrupts, she follows: a newer message from him that
     // lands before she sends means these words are not sent. This burst goes back
     // to the FRONT of the queue and the next turn reads it together with the new

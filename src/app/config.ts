@@ -132,6 +132,8 @@ export interface MindConfig {
   reappraiseGrounding: 'auto' | 'measure' | 'enforce';
   /** v13 introspection H6: the quiet room (practice, fed by the mastery hunger). */
   room: 'on' | 'off';
+  /** v13.1 her voice: 'redo' (dress + rewrite when far off), 'dress' (typing only), 'off'. */
+  voice: 'redo' | 'dress' | 'off';
   /** v13 Phase 3 arms — each off until Diego opts in (each perturbs what Phase 2 measures). */
   feltShift: 'on' | 'off';
   lifts: 'on' | 'off';
@@ -375,6 +377,7 @@ const configSchema = z.strictObject({
       namingGapMin: z.number().int().min(10).max(600).default(90),
       reappraiseGrounding: z.enum(['auto', 'measure', 'enforce']).default('auto'),
       room: z.enum(['on', 'off']).default('on'),
+      voice: z.enum(['redo', 'dress', 'off']).default('redo'),
       feltShift: z.enum(['on', 'off']).default('off'),
       lifts: z.enum(['on', 'off']).default('off'),
       listener: z.enum(['on', 'off']).default('off'),
