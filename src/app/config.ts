@@ -60,7 +60,8 @@ export interface Thea2Config {
   inhibitionPlacement: 'trailing' | 'merged';
   gravity: { seedWeight: number }; // g, default 0.7
   reconcile: { lostReplyWindowMin: number };
-  embedder: { kind: 'fastembed' | 'api' | 'hash'; model?: string | undefined; dim?: number | undefined };
+  /** endpoint/apiKey: the embedder's own door (resolved; absent in the yaml ⇒ the voice door's). */
+  embedder: { kind: 'fastembed' | 'api' | 'hash'; model?: string | undefined; dim?: number | undefined; endpoint?: string | undefined; apiKey?: string | undefined };
   /** v8 mind block (see configSchema). Absent ⇒ the v7 exemplar composition. */
   mind?: MindConfig | undefined;
   /** v9 body block. Absent ⇒ text-only (v8). */
@@ -344,6 +345,9 @@ const configSchema = z.strictObject({
     model: z.string().min(1).optional(),
     /** Vector width the API returns (text-embedding-3-small = 1536). Absent ⇒ 384. */
     dim: z.number().int().positive().optional(),
+    /** Its own door (2026-09-27: the voice moved to Neuralwatt; her 1536-d vectors are OpenAI's). Absent ⇒ the voice door. */
+    endpoint: z.string().url().optional(),
+    keyEnv: z.string().min(1).optional(),
   }),
   spine: spineBlockSchema.optional(),
   /**
@@ -535,6 +539,7 @@ export const loadConfig = (
     tiers = y.models.tiers!;
   }
 
+  if (y.embedder.keyEnv !== undefined && (env[y.embedder.keyEnv] ?? '') === '') envIssues.push({ path: ['embedder', 'keyEnv'], message: `${y.embedder.keyEnv} missing from env` });
   if (envIssues.length > 0) throw new ConfigError('app/config-invalid', envIssues, yamlPath);
 
   return {
@@ -559,7 +564,13 @@ export const loadConfig = (
     inhibitionPlacement: y.inhibitionPlacement,
     gravity: { seedWeight: y.gravity.seedWeight },
     reconcile: y.reconcile,
-    embedder: y.embedder,
+    embedder: {
+      kind: y.embedder.kind,
+      ...(y.embedder.model !== undefined ? { model: y.embedder.model } : {}),
+      ...(y.embedder.dim !== undefined ? { dim: y.embedder.dim } : {}),
+      endpoint: y.embedder.endpoint ?? doors.voice.endpoint,
+      apiKey: y.embedder.keyEnv !== undefined ? (env[y.embedder.keyEnv] ?? '') : doors.voice.apiKey,
+    },
     ...(y.spine !== undefined ? { spine: y.spine } : {}),
     ...(y.mind !== undefined ? { mind: y.mind } : {}),
     ...(y.body !== undefined ? { body: resolveBody(y.body, env) } : {}),

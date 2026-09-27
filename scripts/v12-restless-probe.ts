@@ -74,7 +74,7 @@ const main = async (): Promise<void> => {
       }),
     });
   };
-  const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.models.endpoint, apiKey: cfg.models.apiKey });
+  const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint, apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey });
   const model = clientFor(doors.voice, 'voice');
   const sys = await composeV8(cfg, 'probe-harness', {
     varDir: base,

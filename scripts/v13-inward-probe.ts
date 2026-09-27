@@ -100,7 +100,7 @@ const main = async (): Promise<void> => {
       doors: { main: { door: doors.voice, send: send(doors.voice, 'voice') }, cheap: { door: doors.mind, send: send(doors.mind, 'mind') }, reasoning: { door: doors.judge, send: send(doors.judge, 'judge') } },
     }),
   });
-  const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.models.endpoint, apiKey: cfg.models.apiKey });
+  const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint, apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey });
 
   let arm: Arm = 'none';
   let armState: AffectState | undefined;

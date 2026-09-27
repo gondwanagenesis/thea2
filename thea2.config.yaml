@@ -87,10 +87,13 @@ reconcile:
   lostReplyWindowMin: 10
 embedder:
   # v8: real vectors (the v7 hash embedder made recall lexical noise).
-  # Rides the voice door's endpoint + key (OpenAI).
+  # Its own door (2026-09-27): the voice moved to Neuralwatt, but her 1536-d vectors are
+  # OpenAI's (every stored memory) — the embedder stays there, never follows the voice.
   kind: api
   model: text-embedding-3-small
   dim: 1536
+  endpoint: https://api.openai.com/v1
+  keyEnv: THEA2_OPENAI_KEY
 mind:
   engine: v8
   dir: var/mind

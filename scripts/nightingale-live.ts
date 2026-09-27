@@ -92,8 +92,8 @@ try {
   for (const p of live) console.log(`  - ${p.id} [${p.dimension}]`);
 
   const embedder = makeEmbedder(cfg.embedder, {
-    baseUrl: cfg.models.endpoint,
-    apiKey: cfg.models.apiKey,
+    baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint,
+    apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey,
   });
 
   // The runner invokes the selector once per EXECUTED RUN (executeRun), so the

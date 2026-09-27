@@ -174,8 +174,8 @@ export const deriveVerb = async (
     const model = rateLimitPatient(raw, sys.clock, sys.rng.fork('derive-backoff'));
     const inputs = await runInputs(sys);
     const embedderId = makeEmbedder(cfg.embedder, {
-      baseUrl: cfg.models.endpoint,
-      apiKey: cfg.models.apiKey,
+      baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint,
+      apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey,
     }).id;
     const outDir = path.resolve(sys.paths.canon, '..', 'derived');
     fs.mkdirSync(outDir, { recursive: true });

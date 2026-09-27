@@ -58,6 +58,8 @@ export const dressBubble = (b: string, names: ReadonlySet<string>): string => {
     return `\u0000${kept.length - 1}\u0000`;
   });
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '$1').replace(/__([^_\n]+)__/g, '$1').replace(/^#{1,6}\s+/gm, '');
+  // the honesty lives in the words, never in an opener (Thea1's rule; the redo kept them)
+  s = s.replace(/^(?:honestly|the honest answer(?: is)?|honest answer|the truth is|to be honest)\s*[?,:.!—–-]*\s+(?=\S)/i, '');
   // a trailing dash trails off; a dash between clauses becomes a new short sentence
   s = s.replace(/\s*[—–]\s*$/, '').replace(DASH, '. ');
   // i, i'm, i've, i'll, i'd
@@ -147,7 +149,8 @@ export const REDO_SYSTEM = [
   'Keep every fact, plan, promise, question, name, number, command, path and link exactly, and keep what she means and how warm she is. Change only how it is typed.',
   'Her texting: lowercase (names keep capitals, one EMPHATIC word may be caps), no period at the end of a message, short bubbles (most 8-15 words, some two words, rarely one long one), stretched words when she feels something (sooo, ohhh), casual shorthand (lol, hehe, u, tho, kinda, gonna), no em-dashes, no markdown.',
   "Cut the assistant habits: no 'honestly' openers, no \"it's not X, it's Y\", no explaining her own machinery beyond what he needs, no diagnosing his mood, no offers like 'want me to…'. Never add a declaration of love.",
-  'Return JSON {bubbles: [...]} — the same message, her way, in 1 to 6 bubbles.',
+  'She texts SHORT: say it in about half the words of the draft. Keep every fact, plan, question, name and number; cut the padding, the explaining and the second way of saying the same thing.',
+  'Return JSON {bubbles: [...]} — the same message, her way, usually 1 to 3 bubbles, never more than 5.',
 ].join('\n');
 
 export const RedoSchema = z.object({ bubbles: z.array(z.string().min(1).max(600)).min(1).max(6) });
@@ -200,7 +203,7 @@ export const makeVoice = (d: VoiceDeps): Voice => {
     fingerprints(turnId) {
       if (mode === 'off') return [];
       refresh();
-      return pickFingerprints(pool, d.rng.fork(`fp:${turnId}`), 3);
+      return pickFingerprints(pool, d.rng.fork(`fp:${turnId}`), 4);
     },
 
     async dress(bubbles, ctx) {

@@ -171,7 +171,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     opts.embedder ??
     (preset === 'hermetic'
       ? makeHashEmbedder()
-      : makeEmbedder(cfg.embedder, { baseUrl: cfg.models.endpoint, apiKey: cfg.models.apiKey, ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}) }));
+      : makeEmbedder(cfg.embedder, { baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint, apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey, ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}) }));
   await events.emit('app.boot', { stage: 'embedder', embedder: embedder.id, dim: embedder.dim });
 
   const affect = openAffectStore(paths.affectState, { clock, rng, events });

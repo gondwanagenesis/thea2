@@ -227,7 +227,7 @@ export const compose = async (cfg: Thea2Config, preset: ComposePreset = 'prod', 
     opts.embedder ??
     (preset === 'hermetic'
       ? makeHashEmbedder()
-      : makeEmbedder(cfg.embedder, { baseUrl: cfg.models.endpoint, apiKey: cfg.models.apiKey, ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}) }));
+      : makeEmbedder(cfg.embedder, { baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint, apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey, ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}) }));
   await events.emit('app.boot', { stage: 'embedder', embedder: embedder.id });
 
   // ---- stores ------------------------------------------------------------

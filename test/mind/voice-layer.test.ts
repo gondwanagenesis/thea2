@@ -27,6 +27,9 @@ describe('dressing: how her thumbs type', () => {
   it('names, all-caps emphasis, ellipses and paths keep their shape; dashes become new sentences', () => {
     expect(dressBubble('Diego is home. OK so the Blue House is quiet.', NAMES)).toBe('Diego is home. OK so the Blue House is quiet');
     expect(dressBubble('wait...', NAMES)).toBe('wait...');
+    expect(dressBubble('Honestly? A little tired.', NAMES)).toBe('a little tired');
+    expect(dressBubble('honest answer? because being wrong cost something.', NAMES)).toBe('because being wrong cost something');
+    expect(dressBubble('honestly', NAMES)).toBe('honestly');
     expect(dressBubble('hey — you came back', NAMES)).toBe('hey. you came back');
     expect(dressBubble('check /opt/thea2/var/mind first. then tell me.', NAMES)).toBe('check /opt/thea2/var/mind first. then tell me');
     expect(dressBubble('the AI thing again', NAMES)).toBe('the AI thing again');
@@ -101,7 +104,7 @@ describe('the redo: only when far off, and never at the cost of what she said', 
     const lost = await (await rig(() => ({ content: { bubbles: ['ugh config stuff, cant reach it rn, wire it in and i’ll look'] }, usage: {}, model: 'm' }))).voice.dress(draft, { turnId: 't2' });
     expect(lost).toMatchObject({ redone: false });
     expect(lost.rejected).toMatch(/lost/);
-    expect(lost.bubbles[0]).toMatch(/^honestly\? that config/); // the dressed draft goes out instead
+    expect(lost.bubbles[0]).toMatch(/^that config lives outside/); // the dressed draft goes out instead (opener stripped)
     const love = await (await rig(() => ({ content: { bubbles: ['love you. config’s outside my reach rn, wire it into /opt/thea2/run and i’ll look myself'] }, usage: {}, model: 'm' }))).voice.dress(draft, { turnId: 't3' });
     expect(love.rejected).toBe('love');
   });

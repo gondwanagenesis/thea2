@@ -322,7 +322,7 @@ const setup = (): { model: ModelClient; embedder: ReturnType<typeof makeEmbedder
       doors: { main: { door, send: send('m') }, cheap: { door, send: send('c') }, reasoning: { door, send: send('r') } },
     }),
   });
-  const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.models.endpoint, apiKey: cfg.models.apiKey });
+  const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint, apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey });
   return { model, embedder };
 };
 
@@ -507,7 +507,7 @@ const mergeStage = async (): Promise<void> => {
   const active = spawnSync('systemctl', ['is-active', 'thea2'], { encoding: 'utf8' });
   if (active.stdout.trim() === 'active') throw new Error('thea2 is running: the mind has ONE writer. systemctl stop thea2 first.');
   const cfg = loadConfig(CONFIG, process.env);
-  const dim = makeEmbedder(cfg.embedder, { baseUrl: cfg.models.endpoint, apiKey: cfg.models.apiKey }).dim;
+  const dim = makeEmbedder(cfg.embedder, { baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint, apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey }).dim;
   const rescreen = JSON.parse(fs.readFileSync(path.join(STAGE_DIR, 'rescreen.json'), 'utf8')) as Record<string, string[]>;
   fs.copyFileSync(path.join(MIND, 'moments.jsonl'), path.join(MIND, 'moments.jsonl.pre-oc'));
   const liveStore = openMindStore(MIND, dim);

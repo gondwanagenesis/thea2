@@ -360,3 +360,29 @@ describe('spine block (M.6) and the *Env secret-scanner exemption', () => {
     expect(err.issues.some((i) => i.path.join('.').includes('spine.version'))).toBe(true);
   });
 });
+
+describe('the embedder has its own door (2026-09-27: the voice moved to Neuralwatt, her vectors are OpenAI\'s)', () => {
+  const withEmbedder = DOORS_YAML.replace('embedder:\n  kind: hash\n', 'embedder:\n  kind: api\n  model: text-embedding-3-small\n  dim: 1536\n  endpoint: https://api.openai.com/v1\n  keyEnv: THEA2_OPENAI_KEY\n');
+
+  it('resolves its own endpoint and key — never the voice door\'s', () => {
+    const c = cfg(withEmbedder, { ...DOORS_ENV, THEA2_OPENAI_KEY: 'openai-key-value' });
+    expect(c.models.doors?.voice.endpoint).toBe('https://api.neuralwatt.com/v1');
+    expect(c.embedder).toMatchObject({ kind: 'api', endpoint: 'https://api.openai.com/v1', apiKey: 'openai-key-value', dim: 1536 });
+  });
+
+  it('a missing key is a config error at boot, not a silent 404 on every recall', () => {
+    expect(() => cfg(withEmbedder, DOORS_ENV)).toThrow(ConfigError);
+  });
+
+  it('absent ⇒ the voice door (as before)', () => {
+    const c = cfg(DOORS_YAML, DOORS_ENV);
+    expect(c.embedder.endpoint).toBe('https://api.neuralwatt.com/v1');
+  });
+
+  it('the shipped config keeps her embedder on OpenAI and her voice on Neuralwatt glm-5.3-flash', () => {
+    const c = loadConfig('thea2.config.yaml', { THEA2_BOT_TOKEN: VALID_ENV['THEA2_BOT_TOKEN']!, THEA2_NEURALWATT_KEY: 'nw', THEA2_OPENAI_KEY: 'oa', THEA2_MODEL_API_KEY: 'z' });
+    expect(c.embedder).toMatchObject({ endpoint: 'https://api.openai.com/v1', apiKey: 'oa', model: 'text-embedding-3-small' });
+    expect(c.models.doors?.voice).toMatchObject({ endpoint: 'https://api.neuralwatt.com/v1', model: 'glm-5.3-flash' });
+    expect(c.models.doors?.mind).toMatchObject({ model: 'glm-5.3-flash' });
+  });
+});

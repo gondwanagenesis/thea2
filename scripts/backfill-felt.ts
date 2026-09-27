@@ -82,7 +82,7 @@ const main = async (): Promise<void> => {
   };
   if (APPLY && fs.existsSync(lock) && alive()) throw new Error(`thead is running (${lock}) — stop thea2 before --apply (the store is hers while she runs)`);
 
-  const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.models.endpoint, apiKey: cfg.models.apiKey });
+  const embedder = makeEmbedder(cfg.embedder, { baseUrl: cfg.embedder.endpoint ?? cfg.models.endpoint, apiKey: cfg.embedder.apiKey ?? cfg.models.apiKey });
   const mind = openMindStore(path.join(VAR, 'mind'), embedder.dim);
   const blank = mind.moments().filter((m) => m.never !== true && feltIntensity(m.felt.sig) === 0).slice(0, LIMIT);
   const bySource = new Map<string, number>();
