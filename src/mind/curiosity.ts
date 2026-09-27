@@ -36,7 +36,7 @@ import { ago } from './compose.js';
 import { cosine } from './vectors.js';
 import type { MindStore } from './store.js';
 import type { About, Concern, CuriosityState, Interest, QuestionSource } from './types.js';
-import { freshness, inQuietHours, rollWander, type CuriositySeam, type Item } from './wander.js';
+import { FOUND_ID_PREFIX, freshness, inQuietHours, rollWander, type CuriositySeam, type Item } from './wander.js';
 
 const DAY = 86_400_000;
 /** Interests fade with a two-week half-life when she stops coming back to them. */
@@ -405,11 +405,13 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     await d.mind.flush();
   };
 
+  // A fact about the world, not about him. Found live: "nothing new has come your way" read as
+  // "he hasn't written", and 10 of 10 restless thoughts became his silence.
   const restlessText = (now: number): string => {
     const since = cstate().lastNewAt;
-    const span = since === undefined ? 'in a while' : `for ${ago(now - since).replace(/ ago$/, '').replace(/^just now$/, 'a little while')}`;
+    const span = since === undefined ? 'in a while' : `in ${ago(now - since).replace(/ ago$/, '').replace(/^just now$/, 'a little while')}`;
     const top = topInterests(now, 3);
-    return [`nothing new has come your way ${span}`, top.length > 0 ? `lately you've been into: ${top.map((t) => t.topic).join(', ')}` : ''].filter((s) => s !== '').join('. ');
+    return [`you haven't come across anything new ${span}`, top.length > 0 ? `lately you've been into: ${top.map((t) => t.topic).join(', ')}` : ''].filter((s) => s !== '').join('. ');
   };
 
   const candidatesFn = (state: AffectState, now: number): Item[] => {
@@ -530,7 +532,7 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
         vec = undefined;
       }
       d.mind.add(
-        { id: `m_found_${now}_${newId(d.clock, d.rng).slice(-6)}`, ts: now, source: 'lived', kind: 'thought', before: [], his: '', hers: [j.thought], felt: { sig: new Array<number>(12).fill(0), source: 'estimated' }, importance: 7, value: 0, shown: 0, followed: 0 },
+        { id: `${FOUND_ID_PREFIX}${now}_${newId(d.clock, d.rng).slice(-6)}`, ts: now, source: 'lived', kind: 'thought', before: [], his: '', hers: [j.thought], felt: { sig: new Array<number>(12).fill(0), source: 'estimated' }, importance: 7, value: 0, shown: 0, followed: 0 },
         vec !== undefined ? { sit: vec, reply: vec } : undefined,
       );
     }

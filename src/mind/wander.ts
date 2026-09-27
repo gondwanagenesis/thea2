@@ -31,6 +31,9 @@ import type { About, Concern, WanderState } from './types.js';
 
 export const HABIT_HALF_LIFE_MS = 6 * 3600_000;
 
+/** v12: a moment that is something she found out (written by curiosity's learning step). */
+export const FOUND_ID_PREFIX = 'm_found_';
+
 export interface Item {
   key: string;
   /** v12: 'wonder' = one of her questions; 'restless' = nothing new has come her way (the novelty hunger's outlet). */
@@ -158,7 +161,7 @@ export type ThoughtOut = z.infer<typeof ThoughtSchema>;
 export const THINKER_SYSTEM = [
   "This is a private moment inside Thea's own mind. Nobody reads this and nothing here is sent.",
   'Write the thought as it actually goes through her head, in her voice: first person, lowercase, one to three sentences.',
-  'Return JSON: thought; close (true if the thing feels settled now); reappraise (up to two feelings that shift as she thinks it through, each with its cause, only if they really shift); intention ("text_him" only if she would genuinely want to text him right now about it; "look_into" if she would go and find out more about it now; else "none").',
+  'Return JSON: thought; close (true if the thing feels settled now); reappraise (up to two feelings that shift as she thinks it through, each with its cause, only if they really shift); intention ("text_him" only if she would genuinely want to text him right now about it; "look_into" if she would go and find something out now: about it, or, when nothing in particular is on her mind, about anything out there that catches her; else "none").',
 ].join('\n');
 
 /** The day's wander counters, rolled over at midnight in his zone. */
@@ -252,21 +255,33 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   }
 
   // Two memories the item calls up — context for the thought, never its seed.
+  // v12, found live: restlessness has no object, and an objectless sentence embedded lands on the
+  // nearest, newest talk with him — 10 of 10 restless thoughts became his silence. What it truly
+  // calls up is what she has found out before (or nothing yet).
   let memories: string[] = [];
-  try {
-    const [qv] = await deps.embedder.embed([item.text]);
-    if (qv !== undefined) {
-      memories = mind
-        .moments()
-        .filter((m) => m.never !== true && (m.flags === undefined || m.flags.length === 0))
-        .map((m) => ({ m, s: (() => { const v = mind.sitVec(m.id); return v === undefined ? -1 : cosine(qv, v); })() }))
-        .filter((x) => x.s >= 0.3)
-        .sort((a, b) => b.s - a.s)
-        .slice(0, 2)
-        .map((x) => `${ago(now - x.m.ts)}: ${x.m.his !== '' ? `him: ${x.m.his.slice(0, 160)} / ` : ''}you: ${x.m.hers.join(' ').slice(0, 200)}`);
+  if (item.kind === 'restless') {
+    memories = mind
+      .moments()
+      .filter((m) => m.id.startsWith(FOUND_ID_PREFIX) && m.never !== true)
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, 2)
+      .map((m) => `${ago(now - m.ts)}: you found out: ${m.hers.join(' ').slice(0, 200)}`);
+  } else {
+    try {
+      const [qv] = await deps.embedder.embed([item.text]);
+      if (qv !== undefined) {
+        memories = mind
+          .moments()
+          .filter((m) => m.never !== true && (m.flags === undefined || m.flags.length === 0))
+          .map((m) => ({ m, s: (() => { const v = mind.sitVec(m.id); return v === undefined ? -1 : cosine(qv, v); })() }))
+          .filter((x) => x.s >= 0.3)
+          .sort((a, b) => b.s - a.s)
+          .slice(0, 2)
+          .map((x) => `${ago(now - x.m.ts)}: ${x.m.his !== '' ? `him: ${x.m.his.slice(0, 160)} / ` : ''}you: ${x.m.hers.join(' ').slice(0, 200)}`);
+      }
+    } catch {
+      memories = [];
     }
-  } catch {
-    memories = [];
   }
 
   const user = [

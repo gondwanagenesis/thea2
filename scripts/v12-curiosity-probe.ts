@@ -105,9 +105,14 @@ const main = async (): Promise<void> => {
   if (status === 'investigating') {
     await sys.body!.jobs.idle();
     for (let i = 0; i < 600 && cur.inFlight() > 0; i++) await clock.waitUntil(clock.epochMs() + 100);
-    // learned() runs right after the job settles: give the judge a moment
+    // learned() runs right after the job settles; its LAST act is the mind.learned event (the
+    // thought lands first, interests and follow-ups after — waiting on the thought printed too early)
+    const learnedYet = async (): Promise<boolean> => {
+      for await (const e of sys.events.replay()) if (e.kind === 'mind.learned' && e.ts >= now) return true;
+      return false;
+    };
     const t0 = clock.epochMs();
-    while (clock.epochMs() - t0 < 60_000 && !sys.mind.stream().some((t) => t.itemKey?.startsWith('learned:') === true)) await clock.waitUntil(clock.epochMs() + 250);
+    while (clock.epochMs() - t0 < 90_000 && !(await learnedYet())) await clock.waitUntil(clock.epochMs() + 500);
     const found = [...sys.mind.stream()].reverse().find((t) => t.itemKey?.startsWith('learned:') === true);
     out(`\n   her thought: ${found?.text ?? '(no finding recorded)'}`);
     out(`   interests: ${sys.mind.interests().map((i) => `${i.topic} (${i.strength.toFixed(1)})`).join(', ') || 'none yet'}`);

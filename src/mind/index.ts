@@ -37,6 +37,7 @@ export {
   tryTextFirst,
   ThoughtSchema,
   THINKER_SYSTEM,
+  FOUND_ID_PREFIX,
   type Item,
   type WanderCfg,
   type WanderDeps,

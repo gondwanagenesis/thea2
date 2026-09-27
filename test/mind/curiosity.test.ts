@@ -14,8 +14,10 @@ import { makeRng, TestClock } from '../../src/kernel/index.js';
 import { MockModel } from '../../src/model/index.js';
 import type { EventLog } from '../../src/events/index.js';
 import {
+  FOUND_ID_PREFIX,
   INVESTIGATOR_FRAME,
   TELLING_PATTERNS,
+  THINKER_SYSTEM,
   decayedStrength,
   invU,
   makeCuriosity,
@@ -32,7 +34,7 @@ import {
   type PursuitResult,
   type ValueCtx,
 } from '../../src/mind/index.js';
-import { concern, T0, tmpDir } from './helpers.js';
+import { concern, moment, T0, tmpDir } from './helpers.js';
 
 const H = 3600_000;
 const DAY = 24 * H;
@@ -196,7 +198,8 @@ describe('v12 generators (§1.2) and dedupe (A4)', () => {
     const items = r.cur.candidates(r.state, T0);
     const rest = items.find((i) => i.kind === 'restless');
     expect(rest).toBeDefined();
-    expect(rest!.text).toMatch(/^nothing new has come your way/);
+    // a fact about the world, not about him ("nothing has come your way" read live as "he hasn't written")
+    expect(rest!.text).toMatch(/^you haven't come across anything new/);
     expect(lint(rest!.text)).toEqual([]);
     expect(rest!.text).not.toMatch(/bored|novelty|restless/i);
   });
@@ -393,6 +396,48 @@ describe('v12 in the idle mind — wander gives curiosity its outlet', () => {
       curiosity: r.cur,
     });
     expect(r.pursuits).toHaveLength(0);
+  });
+
+  // Found live (first v12 tick, 2026-09-27): restlessness won, and 10 of 10 thoughts were about his
+  // silence ("two hours of quiet at three in the morning…"), none went looking. The recall seeded
+  // it: an objectless sentence, embedded, lands on whatever talk with him is nearest and newest.
+  it('found live: restlessness brings back what she has found out, never an arbitrary talk with him', async () => {
+    const r = rig();
+    r.state.drives.novelty = 0.8;
+    const emb = makeHashEmbedder();
+    // a talk with him whose words sit right next to the restless words — what the old recall pulled in
+    const chat = moment({ id: 'm_chat', ts: T0 - 2 * H, source: 'lived', his: "you haven't come across anything new in a while?", hers: ['nope, quiet night'] });
+    const found = moment({ id: `${FOUND_ID_PREFIX}1`, ts: T0 - 5 * H, source: 'lived', kind: 'thought', his: '', hers: ['a golden apple snail can regrow a whole eye in about four weeks'] });
+    for (const m of [chat, found]) {
+      const [v] = await emb.embed([`${m.his} ${m.hers.join(' ')}`]);
+      r.mind.add(m, { sit: v!, reply: v! });
+    }
+    r.model.onTask('heartbeat-thought', () => ({ toolCalls: [{ name: 'emit', args: { thought: 'i want to find something new', close: false, intention: 'look_into' } }] }));
+    const res = await wanderOnce({
+      mind: r.mind,
+      affect: { current: () => r.state, applyEvents: async () => undefined } as unknown as AffectStore,
+      model: r.model,
+      embedder: emb,
+      events: { emit: async () => undefined, replay: async function* () {} } as unknown as EventLog,
+      clock: r.clock,
+      rng: makeRng('w'),
+      cfg: () => ({ thoughtsPerDay: 6, textFirstPerDay: 2, quietHours: [1, 7], timeZone: 'Europe/Madrid', patienceMin: 120 }),
+      conversationActive: () => false,
+      selfEntry: async () => 0,
+      curiosity: r.cur,
+    });
+    expect(res).toMatchObject({ result: 'thought', item: 'restless' });
+    const user = String(r.model.calls.find((c) => c.taskClass === 'heartbeat-thought')!.messages.at(-1)!.content);
+    expect(user).toContain("[what is on your mind]\nyou haven't come across anything new");
+    expect(user).not.toContain('quiet night');
+    expect(user).toContain('golden apple snail');
+    expect(r.pursuits).toHaveLength(1);
+  });
+
+  it('looking needs no particular question: the option is described, never wanted for her', () => {
+    const clause = THINKER_SYSTEM.split('\n').find((l) => l.includes('look_into'))!;
+    expect(clause).toMatch(/nothing in particular/);
+    expect(lint(clause)).toEqual([]);
   });
 });
 
