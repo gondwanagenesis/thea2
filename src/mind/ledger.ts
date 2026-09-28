@@ -155,7 +155,7 @@ export const scoreNight = async (d: LedgerDeps): Promise<NightScore> => {
   let failed = false;
   const observe = async (model: ModelClient, tier: 'reasoning' | 'cheap', content: string, stamp: EngineStamp, felt: ReadonlySet<Family>): Promise<ClaimScore | undefined> => {
     try {
-      const res = await model.chat({ taskClass: 'appraisal', tier, messages: [{ role: 'system', content: OBSERVER_SYSTEM }, { role: 'user', content }], schema: ObserverSchema, schemaName: 'Observer', maxTokens: 60, temperature: 0 });
+      const res = await model.chat({ taskClass: 'appraisal', tier, messages: [{ role: 'system', content: OBSERVER_SYSTEM }, { role: 'user', content }], schema: ObserverSchema, schemaName: 'Observer', maxTokens: 600, temperature: 0 }); // (60 was all spent thinking on GLM: incident.mind_ledger_failed every night since the door switch)
       return scoreClaim({ text: res.content.feeling, feeling: res.content.feeling }, stamp, felt);
     } catch (e) {
       failed = true;
