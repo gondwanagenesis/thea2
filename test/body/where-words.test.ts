@@ -64,6 +64,18 @@ describe('a place he names becomes where he is', () => {
     expect(await placeFromWords('Bali, Indonesia', T0, geoFetch(), T0 + 10 * 3600_000)).toMatchObject({ at: T0, skyAt: T0 + 10 * 3600_000 });
   });
 
+  it('the place comes through clean however the appraiser writes it (found in the probe: quoted, it found nothing)', async () => {
+    const { SlowAppraisalSchema } = await import('../../src/mind/index.js');
+    const base = { event: [], self: [], outcome_prev: null, concerns: [], importance: 4 };
+    const place = (v: unknown): unknown => (SlowAppraisalSchema.parse({ ...base, where_they_are: v }) as { where_they_are?: string }).where_they_are;
+    expect(place('"Tokyo, Japan"')).toBe('Tokyo, Japan');
+    expect(place('“Canggu, Bali, Indonesia”.')).toBe('Canggu, Bali, Indonesia');
+    expect(place('null')).toBeUndefined();
+    expect(place('')).toBeUndefined();
+    expect(place(null)).toBeUndefined();
+    expect(place(42)).toBeUndefined();
+  });
+
   it('a live pin is trusted for three days; a place he named, until he names another', () => {
     const day = 86_400_000;
     const base = { lat: 0, lon: 0, place: 'x', at: T0 };

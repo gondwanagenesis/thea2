@@ -105,7 +105,8 @@ const main = async (): Promise<void> => {
   let updateId = 9_000_000;
   let msgId = 90_000;
   const chatId = cfg.bridge.allowedChatIds[0] ?? 0;
-  const person = Object.keys(cfg.people)[0] ?? `tg:${chatId}`;
+  // Diego in his DM (the salon added Thea1 first in the config; the first key made every probe speak as her)
+  const person = `tg:${chatId}`;
   let fileN = 0;
   for (const raw of MSGS) {
     const before = channel.outbound().length;

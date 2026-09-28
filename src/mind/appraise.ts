@@ -100,7 +100,12 @@ export const SlowAppraisalSchema = z.object({
     .catch(undefined),
   /** (2026-09-28) Where they said they are, "place, region, country" — his clock follows it. */
   where_they_are: z
-    .preprocess((v) => (typeof v === 'string' && v.trim() !== '' && !/^(null|none|unknown)$/i.test(v.trim()) ? v.trim().slice(0, 120) : undefined), z.string().optional())
+    // (found in the probe: the appraiser sometimes wraps it in quotes — "\"Tokyo, Japan\"" — and the geocoder found nothing)
+    .preprocess((v) => {
+      if (typeof v !== 'string') return undefined;
+      const s = v.trim().replace(/^["'“”‘’`]+|["'“”‘’`.]+$/g, '').trim();
+      return s !== '' && !/^(null|none|unknown|n\/a)$/i.test(s) ? s.slice(0, 120) : undefined;
+    }, z.string().optional())
     .catch(undefined),
 });
 
