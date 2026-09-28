@@ -54,6 +54,16 @@ describe('a place he names becomes where he is', () => {
     expect(await placeFromWords('Bali, Indonesia', T0, geoFetch({ down: true }))).toBeUndefined();
   });
 
+  it('the sky is a snapshot: said while fresh, left out after (a place named yesterday is not 23° today)', async () => {
+    const { describeWhere } = await import('../../src/body/index.js');
+    const w = { lat: -8.3, lon: 115, place: 'Bali, Indonesia', live: false, stated: true, at: T0, timeZone: 'Asia/Makassar', tempC: 23, sky: 'partly cloudy' };
+    expect(describeWhere(w, T0 + 3600_000)).toMatch(/^Bali, Indonesia — \d\d:\d\d there, 23°, partly cloudy$/);
+    expect(describeWhere(w, T0 + 5 * 3600_000)).toMatch(/^Bali, Indonesia — \d\d:\d\d there$/);
+    // named at 00:02, the sky read at 10:26: fresh from when it was read
+    expect(describeWhere({ ...w, skyAt: T0 + 10 * 3600_000 }, T0 + 11 * 3600_000)).toContain('23°');
+    expect(await placeFromWords('Bali, Indonesia', T0, geoFetch(), T0 + 10 * 3600_000)).toMatchObject({ at: T0, skyAt: T0 + 10 * 3600_000 });
+  });
+
   it('a live pin is trusted for three days; a place he named, until he names another', () => {
     const day = 86_400_000;
     const base = { lat: 0, lon: 0, place: 'x', at: T0 };

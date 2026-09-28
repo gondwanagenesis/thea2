@@ -70,4 +70,6 @@ export interface WhereInfo {
   at: number;
   /** He said it in words (no pin): true until he says somewhere else. */
   stated?: boolean | undefined;
+  /** When the sky (tempC, sky) was read, if not at the fix. */
+  skyAt?: number | undefined;
 }

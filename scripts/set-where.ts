@@ -43,7 +43,7 @@ const main = async (): Promise<void> => {
   const p = people.get(PERSON);
   if (p === undefined) throw new Error(`no one called ${PERSON} in her people`);
   const note = p.known.find((f) => f.text.toLowerCase().includes(PLACE.split(',')[0]!.trim().toLowerCase()));
-  const w = await placeFromWords(PLACE, saidAt);
+  const w = await placeFromWords(PLACE, saidAt, undefined, new SystemClock().epochMs());
   if (w === undefined || w.timeZone === undefined) throw new Error(`could not place "${PLACE}"`);
   process.stdout.write(`${p.name}: where ${JSON.stringify(p.where ?? null)} → ${PLACE} (her note: ${note !== undefined ? JSON.stringify(note.text) : 'none'})\n`);
   process.stdout.write(`his clock: ${w.place} · ${w.timeZone}\n`);

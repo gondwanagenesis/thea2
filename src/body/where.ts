@@ -54,8 +54,12 @@ export const locate = async (
   return info;
 };
 
-/** "Ubud, Bali, Indonesia — 21:40 there, 27°, light rain" */
+/** The sky is a snapshot: it is said only while it is still true-ish. */
+export const WEATHER_FRESH_MS = 3 * 3600_000;
+
+/** "Ubud, Bali, Indonesia — 21:40 there, 27°, light rain" (the sky only while fresh) */
 export const describeWhere = (w: WhereInfo, now: number): string => {
+  if (now - (w.skyAt ?? w.at) > WEATHER_FRESH_MS) w = { ...w, tempC: undefined, sky: undefined };
   const bits: string[] = [];
   if (w.timeZone !== undefined) {
     try {
@@ -76,7 +80,7 @@ export const describeWhere = (w: WhereInfo, now: number): string => {
  * words after the first comma must agree with the match (a region or a country); with nothing to agree
  * with, the most populous match (Bali the island, 4.2 M, over Bāli in West Bengal, 0.3 M).
  */
-export const placeFromWords = async (said: string, at: number, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<WhereInfo | undefined> => {
+export const placeFromWords = async (said: string, at: number, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis), readAt: number = at): Promise<WhereInfo | undefined> => {
   const parts = said.split(',').map((s) => s.trim()).filter((s) => s !== '');
   const name = parts[0];
   if (name === undefined) return undefined;
@@ -96,7 +100,8 @@ export const placeFromWords = async (said: string, at: number, fetchImpl: typeof
   }
   const place = [best.name, best.admin1 !== best.name ? best.admin1 : undefined, best.country].filter((x): x is string => typeof x === 'string' && x !== '').join(', ');
   const info = await locate({ lat: best.latitude, lon: best.longitude, live: false, title: place, at }, fetchImpl);
-  return { ...info, ...(best.timezone !== undefined ? { timeZone: best.timezone } : {}), stated: true };
+  // the place is dated to when he said it; the sky to when it was read
+  return { ...info, ...(best.timezone !== undefined ? { timeZone: best.timezone } : {}), stated: true, ...(readAt !== at ? { skyAt: readAt } : {}) };
 };
 
 /** A live pin stops updating, so it is trusted for three days; a static pin or a place he named, until he says otherwise. */
