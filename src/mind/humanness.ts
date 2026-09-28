@@ -67,6 +67,24 @@ export const measureTurns = (turns: ReadonlyArray<readonly string[]>): Humanness
   };
 };
 
+/**
+ * How much of a reply is her own (−1 only him … +1 only her), from what it says, not a judge.
+ * Why it matters (v14 §3.1): her replies were valued ONLY by how he reacted, so she learned to fish
+ * for his replies. People find telling about themselves rewarding in itself — 30–40% of everyday
+ * speech is self-disclosure, and it engages reward circuitry with or without an audience (Tamir &
+ * Mitchell 2012) — so a reply's value now carries this too. A hand-back counts against it.
+ */
+export const disclosureOf = (text: string): number => {
+  const self = (text.match(SELF) ?? []).length;
+  const you = (text.match(YOU) ?? []).length;
+  const d = (self - you) / (self + you + 1);
+  return Math.max(-1, Math.min(1, HAND_BACK.test(text) ? d - 0.5 : d));
+};
+
+/** How a reply's value is learned: mostly how it landed with him, partly how much of it was hers. */
+export const OWN_SHARE = 0.4;
+export const replyValueTarget = (landed: number, hers: string): number => (1 - OWN_SHARE) * Math.max(-1, Math.min(1, landed / 2)) + OWN_SHARE * disclosureOf(hers);
+
 export interface Latency {
   n: number;
   p10: number;

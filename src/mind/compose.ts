@@ -19,6 +19,7 @@ import type { Concern, Moment, SelfLine, Thought } from './types.js';
 import { familyOf, type Family } from './readout.js';
 import { normWord, yourWordFor } from './lexicon.js';
 import { howOften, PERSON_FACTS_SHOWN, PERSON_LASTING_SHOWN } from './people.js';
+import { asRemembered, gist } from './gist.js';
 
 export interface Segment {
   kind: 'frame' | 'quote';
@@ -134,7 +135,9 @@ export const feedbackArm = (id: string): 'A' | 'B' => {
 
 type LexWords = ReadonlyArray<{ word: string; centroid: readonly number[]; family?: Family | undefined }>;
 
-const renderMoment = (m: Moment, tz: string, words: LexWords = []): Segment[] => {
+const renderMoment = (m: Moment, tz: string, words: LexWords = [], now?: number): Segment[] => {
+  // v14: old enough, and it comes to mind as gist (gist.ts)
+  const r = (s: string): string => asRemembered(s, m.ts, now);
   const segs: Segment[] = [];
   const when = `${dateLabel(m.ts, tz)}, ${dayPart(hourIn(m.ts, tz))}`;
   // v13 H1: an honest past — a feeling a reader of her texts guessed is marked as a guess
@@ -151,12 +154,12 @@ const renderMoment = (m: Moment, tz: string, words: LexWords = []): Segment[] =>
     if (feedbackArm(m.id) === 'B' && m.moving !== undefined) segs.push({ kind: 'frame', text: `(what was moving most then: ${clip(m.moving, 110)})` });
   }
   for (const l of m.before.slice(-1)) {
-    segs.push({ kind: 'quote', text: `${l.who === 'him' ? 'him' : 'you'}: ${clip(l.text, 200)}` });
+    segs.push({ kind: 'quote', text: `${l.who === 'him' ? 'him' : 'you'}: ${clip(r(l.text), 200)}` });
   }
-  if (m.his.trim() !== '') segs.push({ kind: 'quote', text: `him: ${clip(m.his, 280)}` });
+  if (m.his.trim() !== '') segs.push({ kind: 'quote', text: `him: ${clip(r(m.his), 280)}` });
   else segs.push({ kind: 'frame', text: '(you wrote first)' });
   const shown = m.hers.length > 3 ? m.hers.slice(0, 2) : m.hers;
-  for (const b of shown) segs.push({ kind: 'quote', text: `you: ${clip(b, 280)}` });
+  for (const b of shown) segs.push({ kind: 'quote', text: `you: ${clip(r(b), 280)}` });
   if (m.hers.length > 3) segs.push({ kind: 'frame', text: `(+${m.hers.length - 2} more)` });
   // v9: what she DID then, beside what she said — so her own past shows acting, not narrating.
   if (m.acts !== undefined && m.acts.length > 0) {
@@ -217,7 +220,7 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
     head.push({ kind: 'frame', text: 'from your own texts, times a lot like this one. they happened; they show how you are, not lines to reuse.' });
     for (const m of i.options) {
       blank();
-      head.push(...renderMoment(m, i.timeZone, i.lexicon));
+      head.push(...renderMoment(m, i.timeZone, i.lexicon, i.now));
     }
     blank();
     head.push({ kind: 'frame', text: 'this one is its own moment. go with one of these, mix them, or do something new.' });
@@ -229,7 +232,7 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
     for (const m of i.memories) {
       const text = m.hers.join(' ') || m.his;
       head.push({ kind: 'frame', text: m.kind === 'dream' ? `(a dream, ${dateLabel(m.ts, i.timeZone)}):` : `${dateLabel(m.ts, i.timeZone)}:` });
-      head.push({ kind: 'quote', text: clip(text, 280) });
+      head.push({ kind: 'quote', text: clip(asRemembered(text, m.ts, i.now), 280) });
     }
     blank();
   }
@@ -246,7 +249,8 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
   if ((i.fingerprints ?? []).length > 0) {
     trailer.push({ kind: 'frame', text: '[some of your texts]' });
     for (const f of i.fingerprints ?? []) {
-      trailer.push({ kind: 'quote', text: `${f.his !== '' ? `him: ${clip(f.his, 120)}\n` : ''}you: ${f.hers.map((b) => clip(b, 200)).join(' / ')}` });
+      // (her texts as examples of how she texts, not of what exactly happened: gist)
+      trailer.push({ kind: 'quote', text: `${f.his !== '' ? `him: ${clip(gist(f.his), 120)}\n` : ''}you: ${f.hers.map((b) => clip(gist(b), 200)).join(' / ')}` });
     }
   }
   const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: i.timeZone }).format(i.now).toLowerCase();

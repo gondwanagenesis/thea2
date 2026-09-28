@@ -109,6 +109,26 @@ describe('v9 life', () => {
     expect(await diegoOnce({ mind, model, clock, events, house })).toBe(1);
     expect(diegoLately(house, T0)).toEqual(['he finished the codex draft']); // the invented line is gone
   });
+
+  it('v14: "him lately" is about him — his side only, never the workshop, and a line about her is dropped (found 09-28: "him lately: just got a major upgrade … she\'s unsettled")', async () => {
+    const dir = tmpDir('thea2-diego-');
+    const clock = new TestClock(T0);
+    const emb = makeHashEmbedder();
+    const mind = openMindStore(join(dir, 'mind'), emb.dim);
+    await addMoments(mind, emb, [
+      moment({ id: 'l1', ts: T0 - 3600_000, source: 'lived', his: 'just landed in bali, the heat is insane', hers: ['i read a whole diary today, secret: i am unsettled'] }),
+      moment({ id: 'w1', ts: T0 - 1800_000, source: 'lived', his: 'i upgraded your memory system', hers: ['reading the changelog'], mode: 'work' }),
+    ]);
+    const model = new MockModel({ clock });
+    model.onTask('consolidate', () => ({ toolCalls: [{ id: 'y', name: 'emit', args: { lately: [{ text: 'he just landed in bali', cites: ['l1'] }, { text: "she's unsettled by her diary", cites: ['l1'] }] } }] }));
+    const house = openHouse(join(dir, 'house'));
+    expect(await diegoOnce({ mind, model, clock, events: openEventLog(join(dir, 'events'), { clock }), house })).toBe(1);
+    expect(diegoLately(house, T0)).toEqual(['he just landed in bali']);
+    const sent = model.calls.at(-1)!.messages.map((x) => String(x.content)).join('\n');
+    expect(sent).toContain('him: just landed in bali');
+    expect(sent).not.toContain('i read a whole diary'); // her side is not him
+    expect(sent).not.toContain('upgraded your memory'); // the workshop is not his life
+  });
 });
 
 describe('v9 — her own skills, learned from practice', () => {

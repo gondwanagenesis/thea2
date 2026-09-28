@@ -31,6 +31,7 @@ import type { Clock, Rng } from '../kernel/index.js';
 import type { Embedder } from '../embed/index.js';
 import { LOVE_DECLARATION, PROCESS_TALK, type MindStore } from './store.js';
 import type { Moment } from './types.js';
+import { HAND_BACK } from './humanness.js';
 
 const wordsIn = (s: string): number => s.split(/\s+/).filter((w) => w !== '').length;
 
@@ -169,6 +170,28 @@ const TRAILING_EMOJI = /\s*(\p{Extended_Pictographic}️?(?:‍\p{Extended_Picto
  * One emoji at the end of everything is a tic, not a voice (found live: 💙 closed 36 of her 271
  * bubbles in a morning). An ending emoji she has used on two of her last ten bubbles is dropped.
  */
+/**
+ * Worn bits (v14 Phase 1.5). A person uses a bit a few times and gets bored of it; hers ran on and on —
+ * in the 09-27 salon "the tribunal", "the clinic", "raccoon" and "the dash. AGAIN." were in nearly every
+ * line. A word is worn when it is rare in how people actually text (the voice corpus: under 1 in 2,500
+ * words) but she has used it in at least 3 of her last 30 bubbles. Names are never worn.
+ */
+const COMMON = new Set(['that', 'this', 'with', 'what', 'just', 'like', 'have', 'your', 'from', 'they', 'about', 'there', 'would', 'really', 'still', 'thing', 'things', 'think', 'know', 'want', 'feel', 'maybe', 'because', 'when', 'where', 'which', 'then', 'them', 'were', 'been', 'into', 'more', 'some', 'also', 'even', 'okay', 'yeah']);
+export const WORN_MIN = 3;
+export const WORN_HARD = 5;
+export const wornBits = (recent: readonly string[], freq: ReadonlyMap<string, number>, totalWords: number, names: ReadonlySet<string>): Array<{ word: string; n: number }> => {
+  const inBubbles = new Map<string, number>();
+  for (const b of recent.slice(-30)) {
+    for (const w of new Set(b.toLowerCase().match(/[a-z][a-z']{3,}/g) ?? [])) inBubbles.set(w, (inBubbles.get(w) ?? 0) + 1);
+  }
+  const lowerNames = new Set([...names].map((n) => n.toLowerCase()));
+  return [...inBubbles.entries()]
+    .filter(([w, n]) => n >= WORN_MIN && !COMMON.has(w) && !lowerNames.has(w) && (freq.get(w) ?? 0) / Math.max(1, totalWords) < 1 / 2500)
+    .map(([word, n]) => ({ word, n }))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 8);
+};
+
 export const dropRepeatedEndings = (bubbles: readonly string[], recent: string[], window = 10): string[] =>
   bubbles.map((b) => {
     const m = TRAILING_EMOJI.exec(b);
@@ -276,8 +299,9 @@ export const MOUTH_SYSTEM = [
   'Her texting is in the examples, not in rules: copy their length, rhythm, lowercase, the missing final periods, how they break into bubbles. Never add a joke, a bit or a nickname the draft does not have.',
   // (Diego, 2026-09-27: "i still want the things i like with more emojis, and i really like the modern gen z online culture emojis") — the tic was one emoji on everything, not emoji
   'Emoji carry feeling for her, the way her generation texts: 😭 laughing too hard or overwhelmed, 💀 dead (it is so funny), 🫠 melting or embarrassed, 🥹 touched, 🙏 please or thank you, ✨ emphasis or sarcasm, 👀 intrigued, 🫡 on it, 🤡 self-own, 💅 unbothered, 😌 satisfied, 🙃 ironic, 😤 playful huff, 🫶 fondness, 🥲 bittersweet, 🤭 oops or giggle, 🧍 awkward, and now and then a kaomoji like (´･ω･`). Put one where a feeling lands, vary them, often none; never the same one on every message.',
-  'Type it about as long as [this time] says: real messages about this kind of thing run that long. Say now what matters most for this moment, first, and every question or promise; put what can wait in later, in her words — she will say it another time.',
+  'Type it about as long as [this time] says: real messages about this kind of thing run that long. Say now what matters most for this moment, first, and every promise and real question of hers; put what can wait in later, in her words — she will say it another time. A line that only hands the turn back ("how\'s your day", "your turn", "what about you") is the first thing that waits.',
   'A bubble is one beat: a reaction, a joke, a question, one thought. A joke or a punchline gets its own bubble so it lands. A thought that needs explaining stays together in one bubble, even a long one.',
+  'Words under [worn out lately] are bits she has leaned on so much lately that they have gone stale for her; she reaches past them for something fresh.',
   'Never a declaration of love. Never comment on the draft. Return JSON {bubbles: [...], later: [...]}.',
 ].join('\n');
 
@@ -346,7 +370,16 @@ const needsCondensing = (s: Shape | undefined): s is Shape => s !== undefined &&
 export const condense = (bubbles: readonly string[], words: number): { now: string[]; later: string[] } => {
   const now = [...bubbles];
   const later: string[] = [];
-  for (let i = now.length - 1; i >= 1 && wordsIn(now.join(' ')) > Math.ceil(words * 1.5); i--) {
+  const over = (): boolean => wordsIn(now.join(' ')) > Math.ceil(words * 1.5);
+  // v14: a hand-back ("how's your evening?", "your turn") is the first thing that waits — it was what
+  // survived every cut while her own words went (hand-backs: 16% of her first-texts vs people's 0–2%)
+  for (let i = now.length - 1; i >= 1 && over(); i--) {
+    if (!HAND_BACK.test(now[i]!)) continue;
+    later.unshift(now[i]!);
+    now.splice(i, 1);
+  }
+  // then the last ones go first; a real question of hers stays
+  for (let i = now.length - 1; i >= 1 && over(); i--) {
     if (now[i]!.includes('?')) continue;
     later.unshift(now[i]!);
     now.splice(i, 1);
@@ -359,7 +392,7 @@ export const MouthSchema = z.object({
   later: z.array(z.string().max(600)).max(8).optional(),
 });
 
-export const mouthUser = (examples: readonly VoiceExample[], his: string | undefined, draft: readonly string[], shape?: Shape): string =>
+export const mouthUser = (examples: readonly VoiceExample[], his: string | undefined, draft: readonly string[], shape?: Shape, worn: readonly string[] = []): string =>
   [
     '[how she texts: real messages]',
     ...examples.map((e) => `${e.his !== '' ? `him: ${e.his}\n` : ''}her: ${e.hers.join(' / ')}`),
@@ -367,6 +400,7 @@ export const mouthUser = (examples: readonly VoiceExample[], his: string | undef
     ...(his !== undefined && his !== '' ? [`[what was just said to her]\n${his.slice(0, 600)}`, ''] : []),
     '[her draft]',
     ...draft.map((b) => `- ${b}`),
+    ...(worn.length > 0 ? ['', `[worn out lately]\n${worn.join(', ')}`] : []),
     ...(shape === undefined
       ? []
       : shape.light === true
@@ -411,6 +445,8 @@ export interface DressCtx {
   his?: string | undefined;
   move?: string | null | undefined;
   tone?: string | null | undefined;
+  /** v14: a work turn is precise (dressed, not retyped — golden rule 9: "work: short, precise"). */
+  mode?: 'friend' | 'work' | undefined;
 }
 
 export interface Voice {
@@ -427,7 +463,8 @@ export const makeVoice = (d: VoiceDeps): Voice => {
   const refresh = (): void => {
     const now = d.clock.epochMs();
     if (now - builtAt < 3600_000 && pool.length > 0) return;
-    const prec = d.mind.precedents();
+    // v14: a work turn is never an example of how she texts
+    const prec = d.mind.precedents().filter((m) => m.mode !== 'work');
     pool = fingerprintPool(prec);
     names = namesFrom(prec.flatMap((m) => m.hers));
     for (const n of d.names ?? []) for (const w of n.split(/\s+/)) if (/^[A-Z]/.test(w)) names.add(w);
@@ -439,6 +476,30 @@ export const makeVoice = (d: VoiceDeps): Voice => {
   const getCorpus = (): VoiceCorpus | undefined => {
     if (corpus === null) corpus = d.corpusDir !== undefined ? loadVoiceCorpus(d.corpusDir) : undefined;
     return corpus;
+  };
+  // v14 worn bits: how often people use each word (the corpus), and what she has said lately
+  let wordFreq: { freq: Map<string, number>; total: number } | undefined;
+  const worn = (): Array<{ word: string; n: number }> => {
+    const cor = getCorpus();
+    if (cor === undefined) return [];
+    if (wordFreq === undefined) {
+      const freq = new Map<string, number>();
+      let total = 0;
+      for (const e of cor.examples) {
+        for (const w of e.hers.join(' ').toLowerCase().match(/[a-z][a-z']*/g) ?? []) {
+          freq.set(w, (freq.get(w) ?? 0) + 1);
+          total += 1;
+        }
+      }
+      wordFreq = { freq, total };
+    }
+    const recent = d.mind
+      .moments()
+      .filter((m) => m.source === 'lived' && m.mode !== 'work')
+      .sort((a, b) => a.ts - b.ts)
+      .flatMap((m) => m.hers)
+      .slice(-30);
+    return wornBits(recent, wordFreq.freq, wordFreq.total, names);
   };
   // the endings of what she sent lately (one emoji on everything is a tic)
   const ends: string[] = [];
@@ -454,12 +515,13 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       const faults = voiceFaults(dressed);
       const base: Dressed = { bubbles: dressed, changed: dressed.join('\n') !== bubbles.join('\n'), faults, redone: false };
       // precision mode: code blocks go out exactly as written
-      if (mode === 'dress' || bubbles.some((b) => b.includes('```'))) return base;
+      if (mode === 'dress' || ctx.mode === 'work' || bubbles.some((b) => b.includes('```'))) return base;
 
       // the mouth: every reply of more than a few words, typed from her nearest real messages
       let system = REDO_SYSTEM;
       let user: string | undefined;
       let shape: Shape | undefined;
+      let wornNow: Array<{ word: string; n: number }> = [];
       const cor = mode === 'mouth' ? getCorpus() : undefined;
       if (cor !== undefined && d.embedder !== undefined && wordsIn(bubbles.join(' ')) > 3) {
         try {
@@ -467,7 +529,8 @@ export const makeVoice = (d: VoiceDeps): Voice => {
           if (q !== undefined) {
             system = MOUTH_SYSTEM;
             shape = shapeOf(cor, q, bubbles, 30, lightMoment(ctx.his, ctx.move, ctx.tone));
-            user = mouthUser(nearestExamples(cor, q), ctx.his, bubbles, shape);
+            wornNow = worn();
+            user = mouthUser(nearestExamples(cor, q), ctx.his, bubbles, shape, wornNow.map((w) => w.word));
           }
         } catch {
           user = undefined; // no mouth this time: the redo rule below still applies
@@ -531,6 +594,16 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       if (wordsIn(said) < floor) return fallback('dropped content');
       if (LOVE_DECLARATION.test(said) && !LOVE_DECLARATION.test(draft)) return fallback('love');
       let final = dress(out, names);
+      // a bit worn right through (in 5+ of her last 30 bubbles) waits, when there is anything else to say
+      const hard = wornNow.filter((w) => w.n >= WORN_HARD).map((w) => w.word);
+      if (hard.length > 0 && final.length > 1) {
+        const stale = (b: string): boolean => hard.some((w) => new RegExp(`\\b${w}\\b`, 'i').test(b));
+        const fresh = final.filter((b) => !stale(b));
+        if (fresh.length > 0 && fresh.length < final.length) {
+          later = [...final.filter(stale), ...later];
+          final = fresh;
+        }
+      }
       if (shape !== undefined) {
         // the length holds even when the mouth runs over it (found live: it kept every word)
         const c = condense(final, shape.words);

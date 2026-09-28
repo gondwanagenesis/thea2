@@ -26,6 +26,7 @@ import { evoke, EVOKE_DEFAULTS, type Evoked } from './evoke.js';
 import { feelFast, type FastEvent } from './feel.js';
 import { metabolism, type Metabolism } from './modulate.js';
 import { composePacket, hourIn, V8_OUTPUT_CONTRACT } from './compose.js';
+import { liveness } from './wander.js';
 import { appraiseSlow, slowEvents } from './appraise.js';
 import { actsOf, applyOutcome, bestOption, encodeLived, FOLLOW_THRESHOLD, markShown } from './remember.js';
 import { vecToArray } from './vocab.js';
@@ -40,7 +41,8 @@ import { appendReport } from './ledger.js';
 import { readLexicon, recordUse, verifiedWords, writeLexicon } from './lexicon.js';
 import { SETTLE_EVENT, settles, shiftArm } from './arms.js';
 import type { MindStore } from './store.js';
-import type { Concern, Line } from './types.js';
+import type { Concern, Line, Moment } from './types.js';
+import { modeFor, type Mode } from './mode.js';
 
 export const UNDELIVERED_HEAD = '[unsent]';
 /** v12.1: how far one reaction of his moves a memory's value toward ±1 (a clear signal: half way). */
@@ -221,6 +223,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
   const ownerDm = deps.allowedChatIds[0];
   // Owner-authored = his person id, OR arriving in his DM (only he can send there).
   const isOwnerMsg = (m: InboundMsg): boolean => ownerPerson === undefined || m.speaker.person === ownerPerson || m.chatId === ownerDm;
+  /** v14: each turn's mode (friend | work), read again when the turn settles. */
+  const turnModes = new Map<string, Mode>();
   const isGroupChat = (chatId: number): boolean => chatId < 0;
   const aliases = (deps.selfAliases ?? ['thea']).map((a) => a.toLowerCase());
   const addressedInGroup = (m: InboundMsg): boolean => {
@@ -350,6 +354,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
   const perceive = async (
     item: Queued,
     before: Line[],
+    mode: Mode = 'friend',
   ): Promise<{ sensed: Sensed | null; evoked: Evoked; fast: FastEvent[]; met: Metabolism }> => {
     const now = deps.clock.epochMs();
     const selfEntry = item.kind !== undefined;
@@ -376,6 +381,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
             rng: deps.rng.fork(`evoke:${item.turnId}`),
             coupling: deps.coupling,
             cfg: { ...EVOKE_DEFAULTS, k: met0.k, mmrLambda: met0.mmrLambda, sampleTemp: met0.sampleTemp, shortBias: met0.shortBias },
+            // v14: in a friend turn the workshop stays in the workshop
+            ...(mode === 'friend' ? { exclude: (x: Moment) => x.mode === 'work' } : {}),
           });
 
     let fast: FastEvent[] = [];
@@ -515,12 +522,19 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     }
     deps.body?.begin(item.turnId, { chatId: item.m.chatId, ...(selfEntry ? {} : { inboundMsgId: burst.at(-1)!.msgId, text: item.m.text }) });
     const { m, turnId } = item;
+    // v14 work mode (Diego: "move all debugging things into work mode"): a turn about her machinery, or
+    // in a work mode he set, is lived but stays in the workshop (mode.ts)
+    const md = modeFor(selfEntry ? undefined : m.text, deps.mind.state(), deps.clock.epochMs());
+    turnModes.set(turnId, md.mode);
+    if (turnModes.size > 200) turnModes.delete(turnModes.keys().next().value!);
+    if (md.standing !== undefined) deps.mind.setState({ mode: md.standing, modeAt: deps.clock.epochMs() });
+    if (md.mode === 'work') emit('mind.mode', { turnId, mode: 'work', standing: md.standing ?? null }, turnId);
 
     await deps.affect.applyEvents([], { source: 'other' }); // bring the engine to now
     // v13 Phase 0: the engine as the turn begins (ground truth for the ledger; never shown to her)
     emit('affect.at', { turnId: raw.turnId, stage: 'turn', ...engineStamp(deps.affect.current(), deps.baselines, deps.clock.epochMs()) }, raw.turnId);
     const before = contextLines(deps.window);
-    const { sensed, evoked, fast, met } = await perceive(item, before);
+    const { sensed, evoked, fast, met } = await perceive(item, before, md.mode);
 
     if (carry !== null && carry.fromUpdateId !== m.updateId) await deps.ledger.linkTurn(carry.fromUpdateId, turnId);
     const inherited = carry;
@@ -530,7 +544,8 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     const now = deps.clock.epochMs();
     const who = deps.personLabel?.(m.speaker.person) ?? (isOwnerMsg(m) ? 'he' : (m.senderName ?? 'someone'));
     const recentThoughts = deps.mind.stream().filter((t) => t.source === 'lived' && now - t.ts < 24 * 3600_000);
-    const openConcerns: Concern[] = [...deps.mind.openConcerns()].sort((x, y) => y.importance - x.importance || y.touched - x.touched);
+    // v14: what still pulls comes first (a question waiting on him fades within a day)
+    const openConcerns: Concern[] = [...deps.mind.openConcerns()].filter((c) => md.mode === 'work' || c.mode !== 'work').sort((x, y) => liveness(y, now) - liveness(x, now) || y.touched - x.touched);
     const howTo = !selfEntry && deps.body?.skillFor !== undefined ? await deps.body.skillFor(m.text).catch(() => undefined) : undefined;
     const packet = composePacket({
       timeZone: deps.body?.hisTimeZone?.() ?? deps.timezone,
@@ -659,7 +674,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     // so a message from him that lands during a redo still wins (golden rule 12).
     if (deps.voice !== undefined) {
       try {
-        const v = await deps.voice.dress(decision.bubbles, { turnId, his: selfEntry ? undefined : m.text, move: sensed?.move?.label ?? null, tone: sensed?.tone?.label ?? null });
+        const v = await deps.voice.dress(decision.bubbles, { turnId, his: selfEntry ? undefined : m.text, move: sensed?.move?.label ?? null, tone: sensed?.tone?.label ?? null, mode: md.mode });
         if (v.changed && v.bubbles.length > 0) decision = { ...decision, bubbles: v.bubbles };
         if (v.changed || v.faults.length > 0) emit('mind.voice', { turnId, faults: v.faults, redone: v.redone, ...(v.by !== undefined ? { by: v.by } : {}), ...(v.shape !== undefined ? { shape: v.shape, sent: { bubbles: v.bubbles.length, words: v.bubbles.join(' ').split(/\s+/).filter((w) => w !== '').length } } : {}), ...(v.later !== undefined ? { later: v.later } : {}), ...(v.rejected !== undefined ? { rejected: v.rejected } : {}) }, turnId);
       } catch (e) {
@@ -757,6 +772,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
     packetText?: string,
   ): Promise<void> => {
     const { m, turnId } = item;
+    const workTurn = turnModes.get(turnId) === 'work';
     const selfEntry = item.kind !== undefined;
     if (!selfEntry) await deps.window.push({ role: 'user', content: m.text, ts: m.ts, turnId });
     for (const s of sent) await deps.window.push({ role: 'assistant', content: s.text, ts: deps.clock.epochMs(), turnId });
@@ -974,6 +990,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
               created: now,
               touched: now,
               source: 'lived',
+              ...(workTurn ? { mode: 'work' as const } : {}),
               ...agency,
               // v12: a gap the conversation opened becomes one of her questions
               ...(kind === 'curiosity'
@@ -1024,6 +1041,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
           moving: movingNow(spokenStamp),
           move: sensed?.move?.label,
           tone: sensed?.tone?.label,
+          ...(workTurn ? { mode: 'work' as const } : {}),
           expect: decision.expect,
           importance,
           acts: actsOf(decision.toolTrace).map((a) => {

@@ -101,6 +101,46 @@ export const inQuietHours = (ms: number, q: [number, number], timeZone: string):
  */
 export const freshness = (touched: number, now: number): number => Math.pow(0.5, Math.max(0, now - touched) / (3 * 24 * 3600_000));
 
+/**
+ * Waiting on him (v14 §3.2, Diego 2026-09-28: "why does she ask what i'm doing all the time?"): a loop
+ * about Diego with nothing of hers to do — a question she asked him, a thing she wants to hear. People
+ * let those go when nobody picks them up (goal disengagement; Wrosch et al. 2003). Hers stayed near
+ * full strength for days ("twenty-five hours and he still hasn't told me what the schematic says"), won
+ * her idle attention, filled her [on my mind] and ended in texting him. Now it fades with a 12 h
+ * half-life and no floor, and is let go after 36 h untouched. He brings it back by bringing it up
+ * (that touches it). Dated expectations keep their due time.
+ */
+export const WAIT_HALF_LIFE_MS = 12 * 3600_000;
+export const WAIT_LET_GO_MS = 36 * 3600_000;
+export const waitingOnHim = (c: Concern): boolean => c.about === 'diego' && c.due === undefined && (c.selfStep === undefined || c.selfStep === '');
+
+/** How much a loop still pulls (for attention and for what's on her mind). */
+export const liveness = (c: Concern, now: number): number => {
+  if (waitingOnHim(c)) return (c.importance / 10) * Math.pow(0.5, Math.max(0, now - c.touched) / WAIT_HALF_LIFE_MS) * 0.7;
+  let w = c.importance / 10;
+  if (c.due !== undefined) {
+    const until = c.due - now;
+    w *= until < 0 ? 1.0 : until < 3 * 3600_000 ? 0.8 : 0.45;
+  } else {
+    w *= 0.35 + 0.65 * freshness(c.touched, now);
+  }
+  if (c.selfStep !== undefined && c.selfStep !== '') w *= 1.15;
+  else if (c.blockedOn !== undefined && c.blockedOn !== '') w *= 0.7;
+  return w;
+};
+
+/** Let go what has waited on him long enough (closed, with a reason on the record). */
+export const letGoWaiting = (mind: Pick<MindStore, 'openConcerns' | 'upsertConcern'>, now: number, emit: (kind: string, payload: Record<string, unknown>) => void): number => {
+  let n = 0;
+  for (const c of mind.openConcerns()) {
+    if (!waitingOnHim(c) || c.kind === 'curiosity' || now - c.touched < WAIT_LET_GO_MS) continue;
+    mind.upsertConcern({ ...c, status: 'closed' });
+    emit('mind.let_go', { id: c.id, why: 'waited on him' });
+    n += 1;
+  }
+  return n;
+};
+
 /** What could win her attention right now. Pure. */
 export const candidates = (
   concerns: readonly Concern[],
@@ -112,17 +152,11 @@ export const candidates = (
     if (c.status !== 'open') continue;
     // v12: her questions are weighed by the curiosity module (drive, knowability, learning progress)
     if (ctx.skipCuriosity === true && c.kind === 'curiosity') continue;
-    let w = c.importance / 10;
-    if (c.due !== undefined) {
-      const until = c.due - ctx.now;
-      w *= until < 0 ? 1.0 : until < 3 * 3600_000 ? 0.8 : 0.45;
-    } else {
-      w *= 0.35 + 0.65 * freshness(c.touched, ctx.now);
-    }
-    // v12 agency: what she can do herself pulls harder than what she waits on someone for
-    if (c.selfStep !== undefined && c.selfStep !== '') w *= 1.15;
-    else if (c.blockedOn !== undefined && c.blockedOn !== '') w *= 0.7;
-    out.push({ key: `concern:${c.id}`, kind: 'concern', about: c.about, text: c.what, weight: clamp(w, 0, 1), concernId: c.id });
+    // v14: what a work turn opened waits for work mode
+    if (c.mode === 'work') continue;
+    // v12 agency (what she can do herself pulls harder than what she waits on someone for) and v14
+    // waiting on him (fades fast): liveness()
+    out.push({ key: `concern:${c.id}`, kind: 'concern', about: c.about, text: c.what, weight: clamp(liveness(c, ctx.now), 0, 1), concernId: c.id });
   }
   for (const [p, rec] of Object.entries(state.causes) as Array<[Primary, { text?: string } | undefined]>) {
     if (rec === undefined || typeof rec.text !== 'string' || rec.text.trim() === '') continue;
@@ -264,6 +298,8 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   const { mind, clock } = deps;
   const cfg = deps.cfg();
   const now = clock.epochMs();
+  // v14: what has waited on him long enough is let go (no model call)
+  if (letGoWaiting(mind, now, (k, p) => void deps.events.emit(k, p)) > 0) await mind.flush();
   // v13: asleep — no thoughts spent on the night (golden rule 24); the dream jobs run instead
   if (deps.asleep?.(now) === true) {
     void deps.events.emit('mind.wander', { result: 'asleep' });

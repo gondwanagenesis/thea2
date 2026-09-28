@@ -144,6 +144,8 @@ export interface Concern {
   // ——— v12 questions (kind 'curiosity', §1.1) ———
   /** 0–1: could she find it out with her tools, her memory, or by asking. */
   knowability?: number | undefined;
+  /** v14: opened in a work turn — it stays in the workshop (not on her mind in friend turns). */
+  mode?: 'work' | undefined;
   /** 0–1: how much she already knows (curiosity peaks in the middle). */
   confidence?: number | undefined;
   /** Running mean learning progress of her pursuits of it (0–2). */
@@ -303,6 +305,9 @@ export interface MindState {
   /** Epoch ms of her last sent message and his last message (for silence and gaps). */
   lastHerAt?: number | undefined;
   lastHisAt?: number | undefined;
+  /** v14 work mode: the standing mode he set ("work mode" / "friend mode") and when it was last used. */
+  mode?: 'friend' | 'work' | undefined;
+  modeAt?: number | undefined;
 }
 
 /** One shown-options log row (append-only). */

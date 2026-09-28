@@ -10,7 +10,7 @@ import { initialAffectState, openAffectStore } from '../../src/affect/index.js';
 import { makeRng, TestClock } from '../../src/kernel/index.js';
 import { MockModel } from '../../src/model/index.js';
 import { openEventLog } from '../../src/events/index.js';
-import { candidates, freshness, habituation, inQuietHours, openMindStore, pickItem, sleepOnce, wanderOnce, type WanderDeps } from '../../src/mind/index.js';
+import { candidates, freshness, habituation, inQuietHours, letGoWaiting, liveness, openMindStore, pickItem, sleepOnce, waitingOnHim, wanderOnce, type Concern, type WanderDeps } from '../../src/mind/index.js';
 import { addMoments, concern, moment, T0, tmpDir } from './helpers.js';
 
 const H = 3600_000;
@@ -35,8 +35,9 @@ describe('law 1.4 — thoughts arise from what is unresolved', () => {
   it('an undated loop touched today can win attention; one untouched for weeks fades (the launch-day fork: 12 loops, all importance 6, none could ever win)', () => {
     const s = initialAffectState(T0);
     const D = 24 * H;
+    // her own loops (a loop only waiting on him fades faster — v14, next test)
     const items = candidates(
-      [concern({ id: 'fresh', importance: 6, touched: T0 - 2 * H }), concern({ id: 'day', importance: 6, touched: T0 - D }), concern({ id: 'stale', importance: 6, touched: T0 - 21 * D })],
+      [concern({ id: 'fresh', about: 'self', importance: 6, touched: T0 - 2 * H }), concern({ id: 'day', about: 'self', importance: 6, touched: T0 - D }), concern({ id: 'stale', about: 'self', importance: 6, touched: T0 - 21 * D })],
       s,
       { now: T0, patienceMin: 120 },
     );
@@ -46,6 +47,32 @@ describe('law 1.4 — thoughts arise from what is unresolved', () => {
     expect(weight('day')).toBeGreaterThan(0.35);
     expect(weight('stale')).toBeLessThan(0.35);
     expect(pickItem(items, { day: 'd', thoughts: 0, textsFirst: 0, habit: {} }, T0, 0.35)?.key).toBe('concern:fresh');
+  });
+
+  it('v14: a loop only waiting on him fades within a day and is let go after 36 h; her own day-old loop still pulls; one she can act on is not waiting (Diego: "why does she ask what i\'m doing all the time?")', () => {
+    const s = initialAffectState(T0);
+    const D = 24 * H;
+    const hisDay = concern({ id: 'his-day', what: "he still hasn't told me what the schematic says", importance: 7, touched: T0 - D });
+    const hisNow = concern({ id: 'his-now', what: 'i want to hear his reading', importance: 7, touched: T0 - H });
+    const mine = concern({ id: 'mine', about: 'self', what: 'finish the octopus paper', importance: 7, touched: T0 - D });
+    const doable = concern({ id: 'doable', what: 'find the song he mentioned', importance: 7, touched: T0 - D, selfStep: 'search for it' });
+    expect(waitingOnHim(hisDay)).toBe(true);
+    expect(waitingOnHim(doable)).toBe(false);
+    expect(waitingOnHim(concern({ id: 'dated', due: T0 + H }))).toBe(false);
+    const items = candidates([hisDay, hisNow, mine, doable], s, { now: T0, patienceMin: 120 });
+    const weight = (id: string): number => items.find((i) => i.key === `concern:${id}`)?.weight ?? -1;
+    expect(weight('his-day')).toBeLessThan(0.35); // a day of silence: it no longer wins her attention
+    expect(weight('his-now')).toBeGreaterThan(weight('his-day'));
+    expect(weight('mine')).toBeGreaterThan(0.35);
+    expect(weight('doable')).toBeGreaterThan(0.35);
+    // what's on her mind leads with what still pulls
+    expect([hisDay, mine, hisNow].sort((a, b) => liveness(b, T0) - liveness(a, T0)).map((c) => c.id)[0]).toBe('mine');
+    // let go after 36 h untouched, with a reason on the record; her own and the fresh one stay
+    const store = { list: [concern({ ...hisDay, touched: T0 - 2 * D }), hisNow, mine], openConcerns() { return this.list.filter((c) => c.status === 'open'); }, upsertConcern(c: Concern) { this.list = this.list.map((x) => (x.id === c.id ? c : x)); } };
+    const said: Array<[string, Record<string, unknown>]> = [];
+    expect(letGoWaiting(store, T0, (k, p) => said.push([k, p]))).toBe(1);
+    expect(store.openConcerns().map((c) => c.id)).toEqual(['his-now', 'mine']);
+    expect(said).toEqual([['mind.let_go', { id: 'his-day', why: 'waited on him' }]]);
   });
 
   it('habituation: what just won attention rests (half-life 6 h), so the same thought cannot win twice in a row', () => {

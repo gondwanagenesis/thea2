@@ -81,6 +81,8 @@ export interface EvokeInput {
   queryVec: Float32Array;
   /** His words alone. When present, similarity is 0.6·his + 0.4·situation. */
   hisQueryVec?: Float32Array | undefined;
+  /** v14: moments that stay out of this turn (friend turns leave the workshop's moments out). */
+  exclude?: ((m: Moment) => boolean) | undefined;
   move?: string | undefined;
   /** Her live state as a deviation vector. */
   a: Vec12;
@@ -183,7 +185,7 @@ export const evoke = (store: MindStore, input: EvokeInput): Evoked => {
   const sims: Array<{ m: Moment; sim: number }> = [];
   for (const m of store.moments()) {
     const v = store.sitVec(m.id);
-    if (v === undefined) continue;
+    if (v === undefined || input.exclude?.(m) === true) continue;
     // The 2026-09-25 live probe: a short message ("long day. i am wrecked")
     // was drowned by the previous conversation in the situation vector and
     // recalled tech threads. His words lead; context tilts.

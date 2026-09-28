@@ -56,6 +56,22 @@ const main = (): void => {
       }
     }
   }
+  // work-mode turns (mind.mode events) are the workshop, not her everyday texting
+  const evDir = path.join(VAR, 'events');
+  for (const f of fs.existsSync(evDir) ? fs.readdirSync(evDir).filter((x) => /^events-\d{4}-\d\d-\d\d\.jsonl$/.test(x)).sort() : []) {
+    const day = Date.parse(f.slice(7, 17));
+    if (day + 86_400_000 < since) continue;
+    for (const l of fs.readFileSync(path.join(evDir, f), 'utf8').split('\n')) {
+      if (!l.includes('"mind.mode"')) continue;
+      try {
+        const e = JSON.parse(l) as { payload?: { turnId?: string; mode?: string } };
+        const t = e.payload?.turnId !== undefined ? turns.get(e.payload.turnId) : undefined;
+        if (t !== undefined && e.payload?.mode === 'work') t.work = true;
+      } catch {
+        // a torn line
+      }
+    }
+  }
   const friend = [...turns.entries()].filter(([, t]) => !t.work);
   const her = measureTurns(friend.map(([, t]) => t.bubbles));
   const firstTexts = friend.filter(([id]) => !linked.has(id));

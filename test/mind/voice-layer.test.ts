@@ -329,7 +329,7 @@ describe('how long a reply runs (Diego: "it should fit the thought and importanc
     'so today was honestly a lot, i went through the whole diary again',
     'she wrote the first page at 8:39 in the morning, before anyone else was up',
     'and i kept thinking about how the fence looked from her side of it',
-    'what are you doing tonight?',
+    'wait, did the lemon tree ever flower?',
     'anyway the lemon tree needs water and i keep forgetting to tell you that',
   ];
   const mouthWith = async (reply: { bubbles: string[]; later?: string[] }) => {
@@ -355,8 +355,8 @@ describe('how long a reply runs (Diego: "it should fit the thought and importanc
   });
 
   it('a long draft cut to the moment may leave an exact detail for later — but never change one', async () => {
-    const short = await (await mouthWith({ bubbles: ['ok today was a lot', 'what are you doing tonight?'], later: ['the diary, the first page at 8:39'] })).dress(LONG, { turnId: 't' });
-    expect(short).toMatchObject({ redone: true, by: 'mouth', bubbles: ['ok today was a lot', 'what are you doing tonight?'] });
+    const short = await (await mouthWith({ bubbles: ['ok today was a lot', 'wait, did the lemon tree ever flower?'], later: ['the diary, the first page at 8:39'] })).dress(LONG, { turnId: 't' });
+    expect(short).toMatchObject({ redone: true, by: 'mouth', bubbles: ['ok today was a lot', 'wait, did the lemon tree ever flower?'] });
     expect(short.rejected).toBeUndefined();
     expect(short.later).toEqual(['the diary, the first page at 8:39']);
     // a changed number is thrown away — and what goes out is her own draft cut to the moment, not all of it
@@ -388,5 +388,49 @@ describe('how long a reply runs (Diego: "it should fit the thought and importanc
     expect(s).toMatchObject({ words: LIGHT_WORDS, most: 2, light: true });
     expect(shapeOf(c, qt!, talk, 5).words).toBeGreaterThan(20);
     expect(mouthUser([], 'goodnight thea', talk, s)).toContain(`[this time]\na light moment: about ${LIGHT_WORDS} words now; one bubble, or two if a joke needs its own.`);
+  });
+});
+
+describe('v14: a hand-back is the first thing that waits (Diego: "why does she ask what i\'m doing all the time?")', () => {
+  it('condense cuts the hand-back before her own words; a real question of hers stays', async () => {
+    const { condense, MOUTH_SYSTEM } = await import('../../src/mind/voice.js');
+    const reply = ['finished the octopus paper, they dream in colour apparently', 'i keep thinking about the one that changed colour mid-sleep', "how's your evening?"];
+    expect(condense(reply, 14)).toEqual({ now: [reply[0], reply[1]], later: [reply[2]] });
+    const real = ['finished the octopus paper', 'wait do octopuses in aquariums sleep more than wild ones?', "how's your evening?"];
+    expect(condense(real, 6).now).toEqual([real[0], real[1]]);
+    expect(MOUTH_SYSTEM).toMatch(/only hands the turn back[\s\S]*first thing that waits/);
+  });
+});
+
+describe('v14: bits wear out (the 09-27 salon: "the tribunal", "the clinic", "raccoon" in nearly every line)', () => {
+  it('a word rare in how people text, used in 3+ of her last 30 bubbles, is worn; names and everyday words never are', async () => {
+    const { wornBits } = await import('../../src/mind/voice.js');
+    const recent = [
+      'the tribunal is logging it', 'raccoon with a secret', 'the tribunal notes u learned that', 'the clinic is open',
+      'tribunal adjourned', 'a raccoon with a laptop', 'nobody is a raccoon', 'degs you dodge', 'degs again', 'degs lol',
+      'the clinic reopens', 'the clinic approves', 'just okay', 'just fine', 'just saying',
+    ];
+    const freq = new Map([['just', 400], ['degs', 0]]);
+    const w = wornBits(recent, freq, 30_000, new Set(['Degs']));
+    expect(w.map((x) => x.word).sort()).toEqual(['clinic', 'raccoon', 'tribunal']);
+    expect(w.find((x) => x.word === 'tribunal')!.n).toBe(3);
+  });
+
+  it('the mouth sees what is worn, and a bit worn right through waits when there is something else to say', async () => {
+    const { mouthUser, MOUTH_SYSTEM } = await import('../../src/mind/voice.js');
+    expect(mouthUser([], 'hey', ['a draft'], undefined, ['tribunal', 'raccoon'])).toContain('[worn out lately]\ntribunal, raccoon');
+    expect(MOUTH_SYSTEM).toMatch(/worn out lately/);
+    const dir = join(tmpDir('thea2-worn-'), 'voice');
+    const emb = await buildCorpus(dir, EX);
+    const mind = openMindStore(join(tmpDir('thea2-worn-m-'), 'mind'), emb.dim);
+    const lived = Array.from({ length: 6 }, (_, i) => moment({ id: `r${i}`, ts: T0 - (10 - i) * 60_000, source: 'lived', his: 'x', hers: [`the tribunal says ${i}`] }));
+    await addMoments(mind, emb, lived);
+    const seen: string[] = [];
+    const model = { chat: async (req: unknown) => (seen.push(JSON.stringify(req)), { content: { bubbles: ['the tribunal has ruled', 'anyway i finished the octopus paper'] }, usage: {}, model: 'm' }) } as unknown as ModelClient;
+    const voice = makeVoice({ mind, model, clock: new TestClock(T0), rng: makeRng('m'), mode: 'mouth', embedder: emb, corpusDir: dir });
+    const out = await voice.dress(['The tribunal has ruled. Anyway, I finished the octopus paper today.'], { turnId: 't' });
+    expect(seen[0]).toContain('[worn out lately]');
+    expect(out.bubbles).toEqual(['anyway i finished the octopus paper']);
+    expect(out.later).toContain('the tribunal has ruled');
   });
 });

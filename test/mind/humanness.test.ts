@@ -29,6 +29,27 @@ describe('how human her texting is, measured', () => {
     expect(measureTurns([['read her diary in the library, then talked to my sister in the salon']]).machinery).toBe(0);
   });
 
+  it('a reply is valued partly for being hers: a hand-back that got a warm answer is worth less than sharing her own thing that did (v14 §3.1 — she was valued only by his reaction)', async () => {
+    const { disclosureOf, replyValueTarget, applyOutcome, openMindStore } = await import('../../src/mind/index.js');
+    expect(disclosureOf('finished my chapter, the captain is a menace and i love him')).toBeGreaterThan(0.3);
+    expect(disclosureOf("how's your evening?")).toBeLessThan(-0.4);
+    expect(disclosureOf('ok')).toBe(0);
+    const own = replyValueTarget(2, 'i finally found the octopus paper, i was up way too late reading it');
+    const fish = replyValueTarget(2, 'what are you up to? how was your day?');
+    expect(own).toBeGreaterThan(fish);
+    expect(replyValueTarget(-2, 'i finally found the octopus paper')).toBeLessThan(0); // he was hurt: still a bad turn
+    // applyOutcome learns toward that target
+    const { tmpDir, moment, addMoments, T0 } = await import('./helpers.js');
+    const { join } = await import('node:path');
+    const { makeHashEmbedder } = await import('../../src/embed/index.js');
+    const emb = makeHashEmbedder();
+    const mind = openMindStore(join(tmpDir('thea2-value-'), 'mind'), emb.dim);
+    await addMoments(mind, emb, [moment({ id: 'a', hers: ['what are you up to? how was your day?'], value: 0 }), moment({ id: 'b', hers: ['i finally found the octopus paper, i was up way too late'], value: 0 })]);
+    applyOutcome(mind, { momentId: 'a', outcome: { landed: 2, why: 'he answered warmly', at: T0 }, alpha: 1, now: T0 });
+    applyOutcome(mind, { momentId: 'b', outcome: { landed: 2, why: 'he answered warmly', at: T0 }, alpha: 1, now: T0 });
+    expect(mind.get('b')!.value).toBeGreaterThan(mind.get('a')!.value);
+  });
+
   it('latency: quantiles of reply times', () => {
     expect(latencyStats([1, 2, 3, 4, 5, 6, 7, 8, 9, 100])).toMatchObject({ n: 10, median: 5.5, p90: 100 });
     expect(latencyStats([])).toMatchObject({ n: 0, median: 0 });

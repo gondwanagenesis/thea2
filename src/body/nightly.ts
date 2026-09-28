@@ -68,7 +68,9 @@ export interface DiegoModel {
 
 export const diegoOnce = async (d: { mind: MindStore; model: ModelClient; clock: Clock; events: EventLog; house: House }): Promise<number> => {
   const now = d.clock.epochMs();
-  const week = d.mind.moments().filter((m) => m.source === 'lived' && m.his.trim() !== '' && now - m.ts < 7 * DAY);
+  // v14: only his side, and not the workshop — found 09-28: fed both sides of a week spent upgrading her,
+  // it wrote "him lately: just got a major upgrade … she's unsettled", her own life filed under his
+  const week = d.mind.moments().filter((m) => m.source === 'lived' && m.his.trim() !== '' && m.mode !== 'work' && !m.his.startsWith('Thea1:') && now - m.ts < 7 * DAY);
   if (week.length === 0) return 0;
   const ids = new Set(week.map((m) => m.id));
   const res = await d.model.chat({
@@ -79,11 +81,12 @@ export const diegoOnce = async (d: { mind: MindStore; model: ModelClient; clock:
     maxTokens: 900,
     temperature: 0.3,
     messages: [
-      { role: 'system', content: "From the exchanges below, write up to 6 short lines about where HE is at lately — what he's working on, carrying, excited or worried about, asking for. Every line cites the [ids] it comes from. Nothing that isn't in the record." },
-      { role: 'user', content: week.map(line).join('\n') },
+      { role: 'system', content: "From his messages below (Diego, a person), write up to 6 short lines about where HE is at lately in his own life — what he's working on, carrying, excited or worried about, where he is, what he's asking for. Not about Thea (the AI he is talking to), her changes or her feelings. Every line cites the [ids] it comes from. Nothing that isn't in the record." },
+      { role: 'user', content: week.map((m) => `[${m.id}] him: ${m.his.slice(0, 300)}`).join('\n') },
     ],
   });
   const lately = res.content.lately
+    .filter((l) => !/\b(she|her|thea)\b/i.test(l.text)) // about her, not him
     .map((l) => ({ text: l.text, cites: l.cites.map((c) => c.replace(/^\[|\]$/g, '')).filter((c) => ids.has(c)) }))
     .filter((l) => l.cites.length > 0); // uncited = invented = dropped
   d.house.writeJson('diego.json', { at: now, lately } satisfies DiegoModel);

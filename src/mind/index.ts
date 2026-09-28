@@ -32,6 +32,11 @@ export {
   pickItem,
   habituation,
   freshness,
+  liveness,
+  waitingOnHim,
+  letGoWaiting,
+  WAIT_HALF_LIFE_MS,
+  WAIT_LET_GO_MS,
   dayKey,
   inQuietHours,
   rollWander,
@@ -124,5 +129,7 @@ export { twinDataset, bucketOf, isHeldOut, type TwinExample, type TwinPair, type
 export { innerReport, overwritingIndex, pairedMargin, type InnerInput, type InnerEvent, type KillRow, type KillStatus } from './report.js';
 export { shapeOf, condense, lightMoment, LIGHT_WORDS, type DressCtx, type Shape, loadVoiceCorpus, nearestExamples, mouthUser, MOUTH_SYSTEM, type VoiceCorpus, type VoiceExample, makeVoice, dress, dressBubble, voiceFaults, voiceScore, fingerprintPool, pickFingerprints, precisionTokens, namesFrom, REDO_SYSTEM, RedoSchema, SPLIT_WORDS, type Voice, type VoiceDeps, type Dressed, type Fingerprint } from './voice.js';
 export { openPeople, howOften, PEOPLE_FILE, PERSON_FACTS_MAX, PERSON_FACTS_SHOWN, PERSON_LASTING_MAX, PERSON_LASTING_SHOWN, type People, type Person, type Fact } from './people.js';
-export { measureTurns, latencyStats, checkTargets, HUMAN_TARGETS, MACHINERY, HAND_BACK, EXACT, type Humanness, type Latency } from './humanness.js';
+export { gist, asRemembered, GIST_AFTER_MS } from './gist.js';
+export { modeFor, MODE_SWITCH, WORK_CUES, MODE_IDLE_MS, type Mode, type ModeState } from './mode.js';
+export { measureTurns, latencyStats, checkTargets, disclosureOf, replyValueTarget, OWN_SHARE, HUMAN_TARGETS, MACHINERY, HAND_BACK, EXACT, type Humanness, type Latency } from './humanness.js';
 export { makeMindPipeline, UNDELIVERED_HEAD, type BodySeam, type MindPipeline, type MindPipelineDeps, type SelfEntryHandle } from './pipeline.js';

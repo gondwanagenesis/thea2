@@ -252,7 +252,8 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
   const cstate = (): CuriosityState => d.mind.state().curiosity ?? { meanLp: 0.8, n: 0 };
   const setC = (patch: Partial<CuriosityState>): void => d.mind.setState({ curiosity: { ...cstate(), ...patch } });
   const emit = (kind: string, payload: Record<string, unknown>): void => void d.events.emit(kind, payload);
-  const openQuestions = (): Concern[] => d.mind.openConcerns().filter((c) => c.kind === 'curiosity');
+  // v14: a question a work turn opened (about her machinery) waits for work mode
+  const openQuestions = (): Concern[] => d.mind.openConcerns().filter((c) => c.kind === 'curiosity' && c.mode !== 'work');
 
   /** Topics looked into in the last two weeks, whatever came of it. */
   const recentTopics = (now: number): string[] => (cstate().explored ?? []).filter((e) => now - e.at < 14 * DAY).map((e) => e.topic);

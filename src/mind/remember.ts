@@ -13,6 +13,7 @@
 import { cosine } from './vectors.js';
 import { momentIntensity, nearestTag } from './vocab.js';
 import type { MindStore } from './store.js';
+import { replyValueTarget } from './humanness.js';
 import type { Act, Line, Moment, Outcome } from './types.js';
 
 /** Cosine above which her reply counts as following a shown option (text-embedding-3-small; recalibrate from mind.remembered closestSim). */
@@ -46,6 +47,8 @@ export interface EncodeInput {
   calledSure?: number | undefined;
   /** v13 H3: what was moving most in her then (material). */
   moving?: string | undefined;
+  /** v14: a work turn (it stays in the workshop). */
+  mode?: 'work' | undefined;
 }
 
 const ACT_FIELDS = ['scene', 'motion', 'prompt', 'query', 'words', 'about', 'brief', 'text', 'emoji', 'url', 'command', 'pattern', 'task', 'path', 'question', 'candy', 'room', 'action'] as const;
@@ -83,6 +86,7 @@ export const encodeLived = (i: EncodeInput): Moment => ({
   ...(i.called !== undefined ? { called: i.called } : {}),
   ...(i.calledSure !== undefined ? { calledSure: i.calledSure } : {}),
   ...(i.moving !== undefined ? { moving: i.moving } : {}),
+  ...(i.mode !== undefined ? { mode: i.mode } : {}),
 });
 
 /**
@@ -152,7 +156,8 @@ export interface OutcomeUpdate {
 export const applyOutcome = (store: MindStore, u: OutcomeUpdate): { rpe: number } | null => {
   const m = store.get(u.momentId);
   if (m === undefined) return null;
-  const target = clamp(u.outcome.landed / 2, -1, 1);
+  // v14: mostly how it landed with him, partly how much of it was hers (humanness.ts replyValueTarget)
+  const target = replyValueTarget(u.outcome.landed, m.hers.join(' '));
   const rpe = target - m.value;
   store.update(m.id, { outcome: u.outcome, value: clamp(m.value + u.alpha * rpe, -1, 1) });
   if (u.followedId !== undefined && u.followedId !== null) {
