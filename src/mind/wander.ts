@@ -41,7 +41,7 @@ export interface Item {
   key: string;
   /** v12: 'wonder' = one of her questions; 'restless' = nothing new has come her way (the novelty hunger's outlet).
    *  v13 H6: 'practice' = the quiet room (the mastery hunger's outlet). */
-  kind: 'concern' | 'feeling' | 'missing' | 'wonder' | 'restless' | 'practice' | 'arrival';
+  kind: 'concern' | 'feeling' | 'missing' | 'wonder' | 'restless' | 'practice' | 'arrival' | 'reading';
   about: About;
   /** Her words (or the cause, verbatim) — what the thought is about. */
   text: string;
@@ -64,6 +64,12 @@ export interface CuriositySeam {
   saw?(item: Item, now: number): void;
 }
 
+
+/** v14 Phase 2.2: her long read, as the idle mind sees it (mind/reading.ts). */
+export interface ReadingWanderSeam {
+  candidate(state: AffectState, now: number): Item | undefined;
+  read(now: number): Promise<unknown>;
+}
 /** v13 H6 (plan docs/plans/v13-proposal-knowing-what-she-feels.md §6 Phase 2.2): the quiet room, offered by the mastery hunger. */
 export interface RoomSeam {
   candidate(state: AffectState, now: number): Item | undefined;
@@ -273,6 +279,8 @@ export interface WanderDeps {
   grounding?: 'auto' | 'measure' | 'enforce' | undefined;
   /** v13 H6: the quiet room — a session there takes the place of a thought. Absent ⇒ no room. */
   room?: RoomSeam | undefined;
+  /** v14: her book (mind/reading.ts) — a chapter a day when it wins her idle attention. */
+  reading?: ReadingWanderSeam | undefined;
 }
 
 const selfLines = (mind: MindStore): string => mind.self().slice(0, 6).map((l) => l.text).join('\n');
@@ -296,7 +304,7 @@ export const isGrounded = (tag: string, s: AffectState, recentFamilies: Readonly
 const DREAM_CAUSED = /^(?:the dream:|something in the night)/;
 
 /** One wander tick. Returns what happened, for the event log and tests. */
-export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | 'capped' | 'thought' | 'asleep' | 'practice'; item?: string; texted?: boolean }> => {
+export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | 'capped' | 'thought' | 'asleep' | 'practice' | 'reading'; item?: string; texted?: boolean }> => {
   const { mind, clock } = deps;
   const cfg = deps.cfg();
   const now = clock.epochMs();
@@ -327,6 +335,10 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
       const r = deps.room?.candidate(state, now);
       return r === undefined ? [] : [r];
     })(),
+    ...((): Item[] => {
+      const r = deps.reading?.candidate(state, now);
+      return r === undefined ? [] : [r];
+    })(),
   ];
   const threshold = 0.35 + 0.3 * (w.thoughts / Math.max(1, cfg.thoughtsPerDay));
   const item = pickItem(items, w, now, threshold);
@@ -351,6 +363,22 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
     await mind.flush();
     void deps.events.emit('mind.wander', { result: 'practice', item: item.key, kind: item.kind, ...(res !== undefined ? { right: res.right, of: res.of } : {}) });
     return { result: 'practice', item: item.key };
+  }
+
+  // v14: her book won — she reads (or picks one off the shelf) instead of thinking something over
+  if (item.kind === 'reading' && deps.reading !== undefined) {
+    w.thoughts += 1;
+    w.habit = { ...w.habit, [item.key]: now };
+    mind.setState({ wander: w });
+    let res: unknown;
+    try {
+      res = await deps.reading.read(now);
+    } catch (e) {
+      void deps.events.emit('incident.mind_reading_failed', { stage: 'read', error: e instanceof Error ? e.message : String(e) });
+    }
+    await mind.flush();
+    void deps.events.emit('mind.wander', { result: 'reading', item: item.key, kind: item.kind, done: res !== undefined });
+    return { result: 'reading', item: item.key };
   }
 
   // Two memories the item calls up — context for the thought, never its seed.

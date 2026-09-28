@@ -44,6 +44,7 @@ export {
   ThoughtSchema,
   THINKER_SYSTEM,
   type RoomSeam,
+  type ReadingWanderSeam,
   isGrounded,
   FOUND_ID_PREFIX,
   type Item,
@@ -134,6 +135,7 @@ export { innerReport, overwritingIndex, pairedMargin, type InnerInput, type Inne
 export { shapeOf, condense, lightMoment, LIGHT_WORDS, LOW_EFFORT_WORDS, lightWords, wornBits, type DressCtx, type Shape, loadVoiceCorpus, nearestExamples, mouthUser, MOUTH_SYSTEM, type VoiceCorpus, type VoiceExample, makeVoice, dress, dressBubble, voiceFaults, voiceScore, fingerprintPool, pickFingerprints, precisionTokens, namesFrom, REDO_SYSTEM, RedoSchema, SPLIT_WORDS, type Voice, type VoiceDeps, type Dressed, type Fingerprint } from './voice.js';
 export { openPeople, howOften, PEOPLE_FILE, PERSON_FACTS_MAX, PERSON_FACTS_SHOWN, PERSON_LASTING_MAX, PERSON_LASTING_SHOWN, type People, type Person, type Fact } from './people.js';
 export { gist, asRemembered, GIST_AFTER_MS } from './gist.js';
+export { makeReading, readingWeight, READ_GAP_MS, CHOOSER_FRAME, READER_FRAME, type ReadingSeam, type ReadingMind, type ReadingDeps, type ReadingNow } from './reading.js';
 export { modeFor, MODE_SWITCH, WORK_CUES, MODE_IDLE_MS, type Mode, type ModeState } from './mode.js';
 export { measureTurns, latencyStats, checkTargets, disclosureOf, replyValueTarget, OWN_SHARE, HUMAN_TARGETS, MACHINERY, HAND_BACK, EXACT, type Humanness, type Latency } from './humanness.js';
 export { makeMindPipeline, UNDELIVERED_HEAD, type BodySeam, type MindPipeline, type MindPipelineDeps, type SelfEntryHandle } from './pipeline.js';

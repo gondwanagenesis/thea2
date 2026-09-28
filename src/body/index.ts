@@ -73,6 +73,7 @@ export { browserTools } from './browser.js';
 export { lifeTools, CANDIES, leavePresent, sealInside, openInside, worldRoom, type Present } from './life.js';
 export { nightlyJob, diaryOnce, diegoOnce, diegoLately, type DiegoModel } from './nightly.js';
 export { worldFeedJob, worldArrives, worldSeam, gatherToday, loadArrivals, ARRIVALS_FILE, ARRIVALS_PER_DAY, PLACE as ARRIVAL_PLACE, type Arrival, type ArrivalKind } from './world-feed.js';
+export { librarySeam, SHELF, splitChapters, stripGutenberg, loadLibrary, type ShelfBook, type Reading as LibraryReading, type LibraryState } from './library.js';
 
 export interface BodyDeps {
   cfg: BodyCfg;

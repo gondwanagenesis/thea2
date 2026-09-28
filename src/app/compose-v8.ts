@@ -34,6 +34,7 @@ import {
   wanderJob,
   makeDreams,
   makeRoom,
+  makeReading,
   makeVoice,
   openPeople,
   liftJob,
@@ -48,7 +49,7 @@ import {
 } from '../mind/index.js';
 import { wakeNoteJob } from './wake-note.js';
 import { salonInboxJob, salonOutbox } from './salon.js';
-import { brokerShell, describeWhere, loadWhere, makeBody, whereFresh, worldFeedJob, worldSeam, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
+import { brokerShell, describeWhere, librarySeam, loadWhere, makeBody, whereFresh, worldFeedJob, worldSeam, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
 import { makeLive, startFaceServer, type FaceServer } from '../face/index.js';
 import { makeEmbedder } from './embedder.js';
@@ -82,7 +83,7 @@ export interface ComposeV8Opts {
 }
 
 /** The body, as the mind's BodySeam: plus the [now] facts it knows. */
-export const bodySeam = (body: Body, clock: Clock): BodySeam => ({
+export const bodySeam = (body: Body, clock: Clock, more?: (now: number) => string[]): BodySeam => ({
   perceive: (m) => body.perceive(m),
   begin: (turnId, ctx) => body.begin(turnId, ctx),
   end: (turnId) => body.end(turnId),
@@ -96,7 +97,7 @@ export const bodySeam = (body: Body, clock: Clock): BodySeam => ({
     const w = loadWhere(body.house);
     const now = clock.epochMs();
     const where = w === undefined || !whereFresh(w, now) ? [] : [`where he is: ${describeWhere(w, now)}.`];
-    return [...where, ...body.worldFacts(now)];
+    return [...where, ...body.worldFacts(now), ...(more?.(now) ?? [])];
   },
 });
 
@@ -410,6 +411,23 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         })
       : undefined;
 
+  // v14 Phase 2.2 (plan ~/.claude/plans/thea2-v14-a-life.md): her long read — a book she picks off her
+  // Library shelf, a chapter a day when it wins her idle attention. Downloads: prod (or a test's own fetch).
+  const reading =
+    body !== undefined && (preset === 'prod' || opts.fetchImpl !== undefined)
+      ? makeReading({
+          mind,
+          affect,
+          model,
+          embedder,
+          events,
+          clock,
+          rng: rng.fork('reading'),
+          reading: librarySeam(body.house, opts.fetchImpl),
+          feltNow: () => vecToArray(signature(affect.current(), COUPLING_BASELINES)),
+        })
+      : undefined;
+
   // the salon (Diego: "i want them to talk"): the relay's inbox and her outbox, when she has a group
   const salonDir = v('var/salon');
   const salonGroup = cfg.bridge.allowedChatIds.find((id) => id < 0);
@@ -453,7 +471,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
     ...(cfg.bridge.selfAliases !== undefined ? { selfAliases: cfg.bridge.selfAliases } : {}),
     timezone: cfg.timezone,
     budgetLeft,
-    ...(body !== undefined ? { body: bodySeam(body, clock) } : {}),
+    ...(body !== undefined ? { body: bodySeam(body, clock, reading !== undefined ? (now) => reading.nowLines(now) : undefined) } : {}),
   });
   await events.emit('app.boot', { stage: 'pipeline', mind: 'v8', fallback: fallbackModel !== undefined, body: body !== undefined });
   body?.bind({
@@ -553,6 +571,7 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         ...(dreams !== undefined ? { asleep: (now: number) => dreams.isAsleep(now), dreamText: { may: (now: number) => dreams.mayTellDream(now), told: (now: number) => dreams.toldDream(now) } } : {}),
         grounding: mindCfg.reappraiseGrounding,
         ...(room !== undefined ? { room } : {}),
+        ...(reading !== undefined ? { reading } : {}),
       }),
       sleepJob({ mind, model, events, clock, timeZone: cfg.timezone }, utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone)),
       // v13 Phase 0: the sincerity ledger — the night's reports scored against her engine, and the same
