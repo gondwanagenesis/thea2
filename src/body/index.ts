@@ -30,13 +30,13 @@ import { listenerTools } from './listener.js';
 import { makeRng } from '../kernel/index.js';
 import { browserTools } from './browser.js';
 import { diegoLately } from './nightly.js';
-import { loadWhere as loadWhereFile } from './where.js';
+import { loadWhere as loadWhereFile, placeFromWords, saveWhere as saveWhereFile, whereFresh } from './where.js';
 import type { AffectStore } from '../affect/index.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ModelClient } from '../model/index.js';
 import type { Rng } from '../kernel/index.js';
-import type { BodyCfg, BodySent, Exec, Perceived } from './types.js';
+import type { BodyCfg, BodySent, Exec, Perceived, WhereInfo } from './types.js';
 
 export * from './types.js';
 export { openHouse, safeName, type House } from './house.js';
@@ -46,7 +46,7 @@ export { makeSenses, howItSounds, PHOTO_PROMPT, FRAMES_PROMPT, LISTEN_PROMPT, FI
 export { makeMouth, speakable, deliveryFor, type Mouth } from './voice.js';
 export { bodyTools, REACTIONS, type TurnBodyCtx, type ToolDeps } from './tools.js';
 export { tools2, type Tools2Deps } from './tools2.js';
-export { locate, describeWhere, loadWhere, saveWhere } from './where.js';
+export { locate, describeWhere, loadWhere, saveWhere, placeFromWords, whereFresh } from './where.js';
 export { readFileText, stripHtml } from './reading.js';
 export { makeFal, FalError, type Fal } from './fal.js';
 export { makeCamera, SHOTS, SIZES, IMAGE_MODEL, VIDEO_MODEL, THEA_LOOK, type Camera } from './camera.js';
@@ -144,8 +144,10 @@ export interface Body {
   begin(turnId: string, ctx: { chatId: number; inboundMsgId?: number | undefined; text?: string | undefined }): void;
   end(turnId: string): BodySent[];
   speak(chatId: number, text: string, turnId: string, replyTo?: number | undefined): Promise<{ msgId: number } | undefined>;
-  /** His time zone from the last location he shared (fresh within 3 days). */
+  /** His time zone from where he is: a pin he shared (live: 3 days) or a place he named (until he names another). */
   hisTimeZone(): string | undefined;
+  /** He named where he is ("I'm in Bali"): look it up and move his clock there. */
+  heardWhere(place: string): Promise<WhereInfo | undefined>;
   onSkipped(m: InboundMsg): void;
   /** Facts about her world and him for [now]: her room, him lately (cited). */
   worldFacts(now: number): string[];
@@ -334,7 +336,22 @@ export const makeBody = (d: BodyDeps): Body => {
     },
     hisTimeZone: () => {
       const w = loadWhereFile(house);
-      return w !== undefined && w.timeZone !== undefined && d.clock.epochMs() - w.at < 3 * 86_400_000 ? w.timeZone : undefined;
+      return w !== undefined && w.timeZone !== undefined && whereFresh(w, d.clock.epochMs()) ? w.timeZone : undefined;
+    },
+    heardWhere: async (place) => {
+      const now = d.clock.epochMs();
+      const cur = loadWhereFile(house);
+      const first = (place.split(',')[0] ?? '').trim().toLowerCase();
+      // already known there (said again, or a pin already put him there): nothing to look up
+      if (cur !== undefined && whereFresh(cur, now) && first !== '' && cur.place.toLowerCase().includes(first)) return cur;
+      const w = await placeFromWords(place, now, d.fetchImpl);
+      if (w === undefined || w.timeZone === undefined) {
+        void d.events.emit('incident.body_where_unresolved', { said: place.slice(0, 120) });
+        return undefined;
+      }
+      saveWhereFile(house, w);
+      void d.events.emit('body.where_heard', { said: place.slice(0, 120), place: w.place, timeZone: w.timeZone });
+      return w;
     },
     speak: async (chatId, text, turnId, replyTo) => {
       try {

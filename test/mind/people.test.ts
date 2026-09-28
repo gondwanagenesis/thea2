@@ -25,6 +25,31 @@ describe('her memory of people', () => {
     expect(again.known.at(-1)!.text).toBe('zeta49alpha omega49beta kappa49gamma');
   });
 
+  it('what stays true is kept apart from passing notes: fifty passing notes later she still knows it, and where they are is the latest place (found 09-28: "he\'s in Bali" was one of 40 notes, 8 shown, oldest dropped)', async () => {
+    const dir = tmpDir('thea2-people-');
+    const people = openPeople(dir);
+    people.notice('diego', 'Diego', T0);
+    expect(people.learn('diego', ['he is staying in Bali for a few months'], T0 + 1, 'm1', true)).toBe(1);
+    expect(people.setWhere('diego', 'Bali, Indonesia', T0 + 1, 'm1')).toBe(true);
+    // a passing note that sounds like the lasting fact never replaces it
+    people.learn('diego', ['he is staying in Bali for a few months, he said again'], T0 + 2);
+    for (let i = 0; i < 50; i++) people.learn('diego', [`zeta${i}alpha omega${i}beta kappa${i}gamma`], T0 + 10 + i);
+    expect(people.setWhere('diego', 'bali, indonesia', T0 + 100)).toBe(false); // the same place, said again
+    expect(people.setWhere('diego', 'Madrid, Spain', T0 + 200)).toBe(true);
+    await people.flush();
+    const d = openPeople(dir).get('diego')!;
+    expect(d.known.filter((f) => f.lasting === true).map((f) => f.text)).toEqual(['he is staying in Bali for a few months']);
+    expect(d.known.filter((f) => f.lasting !== true)).toHaveLength(PERSON_FACTS_MAX);
+    expect(d.where).toMatchObject({ place: 'Madrid, Spain', at: T0 + 200 });
+    const { head } = composeSegments({ timeZone: 'Europe/Madrid', now: T0 + 300, self: [], concerns: [], thoughts: [], options: [], memories: [], who: 'Diego', person: d });
+    const text = head.map((s) => s.text).join('\n');
+    expect(text).toContain('where they are: Madrid, Spain (they said');
+    expect(text).toMatch(/what you know about them:\n- he is staying in Bali for a few months/);
+    expect(text).toMatch(/lately:\n- zeta46alpha/); // the newest four passing notes
+    expect(text).not.toContain('zeta45alpha');
+    expect(lintSegments(head)).toEqual([]);
+  });
+
   it('comes to mind when they talk: who they are to her, and what she knows (her memory, not a verdict)', () => {
     const { head } = composeSegments({
       timeZone: 'Europe/Madrid',

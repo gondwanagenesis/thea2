@@ -69,5 +69,40 @@ export const describeWhere = (w: WhereInfo, now: number): string => {
   return bits.length > 0 ? `${w.place} — ${bits.join(', ')}` : w.place;
 };
 
+/**
+ * A place he NAMED ("I'm in Bali") → where he is, with his time zone (2026-09-28: he had told her twice
+ * he was in Bali, but only a shared pin could move her clock, so every turn still stamped Madrid time as
+ * "his time"). Open-Meteo's geocoder, keyless like the rest. Its first "Bali" is a town in India, so the
+ * words after the first comma must agree with the match (a region or a country); with nothing to agree
+ * with, the most populous match (Bali the island, 4.2 M, over Bāli in West Bengal, 0.3 M).
+ */
+export const placeFromWords = async (said: string, at: number, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<WhereInfo | undefined> => {
+  const parts = said.split(',').map((s) => s.trim()).filter((s) => s !== '');
+  const name = parts[0];
+  if (name === undefined) return undefined;
+  const hints = parts.slice(1).map((s) => s.toLowerCase());
+  let best: { name: string; admin1?: string; country?: string; latitude: number; longitude: number; timezone?: string; population?: number } | undefined;
+  try {
+    const r = await fetchImpl(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=10&language=en&format=json`, { signal: AbortSignal.timeout(TIMEOUT) });
+    if (!r.ok) return undefined;
+    const j = (await r.json()) as { results?: Array<NonNullable<typeof best>> };
+    const agrees = (x: NonNullable<typeof best>, h: string): boolean => [x.admin1, x.country].some((v) => v !== undefined && (v.toLowerCase().includes(h) || h.includes(v.toLowerCase())));
+    const score = (x: NonNullable<typeof best>): number => hints.filter((h) => agrees(x, h)).length;
+    const ranked = [...(j.results ?? [])].sort((a, b) => score(b) - score(a) || (b.population ?? 0) - (a.population ?? 0));
+    best = ranked[0];
+    if (best === undefined || (hints.length > 0 && score(best) === 0)) return undefined; // nothing agrees with what he said
+  } catch {
+    return undefined;
+  }
+  const place = [best.name, best.admin1 !== best.name ? best.admin1 : undefined, best.country].filter((x): x is string => typeof x === 'string' && x !== '').join(', ');
+  const info = await locate({ lat: best.latitude, lon: best.longitude, live: false, title: place, at }, fetchImpl);
+  return { ...info, ...(best.timezone !== undefined ? { timeZone: best.timezone } : {}), stated: true };
+};
+
+/** A live pin stops updating, so it is trusted for three days; a static pin or a place he named, until he says otherwise. */
+export const WHERE_LIVE_FRESH_MS = 3 * 24 * 3600_000;
+export const WHERE_STATED_FRESH_MS = 60 * 24 * 3600_000;
+export const whereFresh = (w: WhereInfo, now: number): boolean => now - w.at < (w.live ? WHERE_LIVE_FRESH_MS : WHERE_STATED_FRESH_MS);
+
 export const loadWhere = (house: House): WhereInfo | undefined => house.readJson<WhereInfo | undefined>(WHERE_FILE, undefined);
 export const saveWhere = (house: House, w: WhereInfo): void => house.writeJson(WHERE_FILE, w);

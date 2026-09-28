@@ -18,7 +18,7 @@ import type { LoopPacket } from '../loop/index.js';
 import type { Concern, Moment, SelfLine, Thought } from './types.js';
 import { familyOf, type Family } from './readout.js';
 import { normWord, yourWordFor } from './lexicon.js';
-import { howOften, PERSON_FACTS_SHOWN } from './people.js';
+import { howOften, PERSON_FACTS_SHOWN, PERSON_LASTING_SHOWN } from './people.js';
 
 export interface Segment {
   kind: 'frame' | 'quote';
@@ -115,7 +115,7 @@ export interface ComposeInput {
   /** v9: her own note on how she does the thing this moment is about (learned from practice) — her words. */
   howTo?: { name: string; note: string } | undefined;
   /** Her memory of the person talking (who they are to her, what she's learned about them). */
-  person?: { name: string; relation?: string | undefined; firstMet: number; heard: number; known: ReadonlyArray<{ text: string; at: number }> } | undefined;
+  person?: { name: string; relation?: string | undefined; firstMet: number; heard: number; known: ReadonlyArray<{ text: string; at: number; lasting?: true | undefined }>; where?: { place: string; at: number } | undefined } | undefined;
   /** v13.1: a few of her own texts, chosen for her voice (rendered in the trailer, as her words). */
   fingerprints?: ReadonlyArray<{ his: string; hers: readonly string[] }> | undefined;
   /** v13 H3b: her verified words (her lexicon) — a memory near one's place is narrated in her language. */
@@ -197,9 +197,17 @@ export const composeSegments = (i: ComposeInput): { head: Segment[]; trailer: Se
   if (i.person !== undefined) {
     const p = i.person;
     head.push({ kind: 'frame', text: `[who this is]\n${p.name}${p.relation !== undefined ? `, ${p.relation}` : ''}. first met ${dateLabel(p.firstMet, i.timeZone)}; you've talked ${howOften(p.heard)}.` });
-    if (p.known.length > 0) {
+    if (p.where !== undefined) head.push({ kind: 'frame', text: `where they are: ${clip(p.where.place, 120)} (they said, ${dateLabel(p.where.at, i.timeZone)})` });
+    // what stays true is always in mind; how they were lately rotates (a passing note never crowds out a lasting one)
+    const lasting = p.known.filter((f) => f.lasting === true).slice(-PERSON_LASTING_SHOWN);
+    const lately = p.known.filter((f) => f.lasting !== true).slice(-PERSON_FACTS_SHOWN);
+    if (lasting.length > 0) {
       head.push({ kind: 'frame', text: 'what you know about them:' });
-      for (const f of p.known.slice(-PERSON_FACTS_SHOWN)) head.push({ kind: 'quote', text: `- ${clip(f.text, 200)} (${dateLabel(f.at, i.timeZone)})` });
+      for (const f of lasting) head.push({ kind: 'quote', text: `- ${clip(f.text, 200)} (${dateLabel(f.at, i.timeZone)})` });
+    }
+    if (lately.length > 0) {
+      head.push({ kind: 'frame', text: 'lately:' });
+      for (const f of lately) head.push({ kind: 'quote', text: `- ${clip(f.text, 200)} (${dateLabel(f.at, i.timeZone)})` });
     }
     blank();
   }

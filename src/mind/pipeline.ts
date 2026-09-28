@@ -94,6 +94,8 @@ export interface BodySeam {
   skillFor?(text: string): Promise<{ name: string; note: string } | undefined>;
   /** His time zone when he has shared where he is (golden rule 22: the time where HE is). */
   hisTimeZone?(): string | undefined;
+  /** He named where he is: look it up and move his clock there (the body's; absent = no lookup). */
+  heardWhere?(place: string): Promise<unknown>;
 }
 
 export interface MindPipelineDeps {
@@ -548,7 +550,7 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
       // her memory of the person talking
       ...((): { person?: NonNullable<Parameters<typeof composePacket>[0]['person']> } => {
         const p = selfEntry ? undefined : deps.people?.get(m.speaker.person);
-        return p === undefined ? {} : { person: { name: p.name, ...(p.relation !== undefined ? { relation: p.relation } : {}), firstMet: p.firstMet, heard: p.heard, known: p.known } };
+        return p === undefined ? {} : { person: { name: p.name, ...(p.relation !== undefined ? { relation: p.relation } : {}), firstMet: p.firstMet, heard: p.heard, known: p.known, ...(p.where !== undefined ? { where: p.where } : {}) } };
       })(),
       // v13.1: a few of her texts chosen for her voice, rotating each turn
       ...(deps.voice !== undefined ? { fingerprints: deps.voice.fingerprints(turnId) } : {}),
@@ -860,10 +862,22 @@ export const makeMindPipeline = (deps: MindPipelineDeps): MindPipeline => {
         { model: deps.model, turnId },
       );
       // her memory of people: what this exchange showed about the person she was talking with
-      if (slow.ok && !selfEntry && deps.people !== undefined && (slow.value.about_them ?? []).length > 0) {
-        const added = deps.people.learn(m.speaker.person, slow.value.about_them ?? [], deps.clock.epochMs(), momentId);
-        await deps.people.flush().catch(() => undefined);
-        emit('mind.person_learned', { turnId, person: m.speaker.person, added, facts: (slow.value.about_them ?? []).length }, turnId);
+      if (slow.ok && !selfEntry && deps.people !== undefined) {
+        const passing = slow.value.about_them ?? [];
+        const lasting = slow.value.lasting_about_them ?? [];
+        const place = slow.value.where_they_are;
+        const now = deps.clock.epochMs();
+        const added = deps.people.learn(m.speaker.person, passing, now, momentId) + deps.people.learn(m.speaker.person, lasting, now, momentId, true);
+        const moved = place !== undefined && deps.people.setWhere(m.speaker.person, place, now, momentId);
+        if (passing.length + lasting.length > 0 || moved) {
+          await deps.people.flush().catch(() => undefined);
+          emit('mind.person_learned', { turnId, person: m.speaker.person, added, facts: passing.length, lasting: lasting.length, ...(place !== undefined ? { where: place } : {}) }, turnId);
+        }
+        // his clock follows where he says he is, not only a shared pin (2026-09-28: "it is 8 am. I am in
+        // Bali. y do u keep forgetting that?" — the [now] line kept stamping Madrid time as his)
+        if (place !== undefined && isOwnerMsg(m) && deps.body?.heardWhere !== undefined) {
+          await deps.body.heardWhere(place).catch((e: unknown) => emit('incident.mind_where_failed', { turnId, error: asError(e).message }, turnId));
+        }
       }
 
       let importance: number | undefined;

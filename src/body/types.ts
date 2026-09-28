@@ -68,4 +68,6 @@ export interface WhereInfo {
   live: boolean;
   /** Epoch ms of the fix. */
   at: number;
+  /** He said it in words (no pin): true until he says somewhere else. */
+  stated?: boolean | undefined;
 }

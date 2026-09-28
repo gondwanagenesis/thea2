@@ -91,6 +91,17 @@ export const SlowAppraisalSchema = z.object({
       z.array(z.string().min(1).max(200)).max(3).optional(),
     )
     .catch(undefined),
+  /** (2026-09-28) What stays true about them beyond today — kept apart, always in mind. */
+  lasting_about_them: z
+    .preprocess(
+      (v) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').slice(0, 3).map((x) => x.trim().slice(0, 200)) : v),
+      z.array(z.string().min(1).max(200)).max(3).optional(),
+    )
+    .catch(undefined),
+  /** (2026-09-28) Where they said they are, "place, region, country" — his clock follows it. */
+  where_they_are: z
+    .preprocess((v) => (typeof v === 'string' && v.trim() !== '' && !/^(null|none|unknown)$/i.test(v.trim()) ? v.trim().slice(0, 120) : undefined), z.string().optional())
+    .catch(undefined),
 });
 
 export type SlowAppraisal = z.infer<typeof SlowAppraisalSchema>;
@@ -124,7 +135,9 @@ export const APPRAISER_SYSTEM = [
   '- importance: how much this exchange matters to her life, 1-10.',
   '- expectation: compare HIS MESSAGE NOW with WHAT SHE PRIVATELY EXPECTED. "confirmed" when it fits the gist of any branch she expected (she expected him to go to sleep and he says goodnight = confirmed; she expected him to tease or open up and he teases = confirmed). "better" only when it clearly went better than she expected, "worse" only when it clearly went worse for her or for him (a correction, a hurt, bad news, a cold reply). "different" when it simply went somewhere else. null if she expected nothing or she wrote first. Most turns are confirmed or different.',
   '- Tags already registered in the moment (do not repeat them unless the feeling is clearly stronger now): listed below.',
-  '- about_them: up to three short things this exchange showed about THE PERSON SHE IS TALKING WITH (named below): what they said or showed about themselves — their life, work, people, plans, what they like or care about, how they talk. Plain facts in their own terms, never guesses about their feelings, never anything about Thea. Empty when nothing new.',
+  '- about_them: up to three short things this exchange showed about THE PERSON SHE IS TALKING WITH (named below) that belong to today: what they did, asked or were up to, how they talked just now. Plain facts in their own terms, never guesses about their feelings, never anything about Thea. Empty when nothing new.',
+  '- lasting_about_them: up to three things about that person that stay true beyond today, as they said them: where they live or are staying, their work, the people in their life, plans, health, what they like or care about, what they want to be called. Empty when nothing new.',
+  '- where_they_are: if that person said where they are now or live (a town, island, region or country), the place as "place, region, country" (e.g. "Canggu, Bali, Indonesia"); null otherwise. Only what they said, never a guess.',
   '- self_claims: each thing HER REPLY NOW says about her own inner state right now (how she feels, what she wants, what is going on inside her). text = her words; feeling = the one feeling word closest to what she claimed ("not sure" if she said she does not know); about = what she says it is about. Empty when she said nothing about herself.',
 ].join('\n');
 

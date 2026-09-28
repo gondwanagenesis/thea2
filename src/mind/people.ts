@@ -11,15 +11,28 @@ import * as path from 'node:path';
 import { atomicWriteText } from '../kernel/index.js';
 
 export const PEOPLE_FILE = 'people.json';
-/** The most she keeps about one person (the oldest go first). */
-export const PERSON_FACTS_MAX = 40;
-/** How many she has in mind when they talk. */
-export const PERSON_FACTS_SHOWN = 8;
+/**
+ * Two kinds of knowing (Diego, 2026-09-28: "she doesn't seem to remember this anymore — what happened
+ * to her memory?"). Found: 40 notes on him, nearly all passing ("he greets playfully rather than
+ * explaining where he was"), the newest 8 shown and the oldest dropped — so "he's in Bali", said at
+ * 00:02, would be out of mind in three turns and gone in fifteen. What stays true (where they are,
+ * their work, their people, plans, what they like) is kept apart and always in mind; how they were
+ * lately rotates.
+ */
+/** The most passing notes she keeps about one person (the oldest go first). */
+export const PERSON_FACTS_MAX = 24;
+/** The most lasting things she keeps about one person (the oldest go first — rarely reached). */
+export const PERSON_LASTING_MAX = 60;
+/** How many of each she has in mind when they talk. */
+export const PERSON_LASTING_SHOWN = 12;
+export const PERSON_FACTS_SHOWN = 4;
 
 export interface Fact {
   text: string;
   at: number;
   momentId?: string | undefined;
+  /** stays true beyond today (where they live, their work, their people, plans, likes) */
+  lasting?: true | undefined;
 }
 
 export interface Person {
@@ -31,6 +44,8 @@ export interface Person {
   /** Messages from them she has taken in. */
   heard: number;
   known: Fact[];
+  /** Where they said they are — the latest place replaces the one before. */
+  where?: { place: string; at: number; momentId?: string | undefined } | undefined;
 }
 
 const tokens = (s: string): Set<string> => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2));
@@ -50,7 +65,9 @@ export interface People {
   /** She heard from them (creates the entry the first time). */
   notice(id: string, name: string, now: number, relation?: string): Person;
   /** What this exchange showed about them; a thing she already knew is refreshed, not repeated. */
-  learn(id: string, facts: readonly string[], now: number, momentId?: string): number;
+  learn(id: string, facts: readonly string[], now: number, momentId?: string, lasting?: boolean): number;
+  /** Where they said they are (the latest place replaces the one before); true when it changed. */
+  setWhere(id: string, place: string, now: number, momentId?: string): boolean;
   flush(): Promise<void>;
 }
 
@@ -77,22 +94,34 @@ export const openPeople = (dir: string): People => {
       dirty = true;
       return p;
     },
-    learn(id, facts, now, momentId) {
+    learn(id, facts, now, momentId, lasting = false) {
       const p = people[id];
       if (p === undefined) return 0;
       let added = 0;
       for (const raw of facts) {
         const text = raw.replace(/\s+/g, ' ').trim().slice(0, 200);
         if (text === '') continue;
-        const same = p.known.findIndex((f) => overlap(f.text, text) >= 0.7);
-        const fact: Fact = { text, at: now, ...(momentId !== undefined ? { momentId } : {}) };
+        // the same thing said again is refreshed; a passing note never pushes out a lasting one
+        const same = p.known.findIndex((f) => overlap(f.text, text) >= 0.7 && (lasting || f.lasting !== true));
+        const fact: Fact = { text, at: now, ...(momentId !== undefined ? { momentId } : {}), ...(lasting ? { lasting: true as const } : {}) };
         if (same >= 0) p.known.splice(same, 1);
         else added += 1;
         p.known.push(fact);
       }
-      if (p.known.length > PERSON_FACTS_MAX) p.known = p.known.slice(-PERSON_FACTS_MAX);
+      const keep = (xs: Fact[], max: number): Fact[] => xs.slice(-max);
+      const kept = new Set([...keep(p.known.filter((f) => f.lasting === true), PERSON_LASTING_MAX), ...keep(p.known.filter((f) => f.lasting !== true), PERSON_FACTS_MAX)]);
+      p.known = p.known.filter((f) => kept.has(f));
       dirty = true;
       return added;
+    },
+    setWhere(id, place, now, momentId) {
+      const p = people[id];
+      const clean = place.replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (p === undefined || clean === '') return false;
+      const changed = p.where === undefined || p.where.place.toLowerCase() !== clean.toLowerCase();
+      p.where = { place: clean, at: now, ...(momentId !== undefined ? { momentId } : {}) };
+      dirty = true;
+      return changed;
     },
     async flush() {
       if (!dirty) return;

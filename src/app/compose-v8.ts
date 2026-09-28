@@ -48,7 +48,7 @@ import {
 } from '../mind/index.js';
 import { wakeNoteJob } from './wake-note.js';
 import { salonInboxJob, salonOutbox } from './salon.js';
-import { brokerShell, describeWhere, loadWhere, makeBody, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
+import { brokerShell, describeWhere, loadWhere, makeBody, whereFresh, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
 import { makeLive, startFaceServer, type FaceServer } from '../face/index.js';
 import { makeEmbedder } from './embedder.js';
@@ -81,9 +81,6 @@ export interface ComposeV8Opts {
   workshopCall?: WorkshopCall | undefined;
 }
 
-/** How fresh a shared location must be to stay a fact about his present. */
-const WHERE_FRESH_MS = 3 * 24 * 3600_000;
-
 /** The body, as the mind's BodySeam: plus the [now] facts it knows. */
 export const bodySeam = (body: Body, clock: Clock): BodySeam => ({
   perceive: (m) => body.perceive(m),
@@ -91,13 +88,14 @@ export const bodySeam = (body: Body, clock: Clock): BodySeam => ({
   end: (turnId) => body.end(turnId),
   speak: (chatId, text, turnId, replyTo) => body.speak(chatId, text, turnId, replyTo),
   hisTimeZone: () => body.hisTimeZone(),
+  heardWhere: (place) => body.heardWhere(place),
   onSkipped: (m) => body.onSkipped(m),
   jobOutcome: (id) => body.jobOutcome(id),
   skillFor: (text) => body.skillFor(text),
   nowFacts: () => {
     const w = loadWhere(body.house);
     const now = clock.epochMs();
-    const where = w === undefined || now - w.at > WHERE_FRESH_MS ? [] : [`where he is: ${describeWhere(w, now)}.`];
+    const where = w === undefined || !whereFresh(w, now) ? [] : [`where he is: ${describeWhere(w, now)}.`];
     return [...where, ...body.worldFacts(now)];
   },
 });

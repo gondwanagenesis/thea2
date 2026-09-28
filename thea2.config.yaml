@@ -75,10 +75,12 @@ bridge:
   # names that mean she's being addressed in the group
   selfAliases: [thea, dodonotnobot]
 # Diego's zone: quiet hours, the day census, the sleep hour are read in THIS zone.
-timezone: Europe/Madrid
+# Bali since 2026-09-28 (he is there; Madrid time kept telling her it was 2am when it was 8am).
+# A place he names in chat moves his [now] clock on its own (body/where.ts placeFromWords).
+timezone: Asia/Makassar
 affect:
   statePath: var/affect/state.json
-  # [start, end) LOCAL hours; start > end wraps midnight. 01:00–09:00 Madrid.
+  # [start, end) LOCAL hours; start > end wraps midnight. 01:00–09:00 his time.
   quietHours: [1, 9]
 sched:
   statePath: var/sched/state.json
