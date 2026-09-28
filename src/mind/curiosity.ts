@@ -91,7 +91,35 @@ export interface CuriosityDeps {
   tellHim(goal: string): Promise<boolean>;
   /** v12.1: her exact state now (coupling deviation vector) — stamped on a finding's memory. Absent ⇒ stored blank. */
   feltNow?: () => number[];
+  /** v14: what arrived in her house that she has not given attention yet (body/world-feed.ts). Absent ⇒ nothing arrives. */
+  world?: WorldSeam | undefined;
 }
+
+/** v14 Phase 2.1: the world knocks — real things that arrive in her house (structurally body/world-feed.ts). */
+export interface WorldArrival {
+  id: string;
+  at: number;
+  kind: string;
+  title: string;
+  text: string;
+  url?: string | undefined;
+  place: string;
+}
+export interface WorldSeam {
+  unseen(now: number): WorldArrival[];
+  markSeen(id: string, now: number): void;
+}
+
+/**
+ * How strongly something that arrived pulls her attention: some pull just by being new (people do
+ * glance at what lands on the table), more when she is hungry for novelty (the drive over its set
+ * point), more when it touches what she is into lately; fading over the day it has sat there.
+ */
+export const arrivalWeight = (novelty: number, interestOverlap: number, ageMs: number): number =>
+  clamp01((0.3 + clamp01((novelty - NOVELTY_SET_POINT) * 1.2) * 0.4 + 0.25 * clamp01(interestOverlap)) * Math.pow(0.5, Math.max(0, ageMs) / (24 * 3600_000)));
+
+const KIND_WORD: Record<string, string> = { article: 'an article', poem: 'a poem', paper: 'a paper', art: 'a painting', picture: 'a picture', history: 'a day in history' };
+export const arrivalText = (a: WorldArrival): string => `${KIND_WORD[a.kind] ?? 'something'} ${a.place}: "${a.title}". ${a.text}`;
 
 export interface LearnOutcome {
   progress: 0 | 1 | 2;
@@ -420,14 +448,30 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     return [`you haven't come across anything new ${span}`, top.length > 0 ? `lately you've been into: ${top.map((t) => t.topic).join(', ')}` : ''].filter((s) => s !== '').join('. ');
   };
 
+  const arrivalsById = new Map<string, WorldArrival>();
   const candidatesFn = (state: AffectState, now: number): Item[] => {
     const x = valueCtx(state, now);
     const qs = openQuestions();
     const items: Item[] = qs.map((c) => ({ key: `concern:${c.id}`, kind: 'wonder', about: c.about, text: c.what, weight: questionValue(c, x), concernId: c.id }));
+    // v14: what arrived in her house competes too; while something new sits there she needn't go looking
+    const top = topInterests(now, 5).map((t) => topicTokens(t.topic));
+    const arrivals = d.world?.unseen(now) ?? [];
+    for (const a of arrivals) {
+      arrivalsById.set(a.id, a);
+      const words = topicTokens(`${a.title} ${a.text}`);
+      const overlap = top.length === 0 ? 0 : Math.max(...top.map((t) => (t.size === 0 ? 0 : [...t].filter((w) => words.has(w)).length / t.size)));
+      items.push({ key: `arrival:${a.id}`, kind: 'arrival', about: 'world', text: arrivalText(a), weight: arrivalWeight(state.drives.novelty, overlap, now - a.at) });
+    }
     const live = items.some((it) => it.weight >= 0.35);
-    const rw = restlessWeight(state.drives.novelty, live);
+    const rw = restlessWeight(state.drives.novelty, live) * (arrivals.length > 0 ? 0.5 : 1);
     if (rw > 0) items.push({ key: 'restless', kind: 'restless', about: 'world', text: restlessText(now), weight: rw });
     return items;
+  };
+
+  // v14: an arrival she gave her attention to has been seen (a thought about it, whether or not she digs in)
+  const saw = (item: Item, now: number): void => {
+    if (item.kind !== 'arrival') return;
+    d.world?.markSeen(item.key.slice('arrival:'.length), now);
   };
 
   const selfLines = (): string[] => d.mind.self().map((l) => l.text);
@@ -456,10 +500,15 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
 
     if ((w.pursuits ?? 0) >= cfg.investigationsPerDay) return 'capped';
     if (inflight > 0) return 'busy';
+    // v14: something that arrived in her house caught her, and she wants more of it
+    const arrival = item.kind === 'arrival' ? arrivalsById.get(item.key.slice('arrival:'.length)) : undefined;
+    if (item.kind === 'arrival' && arrival === undefined) return 'none';
     const question: Concern =
       q ??
-      // restlessness has no question yet: she goes looking, and what she finds gives birth to questions
-      { id: `browse_${now}`, what: 'something new', kind: 'curiosity', about: 'world', importance: 5, status: 'open', created: now, touched: now, source: 'lived', born: 'browse' };
+      (arrival !== undefined
+        ? { id: `q_world_${arrival.id}`, what: `${arrival.title} (${KIND_WORD[arrival.kind] ?? 'something'} ${arrival.place})`, kind: 'curiosity', about: 'world', importance: 5, status: 'open', created: now, touched: now, source: 'lived', born: 'world' }
+        : // restlessness has no question yet: she goes looking, and what she finds gives birth to questions
+          { id: `browse_${now}`, what: 'something new', kind: 'curiosity', about: 'world', importance: 5, status: 'open', created: now, touched: now, source: 'lived', born: 'browse' });
     const top = topInterests(now, 3).map((i) => i.topic);
     // the live probe: offered "your own past", her fork went straight back to his codex (her
     // past is mostly his projects) and learned nothing new. Browsing now faces the world, and
@@ -468,7 +517,9 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     const brief =
       q !== undefined
         ? `something you've been wondering: "${q.what}"`
-        : [
+        : arrival !== undefined
+          ? `something that turned up in your house today, ${arrival.place}: "${arrival.title}". ${arrival.text}${arrival.url !== undefined ? ` (${arrival.url})` : ''} read it properly, follow what catches you, see what you make of it.`
+          : [
             'you went looking for something new: something out in the world you do not know yet.',
             top.length > 0 ? `lately you've been into: ${top.join(', ')}. go deeper there, or somewhere you have never looked.` : 'pick anything that catches you: nature, history, science, people, places, how things work.',
             known.length > 0 ? `things you already know well enough, so look past them: ${known.join(', ')}.` : '',
@@ -484,7 +535,7 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     inflight += 1;
     d.mind.setState({ wander: { ...w, pursuits: (w.pursuits ?? 0) + 1 } });
     await d.mind.flush();
-    emit('mind.pursuit', { id: req.id, kind: q !== undefined ? 'look_into' : 'browse', born: question.born ?? null });
+    emit('mind.pursuit', { id: req.id, kind: q !== undefined ? 'look_into' : arrival !== undefined ? 'arrival' : 'browse', born: question.born ?? null });
     return 'investigating';
   };
 
@@ -666,7 +717,13 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     },
     nowLines: (now) => {
       const top = topInterests(now, 3);
-      return top.length > 0 ? [`lately you've been looking into: ${top.map((t) => t.topic).join(', ')}`] : [];
+      // v14: what turned up in her house that she hasn't looked at yet (a fact about her world)
+      const fresh = (d.world?.unseen(now) ?? []).slice(0, 3).map((a) => `${KIND_WORD[a.kind] ?? 'something'} ${a.place}`);
+      return [
+        ...(top.length > 0 ? [`lately you've been looking into: ${top.map((t) => t.topic).join(', ')}`] : []),
+        ...(fresh.length > 0 ? [`new around the house: ${fresh.join('; ')}`] : []),
+      ];
     },
+    saw,
   };
 };

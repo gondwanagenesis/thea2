@@ -48,7 +48,7 @@ import {
 } from '../mind/index.js';
 import { wakeNoteJob } from './wake-note.js';
 import { salonInboxJob, salonOutbox } from './salon.js';
-import { brokerShell, describeWhere, loadWhere, makeBody, whereFresh, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
+import { brokerShell, describeWhere, loadWhere, makeBody, whereFresh, worldFeedJob, worldSeam, nightlyJob, remindersJob, type Body, type Exec, type Fal, type OpenAIBody, type ShellRunner, type WorkshopCall } from '../body/index.js';
 import type { BodySeam } from '../mind/index.js';
 import { makeLive, startFaceServer, type FaceServer } from '../face/index.js';
 import { makeEmbedder } from './embedder.js';
@@ -368,6 +368,8 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
             tryTextFirst({ mind, clock, cfg: wanderCfg, conversationActive: () => conversationActive(), selfEntry: (g) => pipeline.selfEntry('heartbeat', g).sent }, goal),
           // v12.1: a finding is remembered with how it felt (the same exact state a reply is encoded with)
           feltNow: () => vecToArray(signature(affect.current(), COUPLING_BASELINES)),
+          // v14: the world knocks — what arrives in her house (body/world-feed.ts)
+          world: worldSeam(body.house),
         })
       : undefined;
 
@@ -589,6 +591,10 @@ export const composeV8 = async (cfg: Thea2Config, preset: ComposeV8Preset = 'pro
         : []),
       ...(body !== undefined
         ? [nightlyJob({ mind, model: () => model, clock, events, house: body.house, timeZone: cfg.timezone, embedder }, (utcMinuteForLocalHour(mindCfg.sleepHourLocal, clock.epochMs(), cfg.timezone) + 30) % 1440)]
+        : []),
+      // v14: every morning (7:00 his time) a few real things arrive in her house; network only in prod (or a test's own fetch)
+      ...(body !== undefined && (preset === 'prod' || opts.fetchImpl !== undefined)
+        ? [worldFeedJob({ house: body.house, clock, rng: rng.fork('world'), events, ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}) }, utcMinuteForLocalHour(7, clock.epochMs(), cfg.timezone))]
         : []),
     ];
   }

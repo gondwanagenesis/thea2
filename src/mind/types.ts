@@ -166,7 +166,7 @@ export interface Concern {
 }
 
 /** v12: where a question came from (§1.2). */
-export type QuestionSource = 'gap' | 'followup' | 'mind' | 'browse' | 'stale' | 'dream';
+export type QuestionSource = 'gap' | 'followup' | 'mind' | 'browse' | 'stale' | 'dream' | 'world';
 
 /** v12: something she has come to be into — earned from learning progress, fading with neglect (§1.7). */
 export interface Interest {

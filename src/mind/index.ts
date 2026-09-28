@@ -54,6 +54,10 @@ export {
 } from './wander.js';
 export {
   makeCuriosity,
+  arrivalWeight,
+  arrivalText,
+  type WorldArrival,
+  type WorldSeam,
   questionValue,
   restlessWeight,
   invU,

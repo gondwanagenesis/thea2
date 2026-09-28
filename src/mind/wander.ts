@@ -41,7 +41,7 @@ export interface Item {
   key: string;
   /** v12: 'wonder' = one of her questions; 'restless' = nothing new has come her way (the novelty hunger's outlet).
    *  v13 H6: 'practice' = the quiet room (the mastery hunger's outlet). */
-  kind: 'concern' | 'feeling' | 'missing' | 'wonder' | 'restless' | 'practice';
+  kind: 'concern' | 'feeling' | 'missing' | 'wonder' | 'restless' | 'practice' | 'arrival';
   about: About;
   /** Her words (or the cause, verbatim) — what the thought is about. */
   text: string;
@@ -60,6 +60,8 @@ export interface CuriositySeam {
   candidates(state: AffectState, now: number): Item[];
   /** After her thought on a wonder/restless item: pursue it (detached). */
   pursue(item: Item, thought: string): Promise<'investigating' | 'asked' | 'capped' | 'busy' | 'quiet' | 'none'>;
+  /** v14: she gave her attention to something that arrived (it has been seen). */
+  saw?(item: Item, now: number): void;
 }
 
 /** v13 H6 (plan docs/plans/v13-proposal-knowing-what-she-feels.md §6 Phase 2.2): the quiet room, offered by the mastery hunger. */
@@ -483,13 +485,15 @@ export const wanderOnce = async (deps: WanderDeps): Promise<{ result: 'idle' | '
   // is pursued — looked into with her own hands, or asked of the person it is about. A thought that
   // lets it go (intention none / close) pursues nothing.
   let pursued: string | undefined;
-  if (deps.curiosity !== undefined && (item.kind === 'wonder' || item.kind === 'restless') && out.intention !== 'none' && out.intention !== 'text_him' && out.close !== true) {
+  if (deps.curiosity !== undefined && (item.kind === 'wonder' || item.kind === 'restless' || item.kind === 'arrival') && out.intention !== 'none' && out.intention !== 'text_him' && out.close !== true) {
     try {
       pursued = await deps.curiosity.pursue(item, out.thought);
     } catch (e) {
       void deps.events.emit('incident.mind_curiosity_failed', { stage: 'pursue', error: e instanceof Error ? e.message : String(e) });
     }
   }
+  // v14: something that arrived and caught her attention has been seen, whether or not she dug in
+  if (item.kind === 'arrival') deps.curiosity?.saw?.(item, now);
 
   await mind.flush();
   // v13 Phase 0: the item's words and the thought id, so the ledger can join what won to what she thought
