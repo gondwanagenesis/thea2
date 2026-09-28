@@ -447,3 +447,29 @@ describe('v14: low effort (Diego: "yea low effort is good"; raw chats: 10–13% 
     expect(mouthUser([], 'lol', ['a long draft about many things'], tiny)).toContain('a few words or just an emoji');
   });
 });
+
+describe('v14: thumbs — now and then a small slip stays in (the judges: the human reply was "casual, typo-laden")', () => {
+  it('about one bubble in sixteen gets one natural slip; never a name, a number, a link or a short word; the words still read', async () => {
+    const { thumbs, TYPO_RATE } = await import('../../src/mind/index.js');
+    const b = "i don't know why the captain keeps staring at the ocean like that";
+    let changed = 0;
+    for (let i = 0; i < 2000; i++) {
+      const [out] = thumbs([b], makeRng(`t${i}`), new Set(['Diego']));
+      if (out !== b) {
+        changed += 1;
+        const diff = out!.split(' ').filter((w, k) => w !== b.split(' ')[k]);
+        expect(diff.length).toBe(1); // one word, one slip
+      }
+    }
+    expect(changed / 2000).toBeGreaterThan(TYPO_RATE * 0.6);
+    expect(changed / 2000).toBeLessThan(TYPO_RATE * 1.5);
+    const exact = 'meet Diego at 14:30, https://example.com/x';
+    for (let i = 0; i < 300; i++) expect(thumbs([exact], makeRng(`e${i}`), new Set(['Diego']), 1)[0]).toMatch(/Diego at 14:30, https:\/\/example\.com\/x/);
+    expect(thumbs(['ok lol'], makeRng('s'), new Set(), 1)).toEqual(['ok lol']);
+  });
+
+  it('the mouth is told people mostly say things plainly; a metaphor is rare', async () => {
+    const { MOUTH_SYSTEM } = await import('../../src/mind/voice.js');
+    expect(MOUTH_SYSTEM).toMatch(/say things plainly[\s\S]*metaphor or a poetic line is rare/);
+  });
+});

@@ -192,6 +192,42 @@ export const wornBits = (recent: readonly string[], freq: ReadonlyMap<string, nu
     .slice(0, 8);
 };
 
+/**
+ * Thumbs (v14 Phase 3.4). The blind judges (2026-09-28, 93% right) named it again and again: the human
+ * reply was "casual, typo-laden"; hers was clean. In Diego's and Elena's raw chats 1.5% of messages
+ * drop an apostrophe and 2–6% carry a misspelling or shorthand (a floor: autocorrect hides most). So now
+ * and then one small slip of the thumb stays in, uncorrected: a dropped apostrophe, two letters swapped,
+ * a letter doubled or dropped — never in a name, a number, a link or anything exact, never in a short word.
+ */
+export const TYPO_RATE = 0.06;
+export const thumbs = (bubbles: readonly string[], rng: Rng, names: ReadonlySet<string>, rate = TYPO_RATE): string[] =>
+  bubbles.map((b) => {
+    if (rng.float() >= rate || b.includes('```')) return b;
+    const exact = new Set(precisionTokens(b));
+    const lowerNames = new Set([...names].map((n) => n.toLowerCase()));
+    const words = b.split(/(\s+)/);
+    const idx = words.map((w, i) => ({ w, i })).filter(({ w }) => /^[a-z']{4,}[,!?]?$/i.test(w) && !exact.has(w) && !lowerNames.has(w.replace(/[^a-z']/gi, '').toLowerCase()) && !/[A-Z]/.test(w));
+    if (idx.length === 0) return b;
+    const { w, i } = idx[Math.floor(rng.float() * idx.length)]!;
+    const core = w.replace(/[,!?]$/, '');
+    const tail = w.slice(core.length);
+    const r = rng.float();
+    let t = core;
+    if (core.includes("'") && r < 0.5) t = core.replace("'", '');
+    else if (r < 0.7 && core.length >= 5) {
+      const k = 1 + Math.floor(rng.float() * (core.length - 3));
+      t = core.slice(0, k) + core[k + 1] + core[k] + core.slice(k + 2);
+    } else if (r < 0.85) {
+      const k = 1 + Math.floor(rng.float() * (core.length - 2));
+      t = core.slice(0, k) + core[k] + core.slice(k);
+    } else {
+      const k = 1 + Math.floor(rng.float() * (core.length - 2));
+      t = core.slice(0, k) + core.slice(k + 1);
+    }
+    words[i] = t + tail;
+    return words.join('');
+  });
+
 export const dropRepeatedEndings = (bubbles: readonly string[], recent: string[], window = 10): string[] =>
   bubbles.map((b) => {
     const m = TRAILING_EMOJI.exec(b);
@@ -302,6 +338,8 @@ export const MOUTH_SYSTEM = [
   'Type it about as long as [this time] says: real messages about this kind of thing run that long. Say now what matters most for this moment, first, and every promise and real question of hers; put what can wait in later, in her words — she will say it another time. A line that only hands the turn back ("how\'s your day", "your turn", "what about you") is the first thing that waits.',
   'A bubble is one beat: a reaction, a joke, a question, one thought. A joke or a punchline gets its own bubble so it lands. A thought that needs explaining stays together in one bubble, even a long one.',
   'Words under [worn out lately] are bits she has leaned on so much lately that they have gone stale for her; she reaches past them for something fresh.',
+  // v14 (the blind judges: "ornate metaphors, structured self-analysis, emoji polish scream ai"; the human was "casual, hedging, messy")
+  'People mostly say things plainly, a little messy, half-finished sometimes ("wait lemme think", "idk", "ok but"). A metaphor or a poetic line is rare: keep one only if the draft truly turns on it; otherwise say the plain thing.',
   'Never a declaration of love. Never comment on the draft. Return JSON {bubbles: [...], later: [...]}.',
 ].join('\n');
 
@@ -604,7 +642,7 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       const floor = shape !== undefined ? Math.min(wordsIn(draft) * 0.35, shape.words * 0.6) : wordsIn(draft) * 0.35;
       if (wordsIn(said) < floor) return fallback('dropped content');
       if (LOVE_DECLARATION.test(said) && !LOVE_DECLARATION.test(draft)) return fallback('love');
-      let final = dress(out, names);
+      let final = system === MOUTH_SYSTEM ? thumbs(dress(out, names), d.rng.fork(`thumbs:${ctx.turnId}`), names) : dress(out, names);
       // a bit worn right through (in 5+ of her last 30 bubbles) waits, when there is anything else to say
       const hard = wornNow.filter((w) => w.n >= WORN_HARD).map((w) => w.word);
       if (hard.length > 0 && final.length > 1) {
