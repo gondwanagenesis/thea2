@@ -78,3 +78,10 @@ describe('the world knocks: arrivals compete for her attention', () => {
     expect(r.cur.nowLines(T0).join('\n')).not.toContain('Study desk');
   });
 });
+
+describe('what is new in the house comes with its title (found in the probe: she guessed what an article was about)', () => {
+  it('[now] names the thing, the way a cover does', () => {
+    const r = rig([POEM], 0.3);
+    expect(r.cur.nowLines(T0).join('\n')).toContain('a poem on the Kitchen table ("The Tide Rises, the Tide Falls, by Henry Wadsworth Longfellow")');
+  });
+});

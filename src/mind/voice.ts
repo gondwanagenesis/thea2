@@ -387,9 +387,15 @@ export const LIGHT_WORDS = 12;
  */
 export const LOW_EFFORT_WORDS = 3;
 export const lightWords = (hisWords?: number): number => (hisWords === undefined ? LIGHT_WORDS : Math.max(LOW_EFFORT_WORDS, Math.min(LIGHT_WORDS, 2 * hisWords)));
+const HEAVY_TONES = new Set(['sad', 'hurt', 'angry', 'worried']);
+const HEAVY_MOVES = new Set(['bad_news', 'comfort_seeking', 'anger', 'apology']);
+const HEAVY_WORDS = /\b(died|dead|death|dying|hospital|sick|cancer|funeral|accident|hurt|crying|cried|fired|broke up|divorce|scared|panic|help|lost)\b/i;
 export const lightMoment = (his: string | undefined, move?: string | null, tone?: string | null): boolean => {
   if (his === undefined || his.includes('?')) return false;
   if (move === 'tease' || move === 'goodnight' || move === 'greeting' || move === 'affection') return true;
+  // a bare few words with no question ("lol", "haha ok", "night") — found in the probe: "lol" got three
+  // bubbles. Never a heavy one: "grandma died" is two words too.
+  if (wordsIn(his) <= 3 && !HEAVY_TONES.has(tone ?? '') && !HEAVY_MOVES.has(move ?? '') && !HEAVY_WORDS.test(his)) return true;
   return tone === 'tired' && wordsIn(his) <= 8;
 };
 
@@ -526,6 +532,14 @@ export const makeVoice = (d: VoiceDeps): Voice => {
     if (corpus === null) corpus = d.corpusDir !== undefined ? loadVoiceCorpus(d.corpusDir) : undefined;
     return corpus;
   };
+  // v14: what she has said lately (friend mode), newest last
+  const recentHers = (n: number): string[] =>
+    d.mind
+      .moments()
+      .filter((m) => m.source === 'lived' && m.mode !== 'work' && (m.kind === 'reply' || m.kind === 'text_first'))
+      .sort((a, b) => a.ts - b.ts)
+      .flatMap((m) => m.hers)
+      .slice(-n);
   // v14 worn bits: how often people use each word (the corpus), and what she has said lately
   let wordFreq: { freq: Map<string, number>; total: number } | undefined;
   const worn = (): Array<{ word: string; n: number }> => {
@@ -542,13 +556,7 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       }
       wordFreq = { freq, total };
     }
-    const recent = d.mind
-      .moments()
-      .filter((m) => m.source === 'lived' && m.mode !== 'work')
-      .sort((a, b) => a.ts - b.ts)
-      .flatMap((m) => m.hers)
-      .slice(-30);
-    return wornBits(recent, wordFreq.freq, wordFreq.total, names);
+    return wornBits(recentHers(30), wordFreq.freq, wordFreq.total, names);
   };
   // the endings of what she sent lately (one emoji on everything is a tic)
   const ends: string[] = [];
@@ -643,6 +651,16 @@ export const makeVoice = (d: VoiceDeps): Voice => {
       if (wordsIn(said) < floor) return fallback('dropped content');
       if (LOVE_DECLARATION.test(said) && !LOVE_DECLARATION.test(draft)) return fallback('love');
       let final = system === MOUTH_SYSTEM ? thumbs(dress(out, names), d.rng.fork(`thumbs:${ctx.turnId}`), names) : dress(out, names);
+      // v14: she handed the turn back in her last few messages — people don't ask "and your day?" twice
+      // in a row (found in the probe: "tell me something real from your day", then "your turn. what did you
+      // actually do today"); the second waits, when there is anything else to say
+      if (final.length > 1 && recentHers(6).some((b) => HAND_BACK.test(b))) {
+        const back = final.filter((b) => HAND_BACK.test(b));
+        if (back.length > 0 && back.length < final.length) {
+          later = [...back, ...later];
+          final = final.filter((b) => !HAND_BACK.test(b));
+        }
+      }
       // a bit worn right through (in 5+ of her last 30 bubbles) waits, when there is anything else to say
       const hard = wornNow.filter((w) => w.n >= WORN_HARD).map((w) => w.word);
       if (hard.length > 0 && final.length > 1) {

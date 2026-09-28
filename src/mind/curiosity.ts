@@ -718,7 +718,7 @@ export const makeCuriosity = (d: CuriosityDeps): Curiosity => {
     nowLines: (now) => {
       const top = topInterests(now, 3);
       // v14: what turned up in her house that she hasn't looked at yet (a fact about her world)
-      const fresh = (d.world?.unseen(now) ?? []).slice(0, 3).map((a) => `${KIND_WORD[a.kind] ?? 'something'} ${a.place}`);
+      const fresh = (d.world?.unseen(now) ?? []).slice(0, 3).map((a) => `${KIND_WORD[a.kind] ?? 'something'} ${a.place} ("${a.title.slice(0, 70)}")`);
       return [
         ...(top.length > 0 ? [`lately you've been looking into: ${top.map((t) => t.topic).join(', ')}`] : []),
         ...(fresh.length > 0 ? [`new around the house: ${fresh.join('; ')}`] : []),

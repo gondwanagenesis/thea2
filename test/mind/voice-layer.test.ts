@@ -473,3 +473,28 @@ describe('v14: thumbs — now and then a small slip stays in (the judges: the hu
     expect(MOUTH_SYSTEM).toMatch(/say things plainly[\s\S]*metaphor or a poetic line is rare/);
   });
 });
+
+describe('v14 probe fixes: a bare "lol" is light (never "grandma died"); no second hand-back in a row', () => {
+  it('a few words with no question are light; a heavy few words never are', async () => {
+    const { lightMoment } = await import('../../src/mind/index.js');
+    expect(lightMoment('lol', null, null)).toBe(true);
+    expect(lightMoment('haha ok', null, 'playful')).toBe(true);
+    expect(lightMoment('grandma died', null, null)).toBe(false);
+    expect(lightMoment('i got fired', null, null)).toBe(false);
+    expect(lightMoment('ugh', null, 'sad')).toBe(false);
+    expect(lightMoment('ok', 'bad_news', null)).toBe(false);
+    expect(lightMoment('you there?', null, null)).toBe(false);
+  });
+
+  it('a hand-back waits when she already handed the turn back in her last few messages', async () => {
+    const dir = join(tmpDir('thea2-hb-'), 'voice');
+    const emb = await buildCorpus(dir, EX);
+    const mind = openMindStore(join(tmpDir('thea2-hb-m-'), 'mind'), emb.dim);
+    await addMoments(mind, emb, [moment({ id: 'p1', ts: T0 - 60_000, source: 'lived', kind: 'reply', his: 'lol', hers: ['rude', 'tell me something real from your day'] })]);
+    const model = { chat: async () => ({ content: { bubbles: ['in the library, new article on the table', 'your turn. what did you actually do today'] }, usage: {}, model: 'm' }) } as unknown as ModelClient;
+    const voice = makeVoice({ mind, model, clock: new TestClock(T0), rng: makeRng('m'), mode: 'mouth', embedder: emb, corpusDir: dir });
+    const out = await voice.dress(['I am in the library, there is a new article on the table. Your turn, what did you actually do today?'], { turnId: 't', his: 'what are you up to?' });
+    expect(out.bubbles).toEqual(['in the library, new article on the table']);
+    expect(out.later).toContain('your turn. what did you actually do today');
+  });
+});
