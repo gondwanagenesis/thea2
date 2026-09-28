@@ -340,13 +340,22 @@ export interface Shape {
  * length alone.
  */
 export const LIGHT_WORDS = 12;
+/**
+ * Low effort (v14, Diego 2026-09-28: "yea low effort is good"). In a light moment people mirror: a
+ * "lol" gets "hehe ya", a line gets a line. In Diego's and Elena's raw chats (8,102 bursts) 10–13% of
+ * replies are three words or fewer and 3–5% are only "lol"/"ya"/an emoji; after a light message the
+ * reply runs from 3 words (p10) to 53 (p90), median 14. So a light reply's length follows his: about
+ * twice his words, never under LOW_EFFORT_WORDS, never over LIGHT_WORDS.
+ */
+export const LOW_EFFORT_WORDS = 3;
+export const lightWords = (hisWords?: number): number => (hisWords === undefined ? LIGHT_WORDS : Math.max(LOW_EFFORT_WORDS, Math.min(LIGHT_WORDS, 2 * hisWords)));
 export const lightMoment = (his: string | undefined, move?: string | null, tone?: string | null): boolean => {
   if (his === undefined || his.includes('?')) return false;
   if (move === 'tease' || move === 'goodnight' || move === 'greeting' || move === 'affection') return true;
   return tone === 'tired' && wordsIn(his) <= 8;
 };
 
-export const shapeOf = (c: VoiceCorpus, q: Float32Array, draft: readonly string[], k = 30, light = false): Shape => {
+export const shapeOf = (c: VoiceCorpus, q: Float32Array, draft: readonly string[], k = 30, light = false, hisWords?: number): Shape => {
   const draftWords = wordsIn(draft.join(' '));
   const lens = c.examples
     .map((e, i) => ({ w: wordsIn(e.hers.join(' ')), s: cosAt(c.vecs, i, c.dim, q) }))
@@ -355,8 +364,8 @@ export const shapeOf = (c: VoiceCorpus, q: Float32Array, draft: readonly string[
     .map((x) => x.w)
     .sort((x, y) => x - y);
   const near = lens.length === 0 ? draftWords : lens[Math.floor((lens.length - 1) / 2)]!;
-  const words = Math.max(3, Math.min(near, draftWords, light ? LIGHT_WORDS : Infinity));
-  return { words, most: Math.min(light ? 2 : 4, Math.max(1, Math.ceil(words / 7))), near, draftWords, ...(light ? { light } : {}) };
+  const words = Math.max(LOW_EFFORT_WORDS, Math.min(near, draftWords, light ? lightWords(hisWords) : Infinity));
+  return { words, most: Math.min(light ? (words <= LOW_EFFORT_WORDS ? 1 : 2) : 4, Math.max(1, Math.ceil(words / 7))), near, draftWords, ...(light ? { light } : {}) };
 };
 
 /** Her draft is longer than this moment (found live: the mouth kept all 142 words of a 53-word moment). */
@@ -404,7 +413,9 @@ export const mouthUser = (examples: readonly VoiceExample[], his: string | undef
     ...(shape === undefined
       ? []
       : shape.light === true
-        ? ['', `[this time]\na light moment: about ${shape.words} words now; one bubble, or two if a joke needs its own.`]
+        ? shape.words <= LOW_EFFORT_WORDS
+          ? ['', `[this time]\na light moment: a few words or just an emoji, the way people answer a "lol" ("hehe ya", "😭", "night d").`]
+          : ['', `[this time]\na light moment: about ${shape.words} words now; one bubble, or two if a joke needs its own.`]
         : ['', `[this time]\nabout ${shape.words} words now; ${shape.most === 1 ? 'one bubble' : `one bubble per beat, at most ${shape.most}`}.`]),
   ].join('\n');
 
@@ -528,7 +539,7 @@ export const makeVoice = (d: VoiceDeps): Voice => {
           const [q] = await d.embedder.embed([bubbles.join('\n')]);
           if (q !== undefined) {
             system = MOUTH_SYSTEM;
-            shape = shapeOf(cor, q, bubbles, 30, lightMoment(ctx.his, ctx.move, ctx.tone));
+            shape = shapeOf(cor, q, bubbles, 30, lightMoment(ctx.his, ctx.move, ctx.tone), ctx.his !== undefined ? wordsIn(ctx.his) : undefined);
             wornNow = worn();
             user = mouthUser(nearestExamples(cor, q), ctx.his, bubbles, shape, wornNow.map((w) => w.word));
           }

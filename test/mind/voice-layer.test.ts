@@ -434,3 +434,16 @@ describe('v14: bits wear out (the 09-27 salon: "the tribunal", "the clinic", "ra
     expect(out.later).toContain('the tribunal has ruled');
   });
 });
+
+describe('v14: low effort (Diego: "yea low effort is good"; raw chats: 10–13% of replies are 3 words or fewer)', () => {
+  it('a light reply mirrors him: a "lol" gets a few words or an emoji, a line gets a line; never over the light cap', async () => {
+    const { lightWords, LOW_EFFORT_WORDS, LIGHT_WORDS, mouthUser } = await import('../../src/mind/index.js');
+    expect(lightWords(1)).toBe(LOW_EFFORT_WORDS);
+    expect(lightWords(2)).toBe(4);
+    expect(lightWords(3)).toBe(6);
+    expect(lightWords(20)).toBe(LIGHT_WORDS);
+    expect(lightWords(undefined)).toBe(LIGHT_WORDS);
+    const tiny = { words: LOW_EFFORT_WORDS, most: 1, near: 20, draftWords: 40, light: true };
+    expect(mouthUser([], 'lol', ['a long draft about many things'], tiny)).toContain('a few words or just an emoji');
+  });
+});

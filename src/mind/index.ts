@@ -127,7 +127,7 @@ export {
 } from './dream.js';
 export { twinDataset, bucketOf, isHeldOut, type TwinExample, type TwinPair, type TwinInput } from './twin.js';
 export { innerReport, overwritingIndex, pairedMargin, type InnerInput, type InnerEvent, type KillRow, type KillStatus } from './report.js';
-export { shapeOf, condense, lightMoment, LIGHT_WORDS, type DressCtx, type Shape, loadVoiceCorpus, nearestExamples, mouthUser, MOUTH_SYSTEM, type VoiceCorpus, type VoiceExample, makeVoice, dress, dressBubble, voiceFaults, voiceScore, fingerprintPool, pickFingerprints, precisionTokens, namesFrom, REDO_SYSTEM, RedoSchema, SPLIT_WORDS, type Voice, type VoiceDeps, type Dressed, type Fingerprint } from './voice.js';
+export { shapeOf, condense, lightMoment, LIGHT_WORDS, LOW_EFFORT_WORDS, lightWords, wornBits, type DressCtx, type Shape, loadVoiceCorpus, nearestExamples, mouthUser, MOUTH_SYSTEM, type VoiceCorpus, type VoiceExample, makeVoice, dress, dressBubble, voiceFaults, voiceScore, fingerprintPool, pickFingerprints, precisionTokens, namesFrom, REDO_SYSTEM, RedoSchema, SPLIT_WORDS, type Voice, type VoiceDeps, type Dressed, type Fingerprint } from './voice.js';
 export { openPeople, howOften, PEOPLE_FILE, PERSON_FACTS_MAX, PERSON_FACTS_SHOWN, PERSON_LASTING_MAX, PERSON_LASTING_SHOWN, type People, type Person, type Fact } from './people.js';
 export { gist, asRemembered, GIST_AFTER_MS } from './gist.js';
 export { modeFor, MODE_SWITCH, WORK_CUES, MODE_IDLE_MS, type Mode, type ModeState } from './mode.js';
